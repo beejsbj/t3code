@@ -76,6 +76,7 @@ export function applyThreadDetailEvent(
           settledAt: null,
           snoozedUntil: null,
           snoozedAt: null,
+          workflowLane: null,
           deletedAt: null,
           messages: [],
           proposedPlans: [],
@@ -172,6 +173,16 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           runtimeMode: event.payload.runtimeMode,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
+    case "thread.workflow-lane-set":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          workflowLane: event.payload.workflowLane,
           updatedAt: event.payload.updatedAt,
         },
       };

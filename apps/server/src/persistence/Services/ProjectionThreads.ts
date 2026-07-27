@@ -15,6 +15,7 @@ import {
   RuntimeMode,
   ThreadId,
   TurnId,
+  WorkflowLane,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -40,6 +41,7 @@ export const ProjectionThread = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozedUntil: Schema.NullOr(IsoDateTime),
   snoozedAt: Schema.NullOr(IsoDateTime),
+  workflowLane: Schema.NullOr(WorkflowLane),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,

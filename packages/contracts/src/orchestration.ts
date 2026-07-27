@@ -342,6 +342,33 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+/**
+ * Where a session sits in the human workflow, as declared by the person
+ * running the board. This is deliberately the *only* board field that is
+ * session-owned rather than derived: everything else a lane board needs
+ * (working / blocked-on-human / plan-ready / settled) is already expressible
+ * from `session.status`, `hasPendingApprovals`, `hasPendingUserInput`,
+ * `hasActionableProposedPlan` and the settled/archived overlay.
+ *
+ * Two distinctions genuinely cannot be derived, which is what justifies the
+ * field: "still being shaped" vs "groomed and ready to pick up" look
+ * identical to the runtime (both are an idle session with no pending work),
+ * and a drag gesture is an explicit human statement of intent that no
+ * runtime signal can stand in for.
+ *
+ * `null` means the session has not been placed on the board yet — it lives
+ * in the inbox/source queue.
+ */
+export const WorkflowLane = Schema.Literals([
+  "shaping",
+  "ready",
+  "active",
+  "blocked",
+  "review",
+  "done",
+]);
+export type WorkflowLane = typeof WorkflowLane.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -367,6 +394,8 @@ export const OrchestrationThread = Schema.Struct({
   // Optional so payloads from pre-snooze servers still decode.
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // Optional so payloads from pre-board servers still decode.
+  workflowLane: Schema.optional(Schema.NullOr(WorkflowLane)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -419,6 +448,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  workflowLane: Schema.optional(Schema.NullOr(WorkflowLane)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -631,6 +661,14 @@ const ThreadRuntimeModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadWorkflowLaneSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.workflow-lane.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  // `null` returns the session to the inbox/source queue.
+  workflowLane: Schema.NullOr(WorkflowLane),
+});
+
 const ThreadInteractionModeSetCommand = Schema.Struct({
   type: Schema.Literal("thread.interaction-mode.set"),
   commandId: CommandId,
@@ -761,6 +799,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadWorkflowLaneSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -786,6 +825,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadWorkflowLaneSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -892,6 +932,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
+  "thread.workflow-lane-set",
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
@@ -1009,6 +1050,12 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
 export const ThreadRuntimeModeSetPayload = Schema.Struct({
   threadId: ThreadId,
   runtimeMode: RuntimeMode,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadWorkflowLaneSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  workflowLane: Schema.NullOr(WorkflowLane),
   updatedAt: IsoDateTime,
 });
 
@@ -1198,6 +1245,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.interaction-mode-set"),
     payload: ThreadInteractionModeSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.workflow-lane-set"),
+    payload: ThreadWorkflowLaneSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

@@ -25,6 +25,7 @@ import {
   CornerLeftUpIcon,
   FolderIcon,
   FolderPlusIcon,
+  LayoutGridIcon,
   LinkIcon,
   MessageSquareIcon,
   SettingsIcon,
@@ -1229,6 +1230,17 @@ function OpenCommandPaletteDialog(props: {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:session-board",
+    searchTerms: ["board", "session board", "lanes", "kanban", "workspace"],
+    title: "Open session board",
+    icon: <LayoutGridIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/board" });
+    },
+  });
 
   actionItems.push({
     kind: "action",
