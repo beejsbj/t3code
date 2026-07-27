@@ -41,6 +41,7 @@ export type SnoozeThreadInput = CommandInput<"thread.snooze">;
 export type UnsnoozeThreadInput = CommandInput<"thread.unsnooze">;
 export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
 export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
+export type SetThreadWorkflowLaneInput = CommandInput<"thread.workflow-lane.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
@@ -218,6 +219,15 @@ export const setThreadRuntimeMode: (input: SetThreadRuntimeModeInput) => Command
     createdAt: metadata.createdAt,
   });
 });
+
+export const setThreadWorkflowLane: (input: SetThreadWorkflowLaneInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.setThreadWorkflowLane")(function* (input) {
+    return yield* dispatch({
+      ...input,
+      type: "thread.workflow-lane.set",
+      commandId: yield* commandId(input),
+    });
+  });
 
 export const setThreadInteractionMode: (input: SetThreadInteractionModeInput) => CommandEffect =
   Effect.fn("EnvironmentCommands.setThreadInteractionMode")(function* (input) {

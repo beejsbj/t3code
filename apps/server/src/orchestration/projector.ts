@@ -22,6 +22,7 @@ import {
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
+  ThreadWorkflowLaneSetPayload,
   ThreadSettledPayload,
   ThreadSnoozedPayload,
   ThreadUnarchivedPayload,
@@ -294,6 +295,7 @@ export function projectEvent(
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            workflowLane: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -415,6 +417,22 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             runtimeMode: payload.runtimeMode,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.workflow-lane-set":
+      return decodeForEvent(
+        ThreadWorkflowLaneSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            workflowLane: payload.workflowLane,
             updatedAt: payload.updatedAt,
           }),
         })),

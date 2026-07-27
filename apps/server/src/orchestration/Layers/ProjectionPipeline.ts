@@ -611,6 +611,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            workflowLane: null,
             latestUserMessageAt: null,
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
@@ -745,6 +746,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             runtimeMode: event.payload.runtimeMode,
+            updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.workflow-lane-set": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            workflowLane: event.payload.workflowLane,
             updatedAt: event.payload.updatedAt,
           });
           return;

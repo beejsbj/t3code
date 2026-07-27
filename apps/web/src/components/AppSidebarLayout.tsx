@@ -123,6 +123,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // and is identical for both sidebars — so v1 stays mounted there.
   const pathname = useLocation({ select: (location) => location.pathname });
   const isOnSettings = pathname === "/settings" || pathname.startsWith("/settings/");
+  // The session board carries its own inbox/source queue as the left rail of
+  // the same workspace. Mounting the app sidebar there would put two competing
+  // session lists on one screen, so the board owns the whole viewport.
+  const isOnBoard = pathname === "/board";
   const useSidebarV2 = sidebarV2Enabled && !isOnSettings;
   const useSidebarV2Theme = useSidebarV2 || isOnSettings;
   const isMacosDesktop = isElectron && isMacPlatform(navigator.platform);
@@ -181,6 +185,10 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       unsubscribe?.();
     };
   }, [navigate, pathname]);
+
+  if (isOnBoard) {
+    return <>{children}</>;
+  }
 
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
