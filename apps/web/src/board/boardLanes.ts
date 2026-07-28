@@ -13,9 +13,9 @@ import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
  * 1. **Runtime attention** (derived, native, never persisted). If the session
  *    is currently doing something a human must see — it is running, or it is
  *    blocked waiting on an approval / an answer / a plan decision — that fact
- *    outranks whatever lane a human last dragged it to. Attention placement is
- *    temporary: it lasts exactly as long as the underlying native condition,
- *    and the assigned lane underneath is never overwritten.
+ *    temporarily displaces cards from move-policy lanes. Badge-policy lanes
+ *    keep the card in place and expose the attention there instead. The
+ *    assigned lane underneath is never overwritten.
  * 2. **Assigned lane** (`thread.workflowLane`, session-owned, persisted). This
  *    is what a drag/drop writes, and the only thing a drag/drop writes.
  *
@@ -37,36 +37,43 @@ export const BOARD_LANES = [
     id: "shaping",
     label: "Grilling / shaping",
     hint: "Working out what this actually is",
+    interrupt: "badge",
   },
   {
     id: "ready",
     label: "Ready",
     hint: "Groomed and ready to pick up",
+    interrupt: "move",
   },
   {
     id: "active",
     label: "Active",
     hint: "The agent is working right now",
+    interrupt: "move",
   },
   {
     id: "blocked",
     label: "Blocked · needs Burooj",
     hint: "Waiting on a human decision",
+    interrupt: "move",
   },
   {
     id: "review",
     label: "Review",
     hint: "There is something to look at",
+    interrupt: "move",
   },
   {
     id: "done",
     label: "Done",
     hint: "Finished, or pinned settled",
+    interrupt: "move",
   },
 ] as const satisfies ReadonlyArray<{
   readonly id: WorkflowLane;
   readonly label: string;
   readonly hint: string;
+  readonly interrupt: "move" | "badge";
 }>;
 
 export type BoardLane = (typeof BOARD_LANES)[number];
@@ -79,6 +86,10 @@ export function isWorkflowLane(value: string): value is WorkflowLane {
 
 export function boardLaneLabel(lane: WorkflowLane): string {
   return BOARD_LANES.find((entry) => entry.id === lane)?.label ?? lane;
+}
+
+export function boardLaneInterruptPolicy(lane: WorkflowLane): "move" | "badge" {
+  return BOARD_LANES.find((entry) => entry.id === lane)?.interrupt ?? "move";
 }
 
 /**
@@ -169,6 +180,8 @@ export interface BoardPlacement {
   readonly attention: RuntimeAttention;
   /** True when runtime attention is displacing the card from its assigned lane. */
   readonly overridden: boolean;
+  /** True when a badge-policy lane is keeping runtime attention in place. */
+  readonly heldInPlace: boolean;
 }
 
 export function resolveBoardPlacement(
@@ -177,6 +190,8 @@ export function resolveBoardPlacement(
 ): BoardPlacement | null {
   const assignedLane = thread.workflowLane ?? null;
   const attention = resolveRuntimeAttention(thread);
+  const holdsAttention =
+    assignedLane !== null && boardLaneInterruptPolicy(assignedLane) === "badge";
 
   // Keep snooze suppression in the pure placement model rather than in the
   // React list filter. `null` is distinct from an inbox placement and makes
@@ -195,13 +210,14 @@ export function resolveBoardPlacement(
   // burying it under Done is exactly the failure this board exists to prevent.
   // (The server already refuses to settle a thread with pending work, so this
   // is a belt-and-braces ordering rather than a common case.)
-  if (attention === "blocked" || attention === "failed") {
+  if ((attention === "blocked" || attention === "failed") && !holdsAttention) {
     return {
       lane: "blocked",
       source: "attention",
       assignedLane,
       attention,
       overridden: assignedLane !== null && assignedLane !== "blocked",
+      heldInPlace: false,
     };
   }
 
@@ -217,16 +233,29 @@ export function resolveBoardPlacement(
       assignedLane,
       attention,
       overridden: assignedLane !== null && assignedLane !== "done",
+      heldInPlace: false,
+    };
+  }
+
+  if (attention !== null && assignedLane !== null && holdsAttention) {
+    return {
+      lane: assignedLane,
+      source: "assigned",
+      assignedLane,
+      attention,
+      overridden: false,
+      heldInPlace: true,
     };
   }
 
   if (attention !== null) {
     return {
-      lane: attention,
+      lane: attention === "failed" ? "blocked" : attention,
       source: "attention",
       assignedLane,
       attention,
       overridden: assignedLane !== null && assignedLane !== attention,
+      heldInPlace: false,
     };
   }
 
@@ -237,10 +266,18 @@ export function resolveBoardPlacement(
       assignedLane,
       attention,
       overridden: false,
+      heldInPlace: false,
     };
   }
 
-  return { lane: null, source: "inbox", assignedLane: null, attention, overridden: false };
+  return {
+    lane: null,
+    source: "inbox",
+    assignedLane: null,
+    attention,
+    overridden: false,
+    heldInPlace: false,
+  };
 }
 
 /**
@@ -258,6 +295,9 @@ export function placementReason(placement: BoardPlacement): string | null {
     case "native-done":
       return "Settled";
     case "assigned":
+      if (placement.heldInPlace) {
+        return `${attentionLabel(placement.attention)} — held here: this lane keeps your attention`;
+      }
       // A card parked in an attention lane by hand is not the same claim as a
       // card the runtime put there. Say so, or the board lies about what the
       // session is doing.

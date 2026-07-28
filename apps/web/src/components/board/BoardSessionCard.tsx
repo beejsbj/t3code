@@ -129,7 +129,9 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           ? "fixed inset-6 z-50 border-primary/50 shadow-2xl md:inset-x-[12vw] md:inset-y-[6vh]"
           : "relative border-border/70",
         (isDragging || props.isDragging) && "opacity-60",
-        placement.overridden && !isFocused && "border-l-2 border-l-amber-500/70",
+        (placement.overridden || placement.heldInPlace) &&
+          !isFocused &&
+          "border-l-2 border-l-amber-500/70",
       )}
       style={isFocused ? undefined : { height: `${effectiveHeight}px` }}
     >
@@ -216,6 +218,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
       ref={slotRef}
       data-board-card={thread.id}
       data-lane={placement.lane ?? "inbox"}
+      data-held-in-place={placement.heldInPlace || undefined}
       style={
         !isFocused && transform
           ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }

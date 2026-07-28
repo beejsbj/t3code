@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveSidebarV2Status } from "../components/Sidebar.logic.ts";
 import {
   type BoardLaneInput,
+  boardLaneInterruptPolicy,
   isAttentionLane,
   isWorkflowLane,
   placementReason,
@@ -150,6 +151,59 @@ describe("board/sidebar runtime-state drift", () => {
 });
 
 describe("resolveBoardPlacement", () => {
+  it("holds pending user input in a badge-policy lane", () => {
+    const placement = resolveBoardPlacement(
+      shell({ workflowLane: "shaping", hasPendingUserInput: true }),
+      AT(NOW),
+    )!;
+
+    expect(placement.lane).toBe("shaping");
+    expect(placement.source).toBe("assigned");
+    expect(placement.heldInPlace).toBe(true);
+    expect(placement.attention).toBe("blocked");
+  });
+
+  it("moves pending user input out of a move-policy lane", () => {
+    const placement = resolveBoardPlacement(
+      shell({ workflowLane: "ready", hasPendingUserInput: true }),
+      AT(NOW),
+    )!;
+
+    expect(placement.lane).toBe("blocked");
+    expect(placement.heldInPlace).toBe(false);
+  });
+
+  it("drains an effectively settled badge-lane thread to done", () => {
+    const placement = resolveBoardPlacement(
+      shell({ workflowLane: "shaping", settledOverride: "settled" }),
+      AT(NOW),
+    )!;
+
+    expect(placement.lane).toBe("done");
+    expect(placement.heldInPlace).toBe(false);
+  });
+
+  it("holds pending approval in a badge-policy lane", () => {
+    const placement = resolveBoardPlacement(
+      shell({ workflowLane: "shaping", hasPendingApprovals: true }),
+      AT(NOW),
+    )!;
+
+    expect(placement.lane).toBe("shaping");
+    expect(placement.heldInPlace).toBe(true);
+  });
+
+  it("holds failed attention in a badge-policy lane", () => {
+    const placement = resolveBoardPlacement(
+      shell({ workflowLane: "shaping", session: session("error") }),
+      AT(NOW),
+    )!;
+
+    expect(placement.lane).toBe("shaping");
+    expect(placement.heldInPlace).toBe(true);
+    expect(placement.attention).toBe("failed");
+  });
+
   it("drains an inactive thread to done through effective settlement", () => {
     const placement = resolveBoardPlacement(
       shell({
@@ -267,6 +321,17 @@ describe("resolveBoardPlacement", () => {
 });
 
 describe("placementReason", () => {
+  it("explains attention held in a badge-policy lane", () => {
+    const placement = resolveBoardPlacement(
+      shell({ workflowLane: "shaping", hasPendingUserInput: true }),
+      AT(NOW),
+    )!;
+
+    expect(placementReason(placement)).toBe(
+      "waiting on you — held here: this lane keeps your attention",
+    );
+  });
+
   it("explains an override in terms of both lanes", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "ready", hasPendingApprovals: true }),
@@ -306,5 +371,16 @@ describe("isWorkflowLane", () => {
     expect(isWorkflowLane("done")).toBe(true);
     expect(isWorkflowLane("inbox")).toBe(false);
     expect(isWorkflowLane("")).toBe(false);
+  });
+});
+
+describe("boardLaneInterruptPolicy", () => {
+  it("uses badge policy only for shaping", () => {
+    expect(boardLaneInterruptPolicy("shaping")).toBe("badge");
+    expect(boardLaneInterruptPolicy("ready")).toBe("move");
+    expect(boardLaneInterruptPolicy("active")).toBe("move");
+    expect(boardLaneInterruptPolicy("blocked")).toBe("move");
+    expect(boardLaneInterruptPolicy("review")).toBe("move");
+    expect(boardLaneInterruptPolicy("done")).toBe("move");
   });
 });
