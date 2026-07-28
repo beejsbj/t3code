@@ -10,8 +10,8 @@ import {
 import type { SidebarThreadSummary, Thread } from "../types";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { cn } from "../lib/utils";
-import { isLatestTurnSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import { resolveThreadRuntimeState } from "../state/threadRuntimeState";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -409,19 +409,20 @@ type SidebarV2StatusInput = Pick<
 >;
 
 export function resolveSidebarV2Status(thread: SidebarV2StatusInput): SidebarV2Status {
-  if (thread.hasPendingApprovals) {
-    return "approval";
+  switch (resolveThreadRuntimeState(thread)) {
+    case "approval":
+      return "approval";
+    case "input":
+      return "input";
+    case "working":
+    case "connecting":
+      return "working";
+    case "failed":
+      return "failed";
+    case "plan-ready":
+    case "idle":
+      return "ready";
   }
-  if (thread.hasPendingUserInput) {
-    return "input";
-  }
-  if (thread.session?.status === "running" || thread.session?.status === "starting") {
-    return "working";
-  }
-  if (thread.session?.status === "error") {
-    return "failed";
-  }
-  return "ready";
 }
 
 /** NaN-safe Date.parse for sort comparators: a malformed timestamp must not
@@ -543,66 +544,62 @@ export function resolveThreadStatusPill(input: {
 }): ThreadStatusPill | null {
   const { thread } = input;
 
-  if (thread.hasPendingApprovals) {
-    return {
-      label: "Pending Approval",
-      colorClass: "text-amber-600 dark:text-amber-300/90",
-      dotClass: "bg-amber-500 dark:bg-amber-300/90",
-      pulse: false,
-    };
+  let runtimeState = resolveThreadRuntimeState(thread);
+  if (runtimeState === "failed") {
+    // V1 has no failed pill and historically continued to lower-priority
+    // plan/completion presentation when a session errored. Resolve that legacy
+    // fallback through the canonical derivation rather than duplicating it.
+    runtimeState = resolveThreadRuntimeState({ ...thread, session: null });
   }
 
-  if (thread.hasPendingUserInput) {
-    return {
-      label: "Awaiting Input",
-      colorClass: "text-indigo-600 dark:text-indigo-300/90",
-      dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
-      pulse: false,
-    };
+  switch (runtimeState) {
+    case "approval":
+      return {
+        label: "Pending Approval",
+        colorClass: "text-amber-600 dark:text-amber-300/90",
+        dotClass: "bg-amber-500 dark:bg-amber-300/90",
+        pulse: false,
+      };
+    case "input":
+      return {
+        label: "Awaiting Input",
+        colorClass: "text-indigo-600 dark:text-indigo-300/90",
+        dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
+        pulse: false,
+      };
+    case "working":
+      return {
+        label: "Working",
+        colorClass: "text-sky-600 dark:text-sky-300/80",
+        dotClass: "bg-sky-500 dark:bg-sky-300/80",
+        pulse: true,
+      };
+    case "connecting":
+      return {
+        label: "Connecting",
+        colorClass: "text-sky-600 dark:text-sky-300/80",
+        dotClass: "bg-sky-500 dark:bg-sky-300/80",
+        pulse: true,
+      };
+    case "plan-ready":
+      return {
+        label: "Plan Ready",
+        colorClass: "text-violet-600 dark:text-violet-300/90",
+        dotClass: "bg-violet-500 dark:bg-violet-300/90",
+        pulse: false,
+      };
+    case "failed":
+      return null;
+    case "idle":
+      return hasUnseenCompletion(thread)
+        ? {
+            label: "Completed",
+            colorClass: "text-emerald-600 dark:text-emerald-300/90",
+            dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+            pulse: false,
+          }
+        : null;
   }
-
-  if (thread.session?.status === "running") {
-    return {
-      label: "Working",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  if (thread.session?.status === "starting") {
-    return {
-      label: "Connecting",
-      colorClass: "text-sky-600 dark:text-sky-300/80",
-      dotClass: "bg-sky-500 dark:bg-sky-300/80",
-      pulse: true,
-    };
-  }
-
-  const hasPlanReadyPrompt =
-    !thread.hasPendingUserInput &&
-    thread.interactionMode === "plan" &&
-    isLatestTurnSettled(thread.latestTurn, thread.session) &&
-    thread.hasActionableProposedPlan;
-  if (hasPlanReadyPrompt) {
-    return {
-      label: "Plan Ready",
-      colorClass: "text-violet-600 dark:text-violet-300/90",
-      dotClass: "bg-violet-500 dark:bg-violet-300/90",
-      pulse: false,
-    };
-  }
-
-  if (hasUnseenCompletion(thread)) {
-    return {
-      label: "Completed",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
-      pulse: false,
-    };
-  }
-
-  return null;
 }
 
 export function resolveProjectStatusIndicator(
