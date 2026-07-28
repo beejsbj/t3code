@@ -10,6 +10,12 @@ import {
   resolveRuntimeAttention,
 } from "./boardLanes.ts";
 
+const NOW = "2026-07-28T00:00:00.000Z";
+
+function AT(now: string, autoSettleAfterDays: number | null = null) {
+  return { now, autoSettleAfterDays };
+}
+
 function shell(overrides: Partial<BoardLaneInput> = {}): BoardLaneInput {
   return {
     session: null,
@@ -150,7 +156,7 @@ describe("resolveBoardPlacement", () => {
         workflowLane: "ready",
         latestUserMessageAt: "2026-07-20T00:00:00.000Z",
       } as Partial<BoardLaneInput>),
-      { now: "2026-07-28T00:00:00.000Z", autoSettleAfterDays: 3 },
+      AT(NOW, 3),
     )!;
 
     expect(placement.lane).toBe("done");
@@ -159,10 +165,7 @@ describe("resolveBoardPlacement", () => {
 
   it("suppresses a snoozed idle thread from the board", () => {
     expect(
-      resolveBoardPlacement(shell({ snoozedUntil: "2026-07-29T00:00:00.000Z" }), {
-        now: "2026-07-28T00:00:00.000Z",
-        autoSettleAfterDays: null,
-      }),
+      resolveBoardPlacement(shell({ snoozedUntil: "2026-07-29T00:00:00.000Z" }), AT(NOW)),
     ).toBeNull();
   });
 
@@ -172,7 +175,7 @@ describe("resolveBoardPlacement", () => {
         hasPendingApprovals: true,
         snoozedUntil: "2026-07-29T00:00:00.000Z",
       }),
-      { now: "2026-07-28T00:00:00.000Z", autoSettleAfterDays: null },
+      AT(NOW),
     );
 
     expect(placement?.lane).toBe("blocked");
@@ -180,7 +183,7 @@ describe("resolveBoardPlacement", () => {
   });
 
   it("surfaces a failed session in blocked with a failure reason", () => {
-    const placement = resolveBoardPlacement(shell({ session: session("error") }));
+    const placement = resolveBoardPlacement(shell({ session: session("error") }), AT(NOW));
 
     expect(placement?.lane).toBe("blocked");
     expect(placement?.attention).toBe("failed");
@@ -188,14 +191,14 @@ describe("resolveBoardPlacement", () => {
   });
 
   it("puts an unplaced, quiet session in the inbox", () => {
-    const placement = resolveBoardPlacement(shell())!;
+    const placement = resolveBoardPlacement(shell(), AT(NOW))!;
     expect(placement.lane).toBeNull();
     expect(placement.source).toBe("inbox");
     expect(placement.overridden).toBe(false);
   });
 
   it("honours the assigned lane when nothing needs attention", () => {
-    const placement = resolveBoardPlacement(shell({ workflowLane: "ready" }))!;
+    const placement = resolveBoardPlacement(shell({ workflowLane: "ready" }), AT(NOW))!;
     expect(placement.lane).toBe("ready");
     expect(placement.source).toBe("assigned");
     expect(placement.overridden).toBe(false);
@@ -204,6 +207,7 @@ describe("resolveBoardPlacement", () => {
   it("lets runtime attention temporarily override the assigned lane", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "ready", session: session("running") }),
+      AT(NOW),
     )!;
     expect(placement.lane).toBe("active");
     expect(placement.source).toBe("attention");
@@ -215,6 +219,7 @@ describe("resolveBoardPlacement", () => {
   it("does not report an override when attention agrees with the assignment", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "active", session: session("running") }),
+      AT(NOW),
     )!;
     expect(placement.lane).toBe("active");
     expect(placement.source).toBe("attention");
@@ -222,7 +227,7 @@ describe("resolveBoardPlacement", () => {
   });
 
   it("pulls an unplaced session onto a lane while it needs attention", () => {
-    const placement = resolveBoardPlacement(shell({ hasPendingApprovals: true }))!;
+    const placement = resolveBoardPlacement(shell({ hasPendingApprovals: true }), AT(NOW))!;
     expect(placement.lane).toBe("blocked");
     expect(placement.assignedLane).toBeNull();
     expect(placement.overridden).toBe(false);
@@ -235,6 +240,7 @@ describe("resolveBoardPlacement", () => {
         settledOverride: "settled",
         session: session("running"),
       }),
+      AT(NOW),
     )!;
     expect(placement.lane).toBe("active");
     expect(placement.source).toBe("attention");
@@ -246,6 +252,7 @@ describe("resolveBoardPlacement", () => {
     // exists to prevent, so blocked outranks even an explicit settle pin.
     const placement = resolveBoardPlacement(
       shell({ settledOverride: "settled", hasPendingApprovals: true }),
+      AT(NOW),
     )!;
     expect(placement.lane).toBe("blocked");
     expect(placement.source).toBe("attention");
@@ -254,8 +261,8 @@ describe("resolveBoardPlacement", () => {
   it("restores the assigned lane once attention clears", () => {
     const assigned = shell({ workflowLane: "ready" });
     const working = { ...assigned, session: session("running") };
-    expect(resolveBoardPlacement(working)!.lane).toBe("active");
-    expect(resolveBoardPlacement(assigned)!.lane).toBe("ready");
+    expect(resolveBoardPlacement(working, AT(NOW))!.lane).toBe("active");
+    expect(resolveBoardPlacement(assigned, AT(NOW))!.lane).toBe("ready");
   });
 });
 
@@ -263,19 +270,22 @@ describe("placementReason", () => {
   it("explains an override in terms of both lanes", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "ready", hasPendingApprovals: true }),
+      AT(NOW),
     )!;
     expect(placementReason(placement)).toBe("Held here while waiting on you — assigned to Ready");
   });
 
   it("stays quiet for a plainly assigned intent lane", () => {
-    expect(placementReason(resolveBoardPlacement(shell({ workflowLane: "ready" }))!)).toBeNull();
+    expect(
+      placementReason(resolveBoardPlacement(shell({ workflowLane: "ready" }), AT(NOW))!),
+    ).toBeNull();
   });
 
   it("says so when a card sits in an attention lane only because it was dragged there", () => {
     // Otherwise the board claims the agent is working when it is idle.
-    expect(placementReason(resolveBoardPlacement(shell({ workflowLane: "active" }))!)).toBe(
-      "Placed here by hand — the session is idle",
-    );
+    expect(
+      placementReason(resolveBoardPlacement(shell({ workflowLane: "active" }), AT(NOW))!),
+    ).toBe("Placed here by hand — the session is idle");
   });
 });
 

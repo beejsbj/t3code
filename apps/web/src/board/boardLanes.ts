@@ -158,11 +158,6 @@ export interface BoardPlacementOptions {
   readonly autoSettleAfterDays: number | null;
 }
 
-const DEFAULT_PLACEMENT_OPTIONS: BoardPlacementOptions = {
-  now: "1970-01-01T00:00:00.000Z",
-  autoSettleAfterDays: null,
-};
-
 export type BoardPlacementSource = "attention" | "assigned" | "native-done" | "inbox";
 
 export interface BoardPlacement {
@@ -178,7 +173,7 @@ export interface BoardPlacement {
 
 export function resolveBoardPlacement(
   thread: BoardLaneInput,
-  options: BoardPlacementOptions = DEFAULT_PLACEMENT_OPTIONS,
+  options: BoardPlacementOptions,
 ): BoardPlacement | null {
   const assignedLane = thread.workflowLane ?? null;
   const attention = resolveRuntimeAttention(thread);
