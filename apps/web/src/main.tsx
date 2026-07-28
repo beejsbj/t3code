@@ -1,8 +1,5 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { ClerkProvider } from "@clerk/react";
-import { passkeys } from "@clerk/electron/passkeys";
-import { ClerkProvider as ElectronClerkProvider } from "@clerk/electron/react";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
 import "@fontsource-variable/dm-sans/index.css";
@@ -13,6 +10,7 @@ import "./index.css";
 
 import { isElectron } from "./env";
 import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
+import { loadClerkRuntime } from "./clerkRuntime";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";
 import {
@@ -34,21 +32,35 @@ if (isElectron) {
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
 const app = <AppRoot router={router} />;
+const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    {clerkPublishableKey && hasCloudPublicConfig() ? (
-      isElectron ? (
-        <ElectronClerkProvider publishableKey={clerkPublishableKey} passkeys={passkeys}>
+type ClerkProviderComponent = React.ComponentType<{
+  readonly children: React.ReactNode;
+  readonly passkeys?: unknown;
+  readonly publishableKey: string;
+}>;
+
+async function renderApp() {
+  if (!clerkPublishableKey || !hasCloudPublicConfig()) {
+    root.render(<React.StrictMode>{app}</React.StrictMode>);
+    return;
+  }
+
+  const runtime = await loadClerkRuntime(isElectron);
+  const ClerkProvider = runtime.provider as ClerkProviderComponent;
+  root.render(
+    <React.StrictMode>
+      {isElectron ? (
+        <ClerkProvider publishableKey={clerkPublishableKey} passkeys={runtime.passkeys}>
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
-        </ElectronClerkProvider>
+        </ClerkProvider>
       ) : (
         <ClerkProvider publishableKey={clerkPublishableKey}>
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
         </ClerkProvider>
-      )
-    ) : (
-      app
-    )}
-  </React.StrictMode>,
-);
+      )}
+    </React.StrictMode>,
+  );
+}
+
+void renderApp();
