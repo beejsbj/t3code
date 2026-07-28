@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { resolveSidebarV2Status } from "../components/Sidebar.logic.ts";
 import {
   type BoardLaneInput,
   isAttentionLane,
-  isNativelyDone,
   isWorkflowLane,
   placementReason,
   resolveBoardPlacement,
@@ -16,8 +16,13 @@ function shell(overrides: Partial<BoardLaneInput> = {}): BoardLaneInput {
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    interactionMode: "default",
+    latestTurn: null,
+    latestUserMessageAt: null,
     archivedAt: null,
     settledOverride: null,
+    settledAt: null,
+    snoozedUntil: null,
     workflowLane: null,
     ...overrides,
   } as BoardLaneInput;
@@ -25,6 +30,17 @@ function shell(overrides: Partial<BoardLaneInput> = {}): BoardLaneInput {
 
 function session(status: string): BoardLaneInput["session"] {
   return { status } as unknown as BoardLaneInput["session"];
+}
+
+function completedTurn(): BoardLaneInput["latestTurn"] {
+  return {
+    turnId: "turn-1",
+    state: "completed",
+    assistantMessageId: null,
+    requestedAt: "2026-07-28T00:00:00.000Z",
+    startedAt: "2026-07-28T00:00:00.000Z",
+    completedAt: "2026-07-28T00:01:00.000Z",
+  } as BoardLaneInput["latestTurn"];
 }
 
 describe("resolveRuntimeAttention", () => {
@@ -49,38 +65,137 @@ describe("resolveRuntimeAttention", () => {
     ).toBe("blocked");
   });
 
-  it("treats an actionable proposed plan as review, but only when nothing is more urgent", () => {
-    expect(resolveRuntimeAttention(shell({ hasActionableProposedPlan: true }))).toBe("review");
+  it("does not review an actionable proposed plan in default interaction mode", () => {
+    expect(resolveRuntimeAttention(shell({ hasActionableProposedPlan: true }))).toBeNull();
+  });
+
+  it("reviews an actionable plan only after the latest plan-mode turn settles", () => {
     expect(
       resolveRuntimeAttention(
-        shell({ hasActionableProposedPlan: true, session: session("running") }),
+        shell({
+          hasActionableProposedPlan: true,
+          interactionMode: "plan",
+          latestTurn: completedTurn(),
+        }),
+      ),
+    ).toBe("review");
+    expect(
+      resolveRuntimeAttention(
+        shell({
+          hasActionableProposedPlan: true,
+          interactionMode: "plan",
+          latestTurn: completedTurn(),
+          session: session("running"),
+        }),
       ),
     ).toBe("active");
   });
 });
 
-describe("isNativelyDone", () => {
-  it("is true only for an explicitly settled thread", () => {
-    expect(isNativelyDone(shell())).toBe(false);
-    expect(isNativelyDone(shell({ settledOverride: "settled" }))).toBe(true);
-    expect(isNativelyDone(shell({ settledOverride: "active" }))).toBe(false);
-  });
+describe("board/sidebar runtime-state drift", () => {
+  const fixtures = [
+    { name: "idle", thread: shell(), sidebar: "ready", board: null },
+    {
+      name: "approval",
+      thread: shell({ hasPendingApprovals: true }),
+      sidebar: "approval",
+      board: "blocked",
+    },
+    {
+      name: "input",
+      thread: shell({ hasPendingUserInput: true }),
+      sidebar: "input",
+      board: "blocked",
+    },
+    {
+      name: "working",
+      thread: shell({ session: session("running") }),
+      sidebar: "working",
+      board: "active",
+    },
+    {
+      name: "connecting",
+      thread: shell({ session: session("starting") }),
+      sidebar: "working",
+      board: "active",
+    },
+    {
+      name: "failed",
+      thread: shell({ session: session("error") }),
+      sidebar: "failed",
+      board: "failed",
+    },
+    {
+      name: "plan-ready",
+      thread: shell({
+        hasActionableProposedPlan: true,
+        interactionMode: "plan",
+        latestTurn: completedTurn(),
+      }),
+      sidebar: "ready",
+      board: "review",
+    },
+  ] as const;
 
-  it("ignores archivedAt, because archived sessions leave the board entirely", () => {
-    expect(isNativelyDone(shell({ archivedAt: "2026-07-27T00:00:00.000Z" }))).toBe(false);
+  it.each(fixtures)("keeps the $name projection aligned", ({ thread, sidebar, board }) => {
+    expect(resolveSidebarV2Status(thread)).toBe(sidebar);
+    expect(resolveRuntimeAttention(thread)).toBe(board);
   });
 });
 
 describe("resolveBoardPlacement", () => {
+  it("drains an inactive thread to done through effective settlement", () => {
+    const placement = resolveBoardPlacement(
+      shell({
+        workflowLane: "ready",
+        latestUserMessageAt: "2026-07-20T00:00:00.000Z",
+      } as Partial<BoardLaneInput>),
+      { now: "2026-07-28T00:00:00.000Z", autoSettleAfterDays: 3 },
+    )!;
+
+    expect(placement.lane).toBe("done");
+    expect(placement.source).toBe("native-done");
+  });
+
+  it("suppresses a snoozed idle thread from the board", () => {
+    expect(
+      resolveBoardPlacement(shell({ snoozedUntil: "2026-07-29T00:00:00.000Z" }), {
+        now: "2026-07-28T00:00:00.000Z",
+        autoSettleAfterDays: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("lets a snoozed thread raise its hand for pending approval", () => {
+    const placement = resolveBoardPlacement(
+      shell({
+        hasPendingApprovals: true,
+        snoozedUntil: "2026-07-29T00:00:00.000Z",
+      }),
+      { now: "2026-07-28T00:00:00.000Z", autoSettleAfterDays: null },
+    );
+
+    expect(placement?.lane).toBe("blocked");
+    expect(placement?.attention).toBe("blocked");
+  });
+
+  it("surfaces a failed session in blocked with a failure reason", () => {
+    const placement = resolveBoardPlacement(shell({ session: session("error") }));
+
+    expect(placement?.lane).toBe("blocked");
+    expect(placement?.attention).toBe("failed");
+    expect(placement === null ? null : placementReason(placement)).toBe("the session failed");
+  });
+
   it("puts an unplaced, quiet session in the inbox", () => {
-    const placement = resolveBoardPlacement(shell());
+    const placement = resolveBoardPlacement(shell())!;
     expect(placement.lane).toBeNull();
     expect(placement.source).toBe("inbox");
     expect(placement.overridden).toBe(false);
   });
 
   it("honours the assigned lane when nothing needs attention", () => {
-    const placement = resolveBoardPlacement(shell({ workflowLane: "ready" }));
+    const placement = resolveBoardPlacement(shell({ workflowLane: "ready" }))!;
     expect(placement.lane).toBe("ready");
     expect(placement.source).toBe("assigned");
     expect(placement.overridden).toBe(false);
@@ -89,7 +204,7 @@ describe("resolveBoardPlacement", () => {
   it("lets runtime attention temporarily override the assigned lane", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "ready", session: session("running") }),
-    );
+    )!;
     expect(placement.lane).toBe("active");
     expect(placement.source).toBe("attention");
     expect(placement.overridden).toBe(true);
@@ -100,29 +215,29 @@ describe("resolveBoardPlacement", () => {
   it("does not report an override when attention agrees with the assignment", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "active", session: session("running") }),
-    );
+    )!;
     expect(placement.lane).toBe("active");
     expect(placement.source).toBe("attention");
     expect(placement.overridden).toBe(false);
   });
 
   it("pulls an unplaced session onto a lane while it needs attention", () => {
-    const placement = resolveBoardPlacement(shell({ hasPendingApprovals: true }));
+    const placement = resolveBoardPlacement(shell({ hasPendingApprovals: true }))!;
     expect(placement.lane).toBe("blocked");
     expect(placement.assignedLane).toBeNull();
     expect(placement.overridden).toBe(false);
   });
 
-  it("ranks native done above active and review attention", () => {
+  it("keeps live work active even when explicitly settled", () => {
     const placement = resolveBoardPlacement(
       shell({
         workflowLane: "review",
         settledOverride: "settled",
         session: session("running"),
       }),
-    );
-    expect(placement.lane).toBe("done");
-    expect(placement.source).toBe("native-done");
+    )!;
+    expect(placement.lane).toBe("active");
+    expect(placement.source).toBe("attention");
     expect(placement.assignedLane).toBe("review");
   });
 
@@ -131,7 +246,7 @@ describe("resolveBoardPlacement", () => {
     // exists to prevent, so blocked outranks even an explicit settle pin.
     const placement = resolveBoardPlacement(
       shell({ settledOverride: "settled", hasPendingApprovals: true }),
-    );
+    )!;
     expect(placement.lane).toBe("blocked");
     expect(placement.source).toBe("attention");
   });
@@ -139,8 +254,8 @@ describe("resolveBoardPlacement", () => {
   it("restores the assigned lane once attention clears", () => {
     const assigned = shell({ workflowLane: "ready" });
     const working = { ...assigned, session: session("running") };
-    expect(resolveBoardPlacement(working).lane).toBe("active");
-    expect(resolveBoardPlacement(assigned).lane).toBe("ready");
+    expect(resolveBoardPlacement(working)!.lane).toBe("active");
+    expect(resolveBoardPlacement(assigned)!.lane).toBe("ready");
   });
 });
 
@@ -148,17 +263,17 @@ describe("placementReason", () => {
   it("explains an override in terms of both lanes", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "ready", hasPendingApprovals: true }),
-    );
+    )!;
     expect(placementReason(placement)).toBe("Held here while waiting on you — assigned to Ready");
   });
 
   it("stays quiet for a plainly assigned intent lane", () => {
-    expect(placementReason(resolveBoardPlacement(shell({ workflowLane: "ready" })))).toBeNull();
+    expect(placementReason(resolveBoardPlacement(shell({ workflowLane: "ready" }))!)).toBeNull();
   });
 
   it("says so when a card sits in an attention lane only because it was dragged there", () => {
     // Otherwise the board claims the agent is working when it is idle.
-    expect(placementReason(resolveBoardPlacement(shell({ workflowLane: "active" })))).toBe(
+    expect(placementReason(resolveBoardPlacement(shell({ workflowLane: "active" }))!)).toBe(
       "Placed here by hand — the session is idle",
     );
   });

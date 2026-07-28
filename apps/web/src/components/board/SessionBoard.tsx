@@ -13,7 +13,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import type { ScopedThreadRef, WorkflowLane } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { InboxIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   BOARD_LANES,
@@ -22,6 +22,8 @@ import {
   type BoardPlacement,
 } from "../../board/boardLanes.ts";
 import { useBoardCardStore } from "../../board/boardCardStore.ts";
+import { useNowMinute } from "../../hooks/useNowMinute.ts";
+import { useClientSettings } from "../../hooks/useSettings.ts";
 import { useProjects, useThreadShells } from "../../state/entities.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
@@ -42,12 +44,30 @@ interface PlacedThread {
 export function SessionBoard() {
   const threads = useThreadShells();
   const projects = useProjects();
+  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const nowMinute = useNowMinute();
   const focusedThreadKey = useBoardCardStore((state) => state.focusedThreadKey);
   const clearFocus = useBoardCardStore((state) => state.clearFocus);
   const setWorkflowLane = useAtomCommand(threadEnvironment.setWorkflowLane, {
     reportFailure: false,
   });
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
+  const [snoozeWakeTick, setSnoozeWakeTick] = useState(0);
+
+  useEffect(() => {
+    const nowMs = Date.now();
+    let nextWakeAtMs = Number.POSITIVE_INFINITY;
+    for (const thread of threads) {
+      if (thread.snoozedUntil == null) continue;
+      const wakeAtMs = Date.parse(thread.snoozedUntil);
+      if (wakeAtMs > nowMs && wakeAtMs < nextWakeAtMs) nextWakeAtMs = wakeAtMs;
+    }
+    if (!Number.isFinite(nextWakeAtMs)) return;
+
+    const delayMs = Math.min(Math.max(0, nextWakeAtMs - nowMs) + 50, 2_147_483_647);
+    const id = window.setTimeout(() => setSnoozeWakeTick((tick) => tick + 1), delayMs);
+    return () => window.clearTimeout(id);
+  }, [snoozeWakeTick, threads]);
 
   const projectTitleById = useMemo(() => {
     const map = new Map<string, string>();
@@ -58,21 +78,27 @@ export function SessionBoard() {
   }, [projects]);
 
   const placed = useMemo<ReadonlyArray<PlacedThread>>(() => {
+    void nowMinute;
+    void snoozeWakeTick;
+    const now = new Date().toISOString();
     return threads
       .filter((thread) => thread.archivedAt === null)
-      .map((thread) => {
+      .map<PlacedThread | null>((thread) => {
         const ref = scopeThreadRef(thread.environmentId, thread.id);
+        const placement = resolveBoardPlacement(thread, { now, autoSettleAfterDays });
+        if (placement === null) return null;
         return {
           ref,
           key: scopedThreadKey(ref),
           thread,
-          placement: resolveBoardPlacement(thread),
+          placement,
           projectTitle:
             projectTitleById.get(`${thread.environmentId}:${thread.projectId}`) ?? "Project",
         };
       })
+      .filter((entry): entry is PlacedThread => entry !== null)
       .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt));
-  }, [projectTitleById, threads]);
+  }, [autoSettleAfterDays, nowMinute, projectTitleById, snoozeWakeTick, threads]);
 
   const inbox = useMemo(() => placed.filter((entry) => entry.placement.lane === null), [placed]);
   const byLane = useMemo(() => {

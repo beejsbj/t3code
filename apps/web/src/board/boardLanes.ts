@@ -1,11 +1,14 @@
 import type { OrchestrationThreadShell, WorkflowLane } from "@t3tools/contracts";
+import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
+
+import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
 
 /**
  * Lane model for the live session board.
  *
  * ## State precedence
  *
- * A card's lane is decided by exactly two inputs, in this order:
+ * A card's lane is decided by native lifecycle state plus persisted intent:
  *
  * 1. **Runtime attention** (derived, native, never persisted). If the session
  *    is currently doing something a human must see — it is running, or it is
@@ -21,9 +24,8 @@ import type { OrchestrationThreadShell, WorkflowLane } from "@t3tools/contracts"
  * a lane.
  *
  * Why one persisted field is needed at all: every *runtime* lane on this board
- * is already derivable from native state (`session.status`,
- * `hasPendingApprovals`, `hasPendingUserInput`, `hasActionableProposedPlan`,
- * `settledOverride`/`archivedAt`). What is NOT derivable is human intent —
+ * is already derivable from native session state, effective settlement, or
+ * snooze. What is NOT derivable is human intent —
  * "still shaping this" versus "groomed, ready to pick up" are the same thing to
  * the runtime (idle session, nothing pending), and a drag gesture is a
  * statement no runtime signal can stand in for. That gap, and only that gap, is
@@ -90,8 +92,13 @@ export type BoardLaneInput = Pick<
   | "hasPendingApprovals"
   | "hasPendingUserInput"
   | "hasActionableProposedPlan"
+  | "interactionMode"
+  | "latestTurn"
+  | "latestUserMessageAt"
   | "archivedAt"
   | "settledOverride"
+  | "settledAt"
+  | "snoozedUntil"
 > & {
   readonly workflowLane?: WorkflowLane | null | undefined;
 };
@@ -102,20 +109,23 @@ export type BoardLaneInput = Pick<
  * Ordered most-urgent first: a session that is both blocked and nominally
  * running is blocked — the human is the bottleneck, not the agent.
  */
-export type RuntimeAttention = "blocked" | "active" | "review" | null;
+export type RuntimeAttention = "blocked" | "active" | "failed" | "review" | null;
 
 export function resolveRuntimeAttention(thread: BoardLaneInput): RuntimeAttention {
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput) {
-    return "blocked";
+  switch (resolveThreadRuntimeState(thread)) {
+    case "approval":
+    case "input":
+      return "blocked";
+    case "working":
+    case "connecting":
+      return "active";
+    case "failed":
+      return "failed";
+    case "plan-ready":
+      return "review";
+    case "idle":
+      return null;
   }
-  const status = thread.session?.status;
-  if (status === "running" || status === "starting") {
-    return "active";
-  }
-  if (thread.hasActionableProposedPlan) {
-    return "review";
-  }
-  return null;
 }
 
 /**
@@ -139,14 +149,19 @@ export function isAttentionLane(lane: WorkflowLane): boolean {
 }
 
 /**
- * A session is "finished" when the native lifecycle says so: explicitly pinned
- * settled. Archived threads are deliberately *not* included — an archived
- * session leaves the board entirely rather than landing in `done`, so folding
- * `archivedAt` in here would be dead code.
+ * Placement options carry the clock and the same persisted auto-settle setting
+ * used by the sidebar. Keeping them explicit preserves deterministic tests and
+ * keeps this module independent of React stores.
  */
-export function isNativelyDone(thread: BoardLaneInput): boolean {
-  return thread.settledOverride === "settled";
+export interface BoardPlacementOptions {
+  readonly now: string;
+  readonly autoSettleAfterDays: number | null;
 }
+
+const DEFAULT_PLACEMENT_OPTIONS: BoardPlacementOptions = {
+  now: "1970-01-01T00:00:00.000Z",
+  autoSettleAfterDays: null,
+};
 
 export type BoardPlacementSource = "attention" | "assigned" | "native-done" | "inbox";
 
@@ -161,16 +176,31 @@ export interface BoardPlacement {
   readonly overridden: boolean;
 }
 
-export function resolveBoardPlacement(thread: BoardLaneInput): BoardPlacement {
+export function resolveBoardPlacement(
+  thread: BoardLaneInput,
+  options: BoardPlacementOptions = DEFAULT_PLACEMENT_OPTIONS,
+): BoardPlacement | null {
   const assignedLane = thread.workflowLane ?? null;
   const attention = resolveRuntimeAttention(thread);
 
-  // "Blocked" outranks everything, including settled. A session holding a
-  // pending approval needs a human now; burying it under Done because someone
-  // pinned it settled is exactly the failure this board exists to prevent.
+  // Keep snooze suppression in the pure placement model rather than in the
+  // React list filter. `null` is distinct from an inbox placement and makes
+  // every board consumer obey the same wake / raise-the-hand rule.
+  const snoozedUntilMs = thread.snoozedUntil == null ? Number.NaN : Date.parse(thread.snoozedUntil);
+  if (
+    attention === null &&
+    !Number.isNaN(snoozedUntilMs) &&
+    snoozedUntilMs > Date.parse(options.now)
+  ) {
+    return null;
+  }
+
+  // Blocking or failed attention outranks everything, including settled. A
+  // session holding an approval or exposing a failure needs a human now;
+  // burying it under Done is exactly the failure this board exists to prevent.
   // (The server already refuses to settle a thread with pending work, so this
   // is a belt-and-braces ordering rather than a common case.)
-  if (attention === "blocked") {
+  if (attention === "blocked" || attention === "failed") {
     return {
       lane: "blocked",
       source: "attention",
@@ -180,7 +210,12 @@ export function resolveBoardPlacement(thread: BoardLaneInput): BoardPlacement {
     };
   }
 
-  if (isNativelyDone(thread)) {
+  if (
+    effectiveSettled(thread as OrchestrationThreadShell, {
+      now: options.now,
+      autoSettleAfterDays: options.autoSettleAfterDays,
+    })
+  ) {
     return {
       lane: "done",
       source: "native-done",
@@ -245,6 +280,8 @@ function attentionLabel(attention: RuntimeAttention): string {
       return "waiting on you";
     case "active":
       return "the agent is working";
+    case "failed":
+      return "the session failed";
     case "review":
       return "a plan is waiting for review";
     case null:
