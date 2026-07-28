@@ -6,7 +6,13 @@ import type {
   ServerProvider,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import { ChevronsDownUpIcon, GripVerticalIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
+import {
+  ChevronsDownUpIcon,
+  EllipsisIcon,
+  GripVerticalIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { placementReason, type BoardPlacement } from "../../board/boardLanes.ts";
@@ -31,6 +37,7 @@ import type { SidebarThreadSummary } from "../../types.ts";
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "../ChatMarkdown.tsx";
 import { resolveSidebarV2Status } from "../Sidebar.logic.ts";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
 import { BoardCardComposer } from "./BoardCardComposer.tsx";
 import { useInViewport } from "./useInViewport.ts";
 
@@ -58,6 +65,9 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   const toggleFocus = useBoardCardStore((state) => state.toggleFocus);
   const setHeight = useBoardCardStore((state) => state.setHeight);
   const setSize = useBoardCardStore((state) => state.setSize);
+  const setWorkflowLane = useAtomCommand(threadEnvironment.setWorkflowLane, {
+    reportFailure: false,
+  });
   const heightPx = useBoardCardStore((state) => selectCardHeight(state.byThreadKey, threadRef));
   const isFocused = focusedThreadKey === cardKey;
 
@@ -158,6 +168,26 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           </p>
         </div>
         <StatusDot status={status} />
+        <Menu>
+          <MenuTrigger
+            aria-label={`Board actions for ${thread.title}`}
+            className="rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+          >
+            <EllipsisIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup align="end">
+            <MenuItem
+              onClick={() =>
+                void setWorkflowLane({
+                  environmentId: threadRef.environmentId,
+                  input: { threadId: threadRef.threadId, workflowLane: null },
+                })
+              }
+            >
+              Remove from board
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
         <button
           type="button"
           onClick={() => setSize(threadRef, size === "tall" ? "compact" : "tall")}

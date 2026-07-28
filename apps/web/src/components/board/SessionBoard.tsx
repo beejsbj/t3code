@@ -12,7 +12,6 @@ import {
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef, WorkflowLane } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { InboxIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -30,8 +29,6 @@ import { useAtomCommand } from "../../state/use-atom-command.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
 import { cn } from "~/lib/utils";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
-
-const INBOX_DROPPABLE_ID = "board-inbox";
 
 interface PlacedThread {
   readonly ref: ScopedThreadRef;
@@ -100,7 +97,6 @@ export function SessionBoard() {
       .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt));
   }, [autoSettleAfterDays, nowMinute, projectTitleById, snoozeWakeTick, threads]);
 
-  const inbox = useMemo(() => placed.filter((entry) => entry.placement.lane === null), [placed]);
   const byLane = useMemo(() => {
     const map = new Map<WorkflowLane, Array<PlacedThread>>();
     for (const lane of BOARD_LANES) map.set(lane.id, []);
@@ -138,25 +134,24 @@ export function SessionBoard() {
       if (!entry) return;
 
       const overId = String(over.id);
-      if (overId !== INBOX_DROPPABLE_ID && !isWorkflowLane(overId)) return;
-      const nextLane: WorkflowLane | null = overId === INBOX_DROPPABLE_ID ? null : overId;
+      if (!isWorkflowLane(overId)) return;
 
       // Drag/drop moves the *session-owned* field only. It never touches the
       // runtime attention that may currently be displacing the card, so
       // dropping a working session into "Ready" records the intent and the
       // card stays visibly held in "Active" until the run finishes.
-      if (entry.placement.assignedLane === nextLane) return;
+      if (entry.placement.assignedLane === overId) return;
 
       void setWorkflowLane({
         environmentId: entry.ref.environmentId,
-        input: { threadId: entry.ref.threadId, workflowLane: nextLane },
+        input: { threadId: entry.ref.threadId, workflowLane: overId },
       });
     },
     [placed, setWorkflowLane],
   );
 
   return (
-    <div className="flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-background text-foreground">
+    <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
       <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
         <h1 className="text-sm font-medium">Session board</h1>
         <p className="hidden text-xs text-muted-foreground/70 sm:block">
@@ -189,68 +184,20 @@ export function SessionBoard() {
         onDragEnd={handleDragEnd}
         onDragCancel={() => setDraggingKey(null)}
       >
-        <div className="flex min-h-0 flex-1">
-          <InboxRail entries={inbox} draggingKey={draggingKey} />
-          <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
-            {BOARD_LANES.map((lane) => (
-              <LaneColumn
-                key={lane.id}
-                laneId={lane.id}
-                label={lane.label}
-                hint={lane.hint}
-                entries={byLane.get(lane.id) ?? []}
-                draggingKey={draggingKey}
-              />
-            ))}
-          </div>
+        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
+          {BOARD_LANES.map((lane) => (
+            <LaneColumn
+              key={lane.id}
+              laneId={lane.id}
+              label={lane.label}
+              hint={lane.hint}
+              entries={byLane.get(lane.id) ?? []}
+              draggingKey={draggingKey}
+            />
+          ))}
         </div>
       </DndContext>
     </div>
-  );
-}
-
-function InboxRail({
-  entries,
-  draggingKey,
-}: {
-  readonly entries: ReadonlyArray<PlacedThread>;
-  readonly draggingKey: string | null;
-}) {
-  const { isOver, setNodeRef } = useDroppable({ id: INBOX_DROPPABLE_ID });
-
-  return (
-    <aside
-      ref={setNodeRef}
-      className={cn(
-        "flex w-[264px] shrink-0 flex-col border-r border-border bg-card/20",
-        isOver && "bg-accent/40",
-      )}
-    >
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2">
-        <InboxIcon className="size-3.5 text-muted-foreground" />
-        <span className="text-xs font-medium">Inbox</span>
-        <span className="ml-auto text-[11px] text-muted-foreground/70">{entries.length}</span>
-      </div>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
-        {entries.length === 0 ? (
-          <p className="px-1 py-6 text-center text-[11px] text-muted-foreground/60">
-            Every session has been placed. Drop one back here to unassign it.
-          </p>
-        ) : (
-          entries.map((entry) => (
-            <BoardSessionCard
-              key={entry.key}
-              cardKey={entry.key}
-              threadRef={entry.ref}
-              thread={entry.thread}
-              placement={entry.placement}
-              projectTitle={entry.projectTitle}
-              isDragging={draggingKey === entry.key}
-            />
-          ))
-        )}
-      </div>
-    </aside>
   );
 }
 

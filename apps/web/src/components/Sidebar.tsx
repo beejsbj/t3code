@@ -106,6 +106,10 @@ import { isModelPickerOpen } from "../modelPickerVisibility";
 import { useShortcutModifierState } from "../shortcutModifierState";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
+import {
+  buildBoardPlacementContextMenuItems,
+  workflowLaneForBoardPlacementAction,
+} from "../board/boardPlacementMenu";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
@@ -1107,6 +1111,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     reportFailure: false,
   });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const setWorkflowLane = useAtomCommand(threadEnvironment.setWorkflowLane, {
     reportFailure: false,
   });
   const updateSettings = useUpdateClientSettings();
@@ -2116,6 +2123,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
+          ...buildBoardPlacementContextMenuItems(),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2124,6 +2132,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         ],
         position,
       );
+
+      const workflowLane = workflowLaneForBoardPlacementAction(clicked);
+      if (workflowLane !== undefined) {
+        void setWorkflowLane({
+          environmentId: threadRef.environmentId,
+          input: { threadId: threadRef.threadId, workflowLane },
+        });
+        return;
+      }
 
       if (clicked === "new-thread-on-branch") {
         // Explicit branch carry-over: reuse the thread's worktree when it
@@ -2209,6 +2226,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       markThreadUnread,
       memberProjectByScopedKey,
       project.workspaceRoot,
+      setWorkflowLane,
       startThreadRename,
     ],
   );

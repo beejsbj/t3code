@@ -245,10 +245,14 @@ describe("resolveBoardPlacement", () => {
   });
 
   it("puts an unplaced, quiet session in the inbox", () => {
-    const placement = resolveBoardPlacement(shell(), AT(NOW))!;
-    expect(placement.lane).toBeNull();
-    expect(placement.source).toBe("inbox");
-    expect(placement.overridden).toBe(false);
+    expect(resolveBoardPlacement(shell(), AT(NOW))).toEqual({
+      lane: null,
+      source: "inbox",
+      assignedLane: null,
+      attention: null,
+      overridden: false,
+      heldInPlace: false,
+    });
   });
 
   it("honours the assigned lane when nothing needs attention", () => {
@@ -281,10 +285,14 @@ describe("resolveBoardPlacement", () => {
   });
 
   it("pulls an unplaced session onto a lane while it needs attention", () => {
-    const placement = resolveBoardPlacement(shell({ hasPendingApprovals: true }), AT(NOW))!;
-    expect(placement.lane).toBe("blocked");
-    expect(placement.assignedLane).toBeNull();
-    expect(placement.overridden).toBe(false);
+    expect(resolveBoardPlacement(shell({ hasPendingApprovals: true }), AT(NOW))).toEqual({
+      lane: "blocked",
+      source: "attention",
+      assignedLane: null,
+      attention: "blocked",
+      overridden: false,
+      heldInPlace: false,
+    });
   });
 
   it("keeps live work active even when explicitly settled", () => {

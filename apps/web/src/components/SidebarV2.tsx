@@ -157,6 +157,10 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { useComposerDraftStore } from "../composerDraftStore";
+import {
+  buildBoardPlacementContextMenuItems,
+  workflowLaneForBoardPlacementAction,
+} from "../board/boardPlacementMenu";
 
 // Settled-tail paging: recent history is the common lookup; the deep tail
 // stays behind an explicit Show more.
@@ -1011,6 +1015,9 @@ export default function SidebarV2() {
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread, deleteThread } =
     useThreadActions();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const setWorkflowLane = useAtomCommand(threadEnvironment.setWorkflowLane, {
     reportFailure: false,
   });
   const deleteProject = useAtomCommand(projectEnvironment.delete, {
@@ -2023,6 +2030,7 @@ export default function SidebarV2() {
                         },
                   ]
                 : []),
+              ...buildBoardPlacementContextMenuItems(),
               { id: "rename", label: "Rename thread" },
               { id: "mark-unread", label: "Mark unread" },
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
@@ -2031,6 +2039,14 @@ export default function SidebarV2() {
           ),
         );
         if (clicked._tag === "Failure") return;
+        const workflowLane = workflowLaneForBoardPlacementAction(clicked.value);
+        if (workflowLane !== undefined) {
+          void setWorkflowLane({
+            environmentId: threadRef.environmentId,
+            input: { threadId: threadRef.threadId, workflowLane },
+          });
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset = snoozePresets.find(
             (candidate) => `snooze:${candidate.id}` === clicked.value,
@@ -2118,6 +2134,7 @@ export default function SidebarV2() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       serverConfigs,
+      setWorkflowLane,
       startThreadRename,
     ],
   );
