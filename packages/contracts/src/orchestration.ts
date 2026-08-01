@@ -359,15 +359,26 @@ export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
  * `null` means the session has not been placed on the board yet — it lives
  * in the inbox/source queue.
  */
-export const WorkflowLane = Schema.Literals([
-  "shaping",
-  "ready",
-  "active",
-  "blocked",
-  "review",
-  "done",
-]);
+export const LaneId = TrimmedNonEmptyString.pipe(Schema.brand("LaneId"));
+export type LaneId = typeof LaneId.Type;
+
+export const WorkflowLane = LaneId;
 export type WorkflowLane = typeof WorkflowLane.Type;
+
+export const LaneInterruptPolicy = Schema.Literals(["move", "badge"]);
+export type LaneInterruptPolicy = typeof LaneInterruptPolicy.Type;
+
+export const LaneDefinition = Schema.Struct({
+  id: LaneId,
+  name: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  order: Schema.Number,
+  interrupt: LaneInterruptPolicy,
+});
+export type LaneDefinition = typeof LaneDefinition.Type;
+
+export const WorkflowLanePlacedBy = Schema.Literals(["user", "agent"]);
+export type WorkflowLanePlacedBy = typeof WorkflowLanePlacedBy.Type;
 
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
@@ -396,6 +407,8 @@ export const OrchestrationThread = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   // Optional so payloads from pre-board servers still decode.
   workflowLane: Schema.optional(Schema.NullOr(WorkflowLane)),
+  workflowLanePlacedBy: Schema.optional(Schema.NullOr(WorkflowLanePlacedBy)),
+  workflowLanePlacedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -410,6 +423,7 @@ export type OrchestrationThread = typeof OrchestrationThread.Type;
 export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
+  lanes: Schema.Array(LaneDefinition).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   threads: Schema.Array(OrchestrationThread),
   updatedAt: IsoDateTime,
 });
@@ -449,6 +463,8 @@ export const OrchestrationThreadShell = Schema.Struct({
   snoozedUntil: Schema.optional(Schema.NullOr(IsoDateTime)),
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   workflowLane: Schema.optional(Schema.NullOr(WorkflowLane)),
+  workflowLanePlacedBy: Schema.optional(Schema.NullOr(WorkflowLanePlacedBy)),
+  workflowLanePlacedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -460,6 +476,7 @@ export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
+  lanes: Schema.Array(LaneDefinition).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   threads: Schema.Array(OrchestrationThreadShell),
   updatedAt: IsoDateTime,
 });
@@ -485,6 +502,16 @@ export const OrchestrationShellStreamEvent = Schema.Union([
     kind: Schema.Literal("thread-removed"),
     sequence: NonNegativeInt,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("lane-upserted"),
+    sequence: NonNegativeInt,
+    lane: LaneDefinition,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("lane-removed"),
+    sequence: NonNegativeInt,
+    laneId: LaneId,
   }),
 ]);
 export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent.Type;
@@ -667,6 +694,31 @@ const ThreadWorkflowLaneSetCommand = Schema.Struct({
   threadId: ThreadId,
   // `null` returns the session to the inbox/source queue.
   workflowLane: Schema.NullOr(WorkflowLane),
+  placedBy: Schema.optional(WorkflowLanePlacedBy).pipe(
+    Schema.withDecodingDefault(Effect.succeed("user" as const)),
+  ),
+});
+
+const LaneCreateCommand = Schema.Struct({
+  type: Schema.Literal("lane.create"),
+  commandId: CommandId,
+  lane: LaneDefinition,
+});
+
+const LaneUpdateCommand = Schema.Struct({
+  type: Schema.Literal("lane.update"),
+  commandId: CommandId,
+  laneId: LaneId,
+  name: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(TrimmedNonEmptyString),
+  order: Schema.optional(Schema.Number),
+  interrupt: Schema.optional(LaneInterruptPolicy),
+});
+
+const LaneArchiveCommand = Schema.Struct({
+  type: Schema.Literal("lane.archive"),
+  commandId: CommandId,
+  laneId: LaneId,
 });
 
 const ThreadInteractionModeSetCommand = Schema.Struct({
@@ -788,6 +840,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  LaneCreateCommand,
+  LaneUpdateCommand,
+  LaneArchiveCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -814,6 +869,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  LaneCreateCommand,
+  LaneUpdateCommand,
+  LaneArchiveCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -921,6 +979,9 @@ export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
   "project.deleted",
+  "lane.created",
+  "lane.updated",
+  "lane.archived",
   "thread.created",
   "thread.deleted",
   "thread.archived",
@@ -948,7 +1009,7 @@ export const OrchestrationEventType = Schema.Literals([
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "lane"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -976,6 +1037,22 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
 export const ProjectDeletedPayload = Schema.Struct({
   projectId: ProjectId,
   deletedAt: IsoDateTime,
+});
+
+export const LaneCreatedPayload = Schema.Struct({
+  lane: LaneDefinition,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const LaneUpdatedPayload = Schema.Struct({
+  lane: LaneDefinition,
+  updatedAt: IsoDateTime,
+});
+
+export const LaneArchivedPayload = Schema.Struct({
+  laneId: LaneId,
+  archivedAt: IsoDateTime,
 });
 
 export const ThreadCreatedPayload = Schema.Struct({
@@ -1056,6 +1133,9 @@ export const ThreadRuntimeModeSetPayload = Schema.Struct({
 export const ThreadWorkflowLaneSetPayload = Schema.Struct({
   threadId: ThreadId,
   workflowLane: Schema.NullOr(WorkflowLane),
+  placedBy: Schema.optional(WorkflowLanePlacedBy).pipe(
+    Schema.withDecodingDefault(Effect.succeed("user" as const)),
+  ),
   updatedAt: IsoDateTime,
 });
 
@@ -1167,7 +1247,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, LaneId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -1190,6 +1270,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("project.deleted"),
     payload: ProjectDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.created"),
+    payload: LaneCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.updated"),
+    payload: LaneUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.archived"),
+    payload: LaneArchivedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

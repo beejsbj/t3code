@@ -1,3 +1,4 @@
+import { LaneId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSidebarV2Status } from "../components/Sidebar.logic.ts";
@@ -17,7 +18,17 @@ function AT(now: string, autoSettleAfterDays: number | null = null) {
   return { now, autoSettleAfterDays };
 }
 
-function shell(overrides: Partial<BoardLaneInput> = {}): BoardLaneInput {
+function shell(
+  overrides: Omit<Partial<BoardLaneInput>, "workflowLane"> & {
+    readonly workflowLane?: string | null | undefined;
+  } = {},
+): BoardLaneInput {
+  const workflowLane =
+    overrides.workflowLane === undefined
+      ? null
+      : overrides.workflowLane === null
+        ? null
+        : LaneId.make(overrides.workflowLane);
   return {
     session: null,
     hasPendingApprovals: false,
@@ -30,8 +41,8 @@ function shell(overrides: Partial<BoardLaneInput> = {}): BoardLaneInput {
     settledOverride: null,
     settledAt: null,
     snoozedUntil: null,
-    workflowLane: null,
     ...overrides,
+    workflowLane,
   } as BoardLaneInput;
 }
 
@@ -364,12 +375,12 @@ describe("placementReason", () => {
 
 describe("isAttentionLane", () => {
   it("separates runtime-owned lanes from human-intent lanes", () => {
-    expect(isAttentionLane("active")).toBe(true);
-    expect(isAttentionLane("blocked")).toBe(true);
-    expect(isAttentionLane("review")).toBe(true);
-    expect(isAttentionLane("shaping")).toBe(false);
-    expect(isAttentionLane("ready")).toBe(false);
-    expect(isAttentionLane("done")).toBe(false);
+    expect(isAttentionLane(LaneId.make("active"))).toBe(true);
+    expect(isAttentionLane(LaneId.make("blocked"))).toBe(true);
+    expect(isAttentionLane(LaneId.make("review"))).toBe(true);
+    expect(isAttentionLane(LaneId.make("shaping"))).toBe(false);
+    expect(isAttentionLane(LaneId.make("ready"))).toBe(false);
+    expect(isAttentionLane(LaneId.make("done"))).toBe(false);
   });
 });
 
@@ -384,11 +395,11 @@ describe("isWorkflowLane", () => {
 
 describe("boardLaneInterruptPolicy", () => {
   it("uses badge policy only for shaping", () => {
-    expect(boardLaneInterruptPolicy("shaping")).toBe("badge");
-    expect(boardLaneInterruptPolicy("ready")).toBe("move");
-    expect(boardLaneInterruptPolicy("active")).toBe("move");
-    expect(boardLaneInterruptPolicy("blocked")).toBe("move");
-    expect(boardLaneInterruptPolicy("review")).toBe("move");
-    expect(boardLaneInterruptPolicy("done")).toBe("move");
+    expect(boardLaneInterruptPolicy(LaneId.make("shaping"))).toBe("badge");
+    expect(boardLaneInterruptPolicy(LaneId.make("ready"))).toBe("move");
+    expect(boardLaneInterruptPolicy(LaneId.make("active"))).toBe("move");
+    expect(boardLaneInterruptPolicy(LaneId.make("blocked"))).toBe("move");
+    expect(boardLaneInterruptPolicy(LaneId.make("review"))).toBe("move");
+    expect(boardLaneInterruptPolicy(LaneId.make("done"))).toBe("move");
   });
 });

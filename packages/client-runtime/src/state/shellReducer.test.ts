@@ -8,6 +8,7 @@ import { applyShellStreamEvent } from "./shellReducer.ts";
 const baseSnapshot: OrchestrationShellSnapshot = {
   snapshotSequence: 0,
   projects: [],
+  lanes: [],
   threads: [],
   updatedAt: "2026-04-01T00:00:00.000Z",
 };
@@ -175,6 +176,29 @@ describe("applyShellStreamEvent", () => {
       expect(next.threads).toHaveLength(0);
       expect(next.snapshotSequence).toBe(6);
     });
+  });
+
+  it("upserts and removes lanes", () => {
+    const lane = {
+      id: "on-deck" as never,
+      name: "On deck",
+      description: "Next work",
+      order: 3,
+      interrupt: "move" as const,
+    };
+    const added = applyShellStreamEvent(baseSnapshot, {
+      kind: "lane-upserted",
+      sequence: 7,
+      lane,
+    });
+    expect(added.lanes).toEqual([lane]);
+
+    const removed = applyShellStreamEvent(added, {
+      kind: "lane-removed",
+      sequence: 8,
+      laneId: lane.id,
+    });
+    expect(removed.lanes).toEqual([]);
   });
 
   it("returns original snapshot for unrecognized event kinds", () => {

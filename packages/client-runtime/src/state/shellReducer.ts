@@ -40,6 +40,24 @@ export function applyShellStreamEvent(
         threads: Arr.filter(snapshot.threads, (t) => t.id !== event.threadId),
         snapshotSequence: event.sequence,
       };
+    case "lane-upserted": {
+      const lanes = snapshot.lanes.some((lane) => lane.id === event.lane.id)
+        ? Arr.map(snapshot.lanes, (lane) => (lane.id === event.lane.id ? event.lane : lane))
+        : Arr.append(snapshot.lanes, event.lane);
+      return {
+        ...snapshot,
+        lanes: lanes.toSorted(
+          (left, right) => left.order - right.order || left.id.localeCompare(right.id),
+        ),
+        snapshotSequence: event.sequence,
+      };
+    }
+    case "lane-removed":
+      return {
+        ...snapshot,
+        lanes: Arr.filter(snapshot.lanes, (lane) => lane.id !== event.laneId),
+        snapshotSequence: event.sequence,
+      };
     default:
       return snapshot;
   }

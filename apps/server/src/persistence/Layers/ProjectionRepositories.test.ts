@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
+import { LaneId, ProjectId, ThreadId, ProviderInstanceId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -96,6 +96,8 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         snoozedUntil: null,
         snoozedAt: null,
         workflowLane: null,
+        workflowLanePlacedBy: null,
+        workflowLanePlacedAt: null,
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,
@@ -158,7 +160,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         settledAt: "2026-03-25T00:00:00.000Z",
         snoozedUntil: "2026-03-26T09:00:00.000Z",
         snoozedAt: "2026-03-25T00:00:00.000Z",
-        workflowLane: "review",
+        workflowLane: LaneId.make("review"),
+        workflowLanePlacedBy: "user",
+        workflowLanePlacedAt: "2026-03-25T00:00:00.000Z",
         latestUserMessageAt: null,
         pendingApprovalCount: 0,
         pendingUserInputCount: 0,

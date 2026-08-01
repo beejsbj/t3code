@@ -153,6 +153,7 @@ const makeDefaultOrchestrationReadModel = () => {
         deletedAt: null,
       },
     ],
+    lanes: [],
     threads: [
       {
         id: defaultThreadId,
@@ -700,6 +701,7 @@ const buildAppUnderTest = (options?: {
             Effect.succeed({
               snapshotSequence: 0,
               projects: [],
+              lanes: [],
               threads: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
@@ -707,6 +709,7 @@ const buildAppUnderTest = (options?: {
             Effect.succeed({
               snapshotSequence: 0,
               projects: [],
+              lanes: [],
               threads: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
@@ -5546,6 +5549,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             deletedAt: null,
           },
         ],
+        lanes: [],
         threads: [
           {
             id: ThreadId.make("thread-1"),
@@ -5756,6 +5760,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 return {
                   snapshotSequence: 1,
                   projects: [],
+                  lanes: [],
                   threads: [makeDefaultOrchestrationThreadShell()],
                   updatedAt: "2026-01-01T00:00:00.000Z",
                 };
@@ -5871,6 +5876,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.succeed({
                 snapshotSequence: 100_000,
                 projects: [],
+                lanes: [],
                 threads: [makeDefaultOrchestrationThreadShell({ id: snapshotThreadId })],
                 updatedAt: now,
               }),
@@ -5918,6 +5924,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.succeed({
                 snapshotSequence: 5,
                 projects: [],
+                lanes: [],
                 threads: [],
                 updatedAt: "2026-01-01T00:00:00.000Z",
               }),

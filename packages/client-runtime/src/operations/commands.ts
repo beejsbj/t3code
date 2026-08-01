@@ -31,6 +31,9 @@ type CommandInput<T extends CommandType> = Omit<
 export type CreateProjectInput = CommandInput<"project.create">;
 export type UpdateProjectInput = CommandInput<"project.meta.update">;
 export type DeleteProjectInput = CommandInput<"project.delete">;
+export type CreateLaneInput = CommandInput<"lane.create">;
+export type UpdateLaneInput = CommandInput<"lane.update">;
+export type ArchiveLaneInput = CommandInput<"lane.archive">;
 export type CreateThreadInput = CommandInput<"thread.create">;
 export type DeleteThreadInput = CommandInput<"thread.delete">;
 export type ArchiveThreadInput = CommandInput<"thread.archive">;
@@ -112,6 +115,36 @@ export const deleteProject: (input: DeleteProjectInput) => CommandEffect = Effec
   return yield* dispatch({
     ...input,
     type: "project.delete",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const createLane: (input: CreateLaneInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.createLane",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "lane.create",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const updateLane: (input: UpdateLaneInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.updateLane",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "lane.update",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const archiveLane: (input: ArchiveLaneInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.archiveLane",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "lane.archive",
     commandId: yield* commandId(input),
   });
 });

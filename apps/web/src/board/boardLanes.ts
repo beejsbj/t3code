@@ -1,4 +1,4 @@
-import type { OrchestrationThreadShell, WorkflowLane } from "@t3tools/contracts";
+import { LaneId, type OrchestrationThreadShell, type WorkflowLane } from "@t3tools/contracts";
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 
 import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
@@ -32,39 +32,46 @@ import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
  * what `workflowLane` stores.
  */
 
+const SHAPING_LANE = LaneId.make("shaping");
+const READY_LANE = LaneId.make("ready");
+const ACTIVE_LANE = LaneId.make("active");
+const BLOCKED_LANE = LaneId.make("blocked");
+const REVIEW_LANE = LaneId.make("review");
+const DONE_LANE = LaneId.make("done");
+
 export const BOARD_LANES = [
   {
-    id: "shaping",
+    id: SHAPING_LANE,
     label: "Grilling / shaping",
     hint: "Working out what this actually is",
     interrupt: "badge",
   },
   {
-    id: "ready",
+    id: READY_LANE,
     label: "Ready",
     hint: "Groomed and ready to pick up",
     interrupt: "move",
   },
   {
-    id: "active",
+    id: ACTIVE_LANE,
     label: "Active",
     hint: "The agent is working right now",
     interrupt: "move",
   },
   {
-    id: "blocked",
+    id: BLOCKED_LANE,
     label: "Blocked · needs Burooj",
     hint: "Waiting on a human decision",
     interrupt: "move",
   },
   {
-    id: "review",
+    id: REVIEW_LANE,
     label: "Review",
     hint: "There is something to look at",
     interrupt: "move",
   },
   {
-    id: "done",
+    id: DONE_LANE,
     label: "Done",
     hint: "Finished, or pinned settled",
     interrupt: "move",
@@ -153,7 +160,11 @@ export function resolveRuntimeAttention(thread: BoardLaneInput): RuntimeAttentio
  * it there is *not* the same claim as a card in `active` because the agent is
  * running. `placement.source` distinguishes them and the card says which it is.
  */
-export const ATTENTION_LANES: ReadonlySet<WorkflowLane> = new Set(["active", "blocked", "review"]);
+export const ATTENTION_LANES: ReadonlySet<WorkflowLane> = new Set([
+  ACTIVE_LANE,
+  BLOCKED_LANE,
+  REVIEW_LANE,
+]);
 
 export function isAttentionLane(lane: WorkflowLane): boolean {
   return ATTENTION_LANES.has(lane);
@@ -212,7 +223,7 @@ export function resolveBoardPlacement(
   // is a belt-and-braces ordering rather than a common case.)
   if ((attention === "blocked" || attention === "failed") && !holdsAttention) {
     return {
-      lane: "blocked",
+      lane: BLOCKED_LANE,
       source: "attention",
       assignedLane,
       attention,
@@ -228,7 +239,7 @@ export function resolveBoardPlacement(
     })
   ) {
     return {
-      lane: "done",
+      lane: DONE_LANE,
       source: "native-done",
       assignedLane,
       attention,
@@ -250,7 +261,7 @@ export function resolveBoardPlacement(
 
   if (attention !== null) {
     return {
-      lane: attention === "failed" ? "blocked" : attention,
+      lane: attention === "failed" ? BLOCKED_LANE : LaneId.make(attention),
       source: "attention",
       assignedLane,
       attention,

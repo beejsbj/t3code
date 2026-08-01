@@ -344,6 +344,80 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "lane.create": {
+      if (readModel.lanes.some((lane) => lane.id === command.lane.id)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.lane.id}' already exists.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.lane.id,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.created",
+        payload: {
+          lane: command.lane,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "lane.update": {
+      const lane = readModel.lanes.find((lane) => lane.id === command.laneId);
+      if (lane === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.laneId}' does not exist.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.updated",
+        payload: {
+          lane: {
+            ...lane,
+            ...(command.name !== undefined ? { name: command.name } : {}),
+            ...(command.description !== undefined ? { description: command.description } : {}),
+            ...(command.order !== undefined ? { order: command.order } : {}),
+            ...(command.interrupt !== undefined ? { interrupt: command.interrupt } : {}),
+          },
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "lane.archive": {
+      if (!readModel.lanes.some((lane) => lane.id === command.laneId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.laneId}' does not exist.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.archived",
+        payload: { laneId: command.laneId, archivedAt: occurredAt },
+      };
+    }
+
     case "thread.create": {
       yield* requireProject({
         readModel,
@@ -688,11 +762,23 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.workflow-lane.set": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const placedBy = command.placedBy ?? "user";
+      if (
+        placedBy === "agent" &&
+        thread.workflowLane !== null &&
+        thread.workflowLane !== undefined &&
+        (thread.workflowLanePlacedBy ?? "user") === "user"
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Agent placement cannot overwrite the user placement on thread '${command.threadId}'.`,
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -705,6 +791,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           workflowLane: command.workflowLane,
+          placedBy,
           updatedAt: occurredAt,
         },
       };

@@ -129,6 +129,7 @@ describe("OrchestrationEngine", () => {
           deletedAt: null,
         },
       ],
+      lanes: [],
       threads: [
         {
           id: ThreadId.make("thread-bootstrap"),
@@ -182,6 +183,7 @@ describe("OrchestrationEngine", () => {
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],
+              lanes: [],
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
@@ -189,6 +191,7 @@ describe("OrchestrationEngine", () => {
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],
+              lanes: [],
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),

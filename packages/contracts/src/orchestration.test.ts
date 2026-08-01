@@ -19,6 +19,7 @@ import {
   OrchestrationThreadShell,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadWorkflowLaneSetPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -53,6 +54,7 @@ const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPaylo
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeThreadWorkflowLaneSetPayload = Schema.decodeUnknownEffect(ThreadWorkflowLaneSetPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -412,8 +414,35 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
 
     assert.strictEqual(thread.settledOverride, null);
     assert.strictEqual(thread.settledAt, null);
+    assert.strictEqual(thread.workflowLane, undefined);
+    assert.strictEqual(thread.workflowLanePlacedBy, undefined);
+    assert.strictEqual(thread.workflowLanePlacedAt, undefined);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
+    assert.strictEqual(shell.workflowLane, undefined);
+    assert.strictEqual(shell.workflowLanePlacedBy, undefined);
+    assert.strictEqual(shell.workflowLanePlacedAt, undefined);
+  }),
+);
+
+it.effect("decodes legacy and custom workflow lane payloads with user provenance by default", () =>
+  Effect.gen(function* () {
+    const legacy = yield* decodeThreadWorkflowLaneSetPayload({
+      threadId: "thread-1",
+      workflowLane: "shaping",
+      updatedAt: "2026-07-28T12:00:00.000Z",
+    });
+    const custom = yield* decodeThreadWorkflowLaneSetPayload({
+      threadId: "thread-1",
+      workflowLane: " on-deck ",
+      placedBy: "agent",
+      updatedAt: "2026-07-28T12:01:00.000Z",
+    });
+
+    assert.strictEqual(legacy.workflowLane, "shaping");
+    assert.strictEqual(legacy.placedBy, "user");
+    assert.strictEqual(custom.workflowLane, "on-deck");
+    assert.strictEqual(custom.placedBy, "agent");
   }),
 );
 

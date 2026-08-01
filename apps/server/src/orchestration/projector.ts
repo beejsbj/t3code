@@ -187,6 +187,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
+    lanes: [],
     threads: [],
     updatedAt: nowIso,
   };
@@ -268,6 +269,29 @@ export function projectEvent(
         })),
       );
 
+    case "lane.created":
+      return Effect.succeed({
+        ...nextBase,
+        lanes: [
+          ...nextBase.lanes.filter((lane) => lane.id !== event.payload.lane.id),
+          event.payload.lane,
+        ].toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id)),
+      });
+
+    case "lane.updated":
+      return Effect.succeed({
+        ...nextBase,
+        lanes: nextBase.lanes
+          .map((lane) => (lane.id === event.payload.lane.id ? event.payload.lane : lane))
+          .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id)),
+      });
+
+    case "lane.archived":
+      return Effect.succeed({
+        ...nextBase,
+        lanes: nextBase.lanes.filter((lane) => lane.id !== event.payload.laneId),
+      });
+
     case "thread.created":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -296,6 +320,8 @@ export function projectEvent(
             snoozedUntil: null,
             snoozedAt: null,
             workflowLane: null,
+            workflowLanePlacedBy: null,
+            workflowLanePlacedAt: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -433,6 +459,8 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             workflowLane: payload.workflowLane,
+            workflowLanePlacedBy: payload.workflowLane === null ? null : payload.placedBy,
+            workflowLanePlacedAt: payload.workflowLane === null ? null : payload.updatedAt,
             updatedAt: payload.updatedAt,
           }),
         })),

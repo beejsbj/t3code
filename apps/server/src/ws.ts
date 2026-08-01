@@ -654,6 +654,23 @@ const makeWsRpcLayer = (
                 projectId: event.payload.projectId,
               }),
             );
+          case "lane.created":
+          case "lane.updated":
+            return Effect.succeed(
+              Option.some({
+                kind: "lane-upserted" as const,
+                sequence: event.sequence,
+                lane: event.payload.lane,
+              }),
+            );
+          case "lane.archived":
+            return Effect.succeed(
+              Option.some({
+                kind: "lane-removed" as const,
+                sequence: event.sequence,
+                laneId: event.payload.laneId,
+              }),
+            );
           case "thread.deleted":
           case "thread.archived":
             return Effect.succeed(
