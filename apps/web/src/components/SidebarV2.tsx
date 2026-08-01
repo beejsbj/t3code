@@ -89,7 +89,7 @@ import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useThreadShells } from "../state/entities";
+import { readEnvironmentLaneRegistry, useProjects, useThreadShells } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -2030,7 +2030,9 @@ export default function SidebarV2() {
                         },
                   ]
                 : []),
-              ...buildBoardPlacementContextMenuItems(),
+              ...buildBoardPlacementContextMenuItems(
+                readEnvironmentLaneRegistry(threadRef.environmentId),
+              ),
               { id: "rename", label: "Rename thread" },
               { id: "mark-unread", label: "Mark unread" },
               { id: "delete", label: "Delete", destructive: true, icon: "trash" },
@@ -2039,7 +2041,10 @@ export default function SidebarV2() {
           ),
         );
         if (clicked._tag === "Failure") return;
-        const workflowLane = workflowLaneForBoardPlacementAction(clicked.value);
+        const workflowLane = workflowLaneForBoardPlacementAction(
+          clicked.value,
+          readEnvironmentLaneRegistry(threadRef.environmentId),
+        );
         if (workflowLane !== undefined) {
           void setWorkflowLane({
             environmentId: threadRef.environmentId,

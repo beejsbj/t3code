@@ -1,9 +1,10 @@
-import { LaneId } from "@t3tools/contracts";
+import { LaneId, type LaneDefinition } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSidebarV2Status } from "../components/Sidebar.logic.ts";
 import {
   type BoardLaneInput,
+  boardLaneLabel,
   boardLaneInterruptPolicy,
   isAttentionLane,
   isWorkflowLane,
@@ -14,8 +15,39 @@ import {
 
 const NOW = "2026-07-28T00:00:00.000Z";
 
+const LANES: ReadonlyArray<LaneDefinition> = [
+  {
+    id: LaneId.make("shaping"),
+    name: "Grilling / shaping",
+    description: "Working out what this actually is",
+    order: 0,
+    interrupt: "badge",
+  },
+  {
+    id: LaneId.make("ready"),
+    name: "Ready",
+    description: "Groomed and ready to pick up",
+    order: 1,
+    interrupt: "move",
+  },
+  {
+    id: LaneId.make("done"),
+    name: "Done",
+    description: "Finished, or pinned settled",
+    order: 2,
+    interrupt: "move",
+  },
+  {
+    id: LaneId.make("watched"),
+    name: "Watched",
+    description: "A fixture lane that holds attention in place",
+    order: 3,
+    interrupt: "badge",
+  },
+];
+
 function AT(now: string, autoSettleAfterDays: number | null = null) {
-  return { now, autoSettleAfterDays };
+  return { now, autoSettleAfterDays, lanes: LANES };
 }
 
 function shell(
@@ -194,14 +226,52 @@ describe("resolveBoardPlacement", () => {
     expect(placement.heldInPlace).toBe(false);
   });
 
+  it("leaves a settled thread unplaced when the done lane is absent", () => {
+    const placement = resolveBoardPlacement(shell({ settledOverride: "settled" }), {
+      ...AT(NOW),
+      lanes: LANES.filter((lane) => lane.id !== "done"),
+    })!;
+
+    expect(placement.lane).toBeNull();
+    expect(placement.source).toBe("native-done");
+  });
+
   it("holds pending approval in a badge-policy lane", () => {
     const placement = resolveBoardPlacement(
-      shell({ workflowLane: "shaping", hasPendingApprovals: true }),
+      shell({ workflowLane: "watched", hasPendingApprovals: true }),
       AT(NOW),
     )!;
 
-    expect(placement.lane).toBe("shaping");
+    expect(placement.lane).toBe("watched");
     expect(placement.heldInPlace).toBe(true);
+  });
+
+  it("takes interrupt policy from the registry", () => {
+    const thread = shell({ workflowLane: "ready", hasPendingUserInput: true });
+    const movePlacement = resolveBoardPlacement(thread, AT(NOW))!;
+    const badgePlacement = resolveBoardPlacement(thread, {
+      ...AT(NOW),
+      lanes: LANES.map((lane) =>
+        lane.id === "ready" ? { ...lane, interrupt: "badge" as const } : lane,
+      ),
+    })!;
+
+    expect(movePlacement.lane).toBe("blocked");
+    expect(movePlacement.heldInPlace).toBe(false);
+    expect(badgePlacement.lane).toBe("ready");
+    expect(badgePlacement.heldInPlace).toBe(true);
+  });
+
+  it("leaves a dangling assigned lane unplaced without losing its id", () => {
+    expect(resolveBoardPlacement(shell({ workflowLane: "retired" }), AT(NOW))).toEqual({
+      lane: null,
+      source: "inbox",
+      assignedLane: LaneId.make("retired"),
+      danglingLaneId: LaneId.make("retired"),
+      attention: null,
+      overridden: false,
+      heldInPlace: false,
+    });
   });
 
   it("holds failed attention in a badge-policy lane", () => {
@@ -252,7 +322,9 @@ describe("resolveBoardPlacement", () => {
 
     expect(placement?.lane).toBe("blocked");
     expect(placement?.attention).toBe("failed");
-    expect(placement === null ? null : placementReason(placement)).toBe("the session failed");
+    expect(placement === null ? null : placementReason(placement, LANES)).toBe(
+      "the session failed",
+    );
   });
 
   it("puts an unplaced, quiet session in the inbox", () => {
@@ -260,6 +332,7 @@ describe("resolveBoardPlacement", () => {
       lane: null,
       source: "inbox",
       assignedLane: null,
+      danglingLaneId: null,
       attention: null,
       overridden: false,
       heldInPlace: false,
@@ -300,6 +373,7 @@ describe("resolveBoardPlacement", () => {
       lane: "blocked",
       source: "attention",
       assignedLane: null,
+      danglingLaneId: null,
       attention: "blocked",
       overridden: false,
       heldInPlace: false,
@@ -346,7 +420,7 @@ describe("placementReason", () => {
       AT(NOW),
     )!;
 
-    expect(placementReason(placement)).toBe(
+    expect(placementReason(placement, LANES)).toBe(
       "waiting on you — held here: this lane keeps your attention",
     );
   });
@@ -356,20 +430,22 @@ describe("placementReason", () => {
       shell({ workflowLane: "ready", hasPendingApprovals: true }),
       AT(NOW),
     )!;
-    expect(placementReason(placement)).toBe("Held here while waiting on you — assigned to Ready");
+    expect(placementReason(placement, LANES)).toBe(
+      "Held here while waiting on you — assigned to Ready",
+    );
   });
 
   it("stays quiet for a plainly assigned intent lane", () => {
     expect(
-      placementReason(resolveBoardPlacement(shell({ workflowLane: "ready" }), AT(NOW))!),
+      placementReason(resolveBoardPlacement(shell({ workflowLane: "ready" }), AT(NOW))!, LANES),
     ).toBeNull();
   });
 
   it("says so when a card sits in an attention lane only because it was dragged there", () => {
     // Otherwise the board claims the agent is working when it is idle.
     expect(
-      placementReason(resolveBoardPlacement(shell({ workflowLane: "active" }), AT(NOW))!),
-    ).toBe("Placed here by hand — the session is idle");
+      placementReason(resolveBoardPlacement(shell({ workflowLane: "active" }), AT(NOW))!, LANES),
+    ).toBeNull();
   });
 });
 
@@ -385,21 +461,26 @@ describe("isAttentionLane", () => {
 });
 
 describe("isWorkflowLane", () => {
-  it("accepts board lanes and rejects anything else", () => {
-    expect(isWorkflowLane("shaping")).toBe(true);
-    expect(isWorkflowLane("done")).toBe(true);
-    expect(isWorkflowLane("inbox")).toBe(false);
-    expect(isWorkflowLane("")).toBe(false);
+  it("accepts registry lanes and rejects anything else", () => {
+    expect(isWorkflowLane("shaping", LANES)).toBe(true);
+    expect(isWorkflowLane("done", LANES)).toBe(true);
+    expect(isWorkflowLane("active", LANES)).toBe(false);
+    expect(isWorkflowLane("inbox", LANES)).toBe(false);
+    expect(isWorkflowLane("", LANES)).toBe(false);
   });
 });
 
 describe("boardLaneInterruptPolicy", () => {
-  it("uses badge policy only for shaping", () => {
-    expect(boardLaneInterruptPolicy(LaneId.make("shaping"))).toBe("badge");
-    expect(boardLaneInterruptPolicy(LaneId.make("ready"))).toBe("move");
-    expect(boardLaneInterruptPolicy(LaneId.make("active"))).toBe("move");
-    expect(boardLaneInterruptPolicy(LaneId.make("blocked"))).toBe("move");
-    expect(boardLaneInterruptPolicy(LaneId.make("review"))).toBe("move");
-    expect(boardLaneInterruptPolicy(LaneId.make("done"))).toBe("move");
+  it("reads policy from the registry and defaults missing lanes to move", () => {
+    expect(boardLaneInterruptPolicy(LaneId.make("shaping"), LANES)).toBe("badge");
+    expect(boardLaneInterruptPolicy(LaneId.make("ready"), LANES)).toBe("move");
+    expect(boardLaneInterruptPolicy(LaneId.make("active"), LANES)).toBe("move");
+  });
+});
+
+describe("boardLaneLabel", () => {
+  it("reads the name from the registry and falls back to the lane id", () => {
+    expect(boardLaneLabel(LaneId.make("shaping"), LANES)).toBe("Grilling / shaping");
+    expect(boardLaneLabel(LaneId.make("retired"), LANES)).toBe("retired");
   });
 });

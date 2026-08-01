@@ -1,6 +1,7 @@
 import { useDraggable } from "@dnd-kit/core";
 import type {
   ApprovalRequestId,
+  LaneDefinition,
   ProviderApprovalDecision,
   ScopedThreadRef,
   ServerProvider,
@@ -54,12 +55,13 @@ export interface BoardSessionCardProps {
   readonly threadRef: ScopedThreadRef;
   readonly thread: SidebarThreadSummary;
   readonly placement: BoardPlacement;
+  readonly lanes: ReadonlyArray<LaneDefinition>;
   readonly projectTitle: string;
   readonly isDragging: boolean;
 }
 
 export function BoardSessionCard(props: BoardSessionCardProps) {
-  const { cardKey, threadRef, thread, placement, projectTitle } = props;
+  const { cardKey, threadRef, thread, placement, lanes, projectTitle } = props;
 
   const focusedThreadKey = useBoardCardStore((state) => state.focusedThreadKey);
   const toggleFocus = useBoardCardStore((state) => state.toggleFocus);
@@ -85,7 +87,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   });
 
   const status = resolveSidebarV2Status(thread);
-  const reason = placementReason(placement);
+  const reason = placementReason(placement, lanes);
 
   // The drag is tracked locally and only committed to the store on release.
   // Writing on every pointermove would serialize the whole card map to

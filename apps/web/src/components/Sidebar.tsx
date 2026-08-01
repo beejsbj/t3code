@@ -77,6 +77,7 @@ import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
 import {
+  readEnvironmentLaneRegistry,
   readThreadShell,
   useProject,
   useProjects,
@@ -2118,12 +2119,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
       const threadWorkspacePath =
         thread.worktreePath ?? threadProject?.workspaceRoot ?? project.workspaceRoot ?? null;
+      const lanes = readEnvironmentLaneRegistry(threadRef.environmentId);
       const clicked = await api.contextMenu.show(
         [
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
-          ...buildBoardPlacementContextMenuItems(),
+          ...buildBoardPlacementContextMenuItems(lanes),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2133,7 +2135,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         position,
       );
 
-      const workflowLane = workflowLaneForBoardPlacementAction(clicked);
+      const workflowLane = workflowLaneForBoardPlacementAction(clicked, lanes);
       if (workflowLane !== undefined) {
         void setWorkflowLane({
           environmentId: threadRef.environmentId,

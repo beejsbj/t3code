@@ -8,6 +8,7 @@ import {
   createEnvironmentSnapshotAtom,
   createShellEnvironmentAtoms,
 } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentId, LaneDefinition } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 
@@ -21,6 +22,19 @@ export const environmentShellSummaryAtom = createEnvironmentShellSummaryAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   shellStateValueAtom: environmentShell.stateValueAtom,
 });
+
+const EMPTY_LANES: ReadonlyArray<LaneDefinition> = Object.freeze([]);
+
+export const environmentLaneRegistriesAtom = Atom.make((get) => {
+  const registries = new Map<EnvironmentId, ReadonlyArray<LaneDefinition>>();
+  for (const environmentId of get(environmentCatalog.catalogValueAtom).entries.keys()) {
+    registries.set(
+      environmentId,
+      get(environmentSnapshotAtom(environmentId))?.lanes ?? EMPTY_LANES,
+    );
+  }
+  return registries;
+}).pipe(Atom.withLabel("web-environment-lane-registries"));
 
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));

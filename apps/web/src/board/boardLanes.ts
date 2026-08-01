@@ -1,4 +1,9 @@
-import { LaneId, type OrchestrationThreadShell, type WorkflowLane } from "@t3tools/contracts";
+import {
+  LaneId,
+  type LaneDefinition,
+  type OrchestrationThreadShell,
+  type WorkflowLane,
+} from "@t3tools/contracts";
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 
 import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
@@ -32,71 +37,27 @@ import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
  * what `workflowLane` stores.
  */
 
-const SHAPING_LANE = LaneId.make("shaping");
-const READY_LANE = LaneId.make("ready");
 const ACTIVE_LANE = LaneId.make("active");
 const BLOCKED_LANE = LaneId.make("blocked");
 const REVIEW_LANE = LaneId.make("review");
 const DONE_LANE = LaneId.make("done");
 
-export const BOARD_LANES = [
-  {
-    id: SHAPING_LANE,
-    label: "Grilling / shaping",
-    hint: "Working out what this actually is",
-    interrupt: "badge",
-  },
-  {
-    id: READY_LANE,
-    label: "Ready",
-    hint: "Groomed and ready to pick up",
-    interrupt: "move",
-  },
-  {
-    id: ACTIVE_LANE,
-    label: "Active",
-    hint: "The agent is working right now",
-    interrupt: "move",
-  },
-  {
-    id: BLOCKED_LANE,
-    label: "Blocked · needs Burooj",
-    hint: "Waiting on a human decision",
-    interrupt: "move",
-  },
-  {
-    id: REVIEW_LANE,
-    label: "Review",
-    hint: "There is something to look at",
-    interrupt: "move",
-  },
-  {
-    id: DONE_LANE,
-    label: "Done",
-    hint: "Finished, or pinned settled",
-    interrupt: "move",
-  },
-] as const satisfies ReadonlyArray<{
-  readonly id: WorkflowLane;
-  readonly label: string;
-  readonly hint: string;
-  readonly interrupt: "move" | "badge";
-}>;
-
-export type BoardLane = (typeof BOARD_LANES)[number];
-
-export const BOARD_LANE_IDS: ReadonlyArray<WorkflowLane> = BOARD_LANES.map((lane) => lane.id);
-
-export function isWorkflowLane(value: string): value is WorkflowLane {
-  return (BOARD_LANE_IDS as ReadonlyArray<string>).includes(value);
+export function isWorkflowLane(
+  value: string,
+  lanes: ReadonlyArray<LaneDefinition>,
+): value is WorkflowLane {
+  return lanes.some((lane) => lane.id === value);
 }
 
-export function boardLaneLabel(lane: WorkflowLane): string {
-  return BOARD_LANES.find((entry) => entry.id === lane)?.label ?? lane;
+export function boardLaneLabel(lane: WorkflowLane, lanes: ReadonlyArray<LaneDefinition>): string {
+  return lanes.find((entry) => entry.id === lane)?.name ?? lane;
 }
 
-export function boardLaneInterruptPolicy(lane: WorkflowLane): "move" | "badge" {
-  return BOARD_LANES.find((entry) => entry.id === lane)?.interrupt ?? "move";
+export function boardLaneInterruptPolicy(
+  lane: WorkflowLane,
+  lanes: ReadonlyArray<LaneDefinition>,
+): "move" | "badge" {
+  return lanes.find((entry) => entry.id === lane)?.interrupt ?? "move";
 }
 
 /**
@@ -150,15 +111,11 @@ export function resolveRuntimeAttention(thread: BoardLaneInput): RuntimeAttentio
  * Lanes split into two classes, and the distinction is what keeps the model
  * honest:
  *
- * - **Intent lanes** (`shaping`, `ready`, `done`) describe what a human decided.
- *   Nothing in the runtime can produce or contradict them.
- * - **Attention lanes** (`active`, `blocked`, `review`) describe what the
- *   session is doing right now. The runtime is the authority on these.
- *
- * A human may still drag a card into an attention lane — the board would be
- * annoying otherwise — but a card sitting in `active` because someone dragged
- * it there is *not* the same claim as a card in `active` because the agent is
- * running. `placement.source` distinguishes them and the card says which it is.
+ * Registry lanes describe what a human decided. The derived attention ids
+ * (`active`, `blocked`, `review`) are not registry lanes; they survive only as
+ * a compact placement concept until the Needs-you rail replaces them.
+ * Keeping that concept independent preserves precedence without pretending
+ * derived states are droppable workflow lanes.
  */
 export const ATTENTION_LANES: ReadonlySet<WorkflowLane> = new Set([
   ACTIVE_LANE,
@@ -178,6 +135,7 @@ export function isAttentionLane(lane: WorkflowLane): boolean {
 export interface BoardPlacementOptions {
   readonly now: string;
   readonly autoSettleAfterDays: number | null;
+  readonly lanes: ReadonlyArray<LaneDefinition>;
 }
 
 export type BoardPlacementSource = "attention" | "assigned" | "native-done" | "inbox";
@@ -188,6 +146,8 @@ export interface BoardPlacement {
   readonly source: BoardPlacementSource;
   /** The persisted, human-assigned lane — unchanged by attention overrides. */
   readonly assignedLane: WorkflowLane | null;
+  /** Persisted lane id absent from the live registry, retained for later UI. */
+  readonly danglingLaneId: WorkflowLane | null;
   readonly attention: RuntimeAttention;
   /** True when runtime attention is displacing the card from its assigned lane. */
   readonly overridden: boolean;
@@ -200,9 +160,13 @@ export function resolveBoardPlacement(
   options: BoardPlacementOptions,
 ): BoardPlacement | null {
   const assignedLane = thread.workflowLane ?? null;
+  const danglingLaneId =
+    assignedLane !== null && !isWorkflowLane(assignedLane, options.lanes) ? assignedLane : null;
   const attention = resolveRuntimeAttention(thread);
   const holdsAttention =
-    assignedLane !== null && boardLaneInterruptPolicy(assignedLane) === "badge";
+    assignedLane !== null &&
+    danglingLaneId === null &&
+    boardLaneInterruptPolicy(assignedLane, options.lanes) === "badge";
 
   // Keep snooze suppression in the pure placement model rather than in the
   // React list filter. `null` is distinct from an inbox placement and makes
@@ -226,6 +190,7 @@ export function resolveBoardPlacement(
       lane: BLOCKED_LANE,
       source: "attention",
       assignedLane,
+      danglingLaneId,
       attention,
       overridden: assignedLane !== null && assignedLane !== "blocked",
       heldInPlace: false,
@@ -239,9 +204,10 @@ export function resolveBoardPlacement(
     })
   ) {
     return {
-      lane: DONE_LANE,
+      lane: isWorkflowLane(DONE_LANE, options.lanes) ? DONE_LANE : null,
       source: "native-done",
       assignedLane,
+      danglingLaneId,
       attention,
       overridden: assignedLane !== null && assignedLane !== "done",
       heldInPlace: false,
@@ -253,6 +219,7 @@ export function resolveBoardPlacement(
       lane: assignedLane,
       source: "assigned",
       assignedLane,
+      danglingLaneId,
       attention,
       overridden: false,
       heldInPlace: true,
@@ -264,17 +231,19 @@ export function resolveBoardPlacement(
       lane: attention === "failed" ? BLOCKED_LANE : LaneId.make(attention),
       source: "attention",
       assignedLane,
+      danglingLaneId,
       attention,
       overridden: assignedLane !== null && assignedLane !== attention,
       heldInPlace: false,
     };
   }
 
-  if (assignedLane !== null) {
+  if (assignedLane !== null && danglingLaneId === null) {
     return {
       lane: assignedLane,
       source: "assigned",
       assignedLane,
+      danglingLaneId,
       attention,
       overridden: false,
       heldInPlace: false,
@@ -284,7 +253,8 @@ export function resolveBoardPlacement(
   return {
     lane: null,
     source: "inbox",
-    assignedLane: null,
+    assignedLane,
+    danglingLaneId,
     attention,
     overridden: false,
     heldInPlace: false,
@@ -295,12 +265,17 @@ export function resolveBoardPlacement(
  * Short human-readable reason a card is sitting where it is. Rendered on the
  * card so the precedence rule is visible in the product, not just in a doc.
  */
-export function placementReason(placement: BoardPlacement): string | null {
+export function placementReason(
+  placement: BoardPlacement,
+  lanes: ReadonlyArray<LaneDefinition>,
+): string | null {
   switch (placement.source) {
     case "attention":
       return placement.overridden
         ? `Held here while ${attentionLabel(placement.attention)} — assigned to ${
-            placement.assignedLane === null ? "inbox" : boardLaneLabel(placement.assignedLane)
+            placement.assignedLane === null
+              ? "inbox"
+              : boardLaneLabel(placement.assignedLane, lanes)
           }`
         : attentionLabel(placement.attention);
     case "native-done":
@@ -309,12 +284,7 @@ export function placementReason(placement: BoardPlacement): string | null {
       if (placement.heldInPlace) {
         return `${attentionLabel(placement.attention)} — held here: this lane keeps your attention`;
       }
-      // A card parked in an attention lane by hand is not the same claim as a
-      // card the runtime put there. Say so, or the board lies about what the
-      // session is doing.
-      return placement.assignedLane !== null && isAttentionLane(placement.assignedLane)
-        ? "Placed here by hand — the session is idle"
-        : null;
+      return null;
     case "inbox":
       return null;
   }

@@ -10,20 +10,21 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef, WorkflowLane } from "@t3tools/contracts";
+import {
+  LaneId,
+  type EnvironmentId,
+  type LaneDefinition,
+  type ScopedThreadRef,
+  type WorkflowLane,
+} from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import {
-  BOARD_LANES,
-  isWorkflowLane,
-  resolveBoardPlacement,
-  type BoardPlacement,
-} from "../../board/boardLanes.ts";
+import { resolveBoardPlacement, type BoardPlacement } from "../../board/boardLanes.ts";
 import { useBoardCardStore } from "../../board/boardCardStore.ts";
 import { useNowMinute } from "../../hooks/useNowMinute.ts";
 import { useClientSettings } from "../../hooks/useSettings.ts";
-import { useProjects, useThreadShells } from "../../state/entities.ts";
+import { useLaneRegistries, useProjects, useThreadShells } from "../../state/entities.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
@@ -35,12 +36,27 @@ interface PlacedThread {
   readonly key: string;
   readonly thread: SidebarThreadSummary;
   readonly placement: BoardPlacement;
+  readonly lanes: ReadonlyArray<LaneDefinition>;
   readonly projectTitle: string;
+}
+
+interface BoardLaneColumn {
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly lane: LaneDefinition;
+}
+
+const NEEDS_YOU_LANE = LaneId.make("needs-you");
+const NEEDS_YOU_DROPPABLE_ID = "board:needs-you";
+
+function laneColumnKey(environmentId: EnvironmentId, laneId: WorkflowLane): string {
+  return JSON.stringify([environmentId, laneId]);
 }
 
 export function SessionBoard() {
   const threads = useThreadShells();
   const projects = useProjects();
+  const laneRegistries = useLaneRegistries();
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const nowMinute = useNowMinute();
   const focusedThreadKey = useBoardCardStore((state) => state.focusedThreadKey);
@@ -74,6 +90,20 @@ export function SessionBoard() {
     return map;
   }, [projects]);
 
+  const boardLanes = useMemo<ReadonlyArray<BoardLaneColumn>>(
+    () =>
+      [...laneRegistries.entries()].flatMap(([environmentId, lanes]) =>
+        lanes
+          .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+          .map((lane) => ({
+            key: laneColumnKey(environmentId, lane.id),
+            environmentId,
+            lane,
+          })),
+      ),
+    [laneRegistries],
+  );
+
   const placed = useMemo<ReadonlyArray<PlacedThread>>(() => {
     void nowMinute;
     void snoozeWakeTick;
@@ -82,30 +112,37 @@ export function SessionBoard() {
       .filter((thread) => thread.archivedAt === null)
       .map<PlacedThread | null>((thread) => {
         const ref = scopeThreadRef(thread.environmentId, thread.id);
-        const placement = resolveBoardPlacement(thread, { now, autoSettleAfterDays });
+        const lanes = laneRegistries.get(thread.environmentId) ?? [];
+        const placement = resolveBoardPlacement(thread, { now, autoSettleAfterDays, lanes });
         if (placement === null) return null;
         return {
           ref,
           key: scopedThreadKey(ref),
           thread,
           placement,
+          lanes,
           projectTitle:
             projectTitleById.get(`${thread.environmentId}:${thread.projectId}`) ?? "Project",
         };
       })
       .filter((entry): entry is PlacedThread => entry !== null)
       .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt));
-  }, [autoSettleAfterDays, nowMinute, projectTitleById, snoozeWakeTick, threads]);
+  }, [autoSettleAfterDays, laneRegistries, nowMinute, projectTitleById, snoozeWakeTick, threads]);
 
   const byLane = useMemo(() => {
-    const map = new Map<WorkflowLane, Array<PlacedThread>>();
-    for (const lane of BOARD_LANES) map.set(lane.id, []);
+    const map = new Map<string, Array<PlacedThread>>();
+    for (const column of boardLanes) map.set(column.key, []);
     for (const entry of placed) {
-      if (entry.placement.lane === null) continue;
-      map.get(entry.placement.lane)?.push(entry);
+      if (entry.placement.lane === null || entry.placement.source === "attention") continue;
+      map.get(laneColumnKey(entry.ref.environmentId, entry.placement.lane))?.push(entry);
     }
     return map;
-  }, [placed]);
+  }, [boardLanes, placed]);
+
+  const needsYou = useMemo(
+    () => placed.filter((entry) => entry.placement.source === "attention"),
+    [placed],
+  );
 
   const sensors = useSensors(
     // Matches the sidebar's project-reorder sensor so a drag feels the same
@@ -133,21 +170,22 @@ export function SessionBoard() {
       const entry = placed.find((candidate) => candidate.key === String(active.id));
       if (!entry) return;
 
-      const overId = String(over.id);
-      if (!isWorkflowLane(overId)) return;
+      const target = boardLanes.find((column) => column.key === String(over.id));
+      if (!target || target.environmentId !== entry.ref.environmentId) return;
+      const targetLaneId = target.lane.id;
 
       // Drag/drop moves the *session-owned* field only. It never touches the
       // runtime attention that may currently be displacing the card, so
       // dropping a working session into "Ready" records the intent and the
       // card stays visibly held in "Active" until the run finishes.
-      if (entry.placement.assignedLane === overId) return;
+      if (entry.placement.assignedLane === targetLaneId) return;
 
       void setWorkflowLane({
         environmentId: entry.ref.environmentId,
-        input: { threadId: entry.ref.threadId, workflowLane: overId },
+        input: { threadId: entry.ref.threadId, workflowLane: targetLaneId },
       });
     },
-    [placed, setWorkflowLane],
+    [boardLanes, placed, setWorkflowLane],
   );
 
   return (
@@ -185,16 +223,26 @@ export function SessionBoard() {
         onDragCancel={() => setDraggingKey(null)}
       >
         <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
-          {BOARD_LANES.map((lane) => (
+          {boardLanes.map((column) => (
             <LaneColumn
-              key={lane.id}
-              laneId={lane.id}
-              label={lane.label}
-              hint={lane.hint}
-              entries={byLane.get(lane.id) ?? []}
+              key={column.key}
+              droppableId={column.key}
+              laneId={column.lane.id}
+              label={column.lane.name}
+              hint={column.lane.description}
+              entries={byLane.get(column.key) ?? []}
               draggingKey={draggingKey}
             />
           ))}
+          <LaneColumn
+            droppableId={NEEDS_YOU_DROPPABLE_ID}
+            laneId={NEEDS_YOU_LANE}
+            label="Needs you"
+            hint="Temporary attention grouping; P6b replaces this"
+            entries={needsYou}
+            draggingKey={draggingKey}
+            droppable={false}
+          />
         </div>
       </DndContext>
     </div>
@@ -202,19 +250,23 @@ export function SessionBoard() {
 }
 
 function LaneColumn({
+  droppableId,
   laneId,
   label,
   hint,
   entries,
   draggingKey,
+  droppable = true,
 }: {
+  readonly droppableId: string;
   readonly laneId: WorkflowLane;
   readonly label: string;
   readonly hint: string;
   readonly entries: ReadonlyArray<PlacedThread>;
   readonly draggingKey: string | null;
+  readonly droppable?: boolean;
 }) {
-  const { isOver, setNodeRef } = useDroppable({ id: laneId });
+  const { isOver, setNodeRef } = useDroppable({ id: droppableId, disabled: !droppable });
 
   return (
     <section
@@ -240,6 +292,7 @@ function LaneColumn({
             threadRef={entry.ref}
             thread={entry.thread}
             placement={entry.placement}
+            lanes={entry.lanes}
             projectTitle={entry.projectTitle}
             isDragging={draggingKey === entry.key}
           />
