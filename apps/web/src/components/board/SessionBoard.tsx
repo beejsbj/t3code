@@ -27,6 +27,7 @@ import { useClientSettings } from "../../hooks/useSettings.ts";
 import { useLaneRegistries, useProjects, useThreadShells } from "../../state/entities.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
+import { useThreadChangeRequestStateStore } from "../../threadChangeRequestStateStore.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
 import { cn } from "~/lib/utils";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
@@ -57,6 +58,9 @@ export function SessionBoard() {
   const threads = useThreadShells();
   const projects = useProjects();
   const laneRegistries = useLaneRegistries();
+  const changeRequestStateByThreadKey = useThreadChangeRequestStateStore(
+    (state) => state.byThreadKey,
+  );
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const nowMinute = useNowMinute();
   const focusedThreadKey = useBoardCardStore((state) => state.focusedThreadKey);
@@ -112,12 +116,18 @@ export function SessionBoard() {
       .filter((thread) => thread.archivedAt === null)
       .map<PlacedThread | null>((thread) => {
         const ref = scopeThreadRef(thread.environmentId, thread.id);
+        const key = scopedThreadKey(ref);
         const lanes = laneRegistries.get(thread.environmentId) ?? [];
-        const placement = resolveBoardPlacement(thread, { now, autoSettleAfterDays, lanes });
+        const placement = resolveBoardPlacement(thread, {
+          now,
+          autoSettleAfterDays,
+          changeRequestState: changeRequestStateByThreadKey.get(key) ?? null,
+          lanes,
+        });
         if (placement === null) return null;
         return {
           ref,
-          key: scopedThreadKey(ref),
+          key,
           thread,
           placement,
           lanes,
@@ -127,7 +137,15 @@ export function SessionBoard() {
       })
       .filter((entry): entry is PlacedThread => entry !== null)
       .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt));
-  }, [autoSettleAfterDays, laneRegistries, nowMinute, projectTitleById, snoozeWakeTick, threads]);
+  }, [
+    autoSettleAfterDays,
+    changeRequestStateByThreadKey,
+    laneRegistries,
+    nowMinute,
+    projectTitleById,
+    snoozeWakeTick,
+    threads,
+  ]);
 
   const byLane = useMemo(() => {
     const map = new Map<string, Array<PlacedThread>>();

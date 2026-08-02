@@ -1,4 +1,5 @@
-import { LaneId, type LaneDefinition } from "@t3tools/contracts";
+import { LaneId, type LaneDefinition, type OrchestrationThreadShell } from "@t3tools/contracts";
+import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSidebarV2Status } from "../components/Sidebar.logic.ts";
@@ -46,8 +47,12 @@ const LANES: ReadonlyArray<LaneDefinition> = [
   },
 ];
 
-function AT(now: string, autoSettleAfterDays: number | null = null) {
-  return { now, autoSettleAfterDays, lanes: LANES };
+function AT(
+  now: string,
+  autoSettleAfterDays: number | null = null,
+  changeRequestState: "open" | "closed" | "merged" | null = null,
+) {
+  return { now, autoSettleAfterDays, changeRequestState, lanes: LANES };
 }
 
 function shell(
@@ -193,7 +198,52 @@ describe("board/sidebar runtime-state drift", () => {
   });
 });
 
+describe("board/sidebar settled-state drift", () => {
+  const fixtures = [
+    { name: "no change request", changeRequestState: null, settled: false },
+    { name: "open change request", changeRequestState: "open", settled: false },
+    { name: "merged change request", changeRequestState: "merged", settled: true },
+    { name: "closed change request", changeRequestState: "closed", settled: true },
+  ] as const;
+
+  it.each(fixtures)("keeps the $name verdict aligned", ({ changeRequestState, settled }) => {
+    const thread = shell({ workflowLane: "ready", settledOverride: null });
+    const sidebarSettled = effectiveSettled(thread as OrchestrationThreadShell, {
+      now: NOW,
+      autoSettleAfterDays: null,
+      changeRequestState,
+    });
+    const boardSettled =
+      resolveBoardPlacement(thread, AT(NOW, null, changeRequestState))?.lane === "done";
+
+    expect(sidebarSettled).toBe(settled);
+    expect(boardSettled).toBe(sidebarSettled);
+  });
+});
+
 describe("resolveBoardPlacement", () => {
+  it.each(["merged", "closed"] as const)(
+    "drains a thread with a %s change request to done",
+    (changeRequestState) => {
+      const placement = resolveBoardPlacement(
+        shell({ workflowLane: "ready", settledOverride: null }),
+        AT(NOW, null, changeRequestState),
+      );
+
+      expect(placement?.lane).toBe("done");
+      expect(placement?.source).toBe("native-done");
+    },
+  );
+
+  it("preserves existing placement when change-request state is null", () => {
+    const thread = shell({ workflowLane: "ready", settledOverride: null });
+
+    expect(resolveBoardPlacement(thread, AT(NOW, null, null))).toEqual(
+      resolveBoardPlacement(thread, AT(NOW)),
+    );
+    expect(resolveBoardPlacement(thread, AT(NOW, null, null))?.lane).toBe("ready");
+  });
+
   it("holds pending user input in a badge-policy lane", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "shaping", hasPendingUserInput: true }),

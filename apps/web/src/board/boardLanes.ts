@@ -1,5 +1,6 @@
 import {
   LaneId,
+  type ChangeRequestState,
   type LaneDefinition,
   type OrchestrationThreadShell,
   type WorkflowLane,
@@ -128,13 +129,15 @@ export function isAttentionLane(lane: WorkflowLane): boolean {
 }
 
 /**
- * Placement options carry the clock and the same persisted auto-settle setting
- * used by the sidebar. Keeping them explicit preserves deterministic tests and
- * keeps this module independent of React stores.
+ * Placement options carry the clock, change-request state, and the same
+ * persisted auto-settle setting used by the sidebar. Keeping them explicit
+ * preserves deterministic tests and keeps this module independent of React
+ * stores.
  */
 export interface BoardPlacementOptions {
   readonly now: string;
   readonly autoSettleAfterDays: number | null;
+  readonly changeRequestState: ChangeRequestState | null;
   readonly lanes: ReadonlyArray<LaneDefinition>;
 }
 
@@ -201,6 +204,7 @@ export function resolveBoardPlacement(
     effectiveSettled(thread as OrchestrationThreadShell, {
       now: options.now,
       autoSettleAfterDays: options.autoSettleAfterDays,
+      changeRequestState: options.changeRequestState,
     })
   ) {
     return {
