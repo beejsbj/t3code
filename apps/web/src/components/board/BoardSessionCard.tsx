@@ -32,12 +32,15 @@ import {
   type PendingUserInput,
 } from "../../session-logic.ts";
 import { useServerConfigs, useThread } from "../../state/entities.ts";
+import {
+  resolveThreadRuntimeState,
+  type ThreadRuntimeState,
+} from "../../state/threadRuntimeState.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "../ChatMarkdown.tsx";
-import { resolveSidebarV2Status } from "../Sidebar.logic.ts";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
 import { BoardCardComposer } from "./BoardCardComposer.tsx";
 import { useInViewport } from "./useInViewport.ts";
@@ -86,7 +89,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
     disabled: isFocused,
   });
 
-  const status = resolveSidebarV2Status(thread);
+  const status = resolveThreadRuntimeState(thread);
   const reason = placementReason(placement, lanes);
 
   // The drag is tracked locally and only committed to the store on release.
@@ -136,7 +139,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   const cardBody = (
     <div
       className={cn(
-        "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm",
+        "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm before:absolute before:inset-x-0 before:top-0 before:z-10 before:h-0.5",
         isFocused
           ? "fixed inset-6 z-50 border-primary/50 shadow-2xl md:inset-x-[12vw] md:inset-y-[6vh]"
           : "relative border-border/70",
@@ -144,6 +147,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
         (placement.overridden || placement.heldInPlace) &&
           !isFocused &&
           "border-l-2 border-l-amber-500/70",
+        runtimeChromeClassName(status),
       )}
       style={isFocused ? undefined : { height: `${effectiveHeight}px` }}
     >
@@ -216,6 +220,15 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
       {reason !== null ? (
         <p className="shrink-0 border-b border-border/50 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
           {reason}
+        </p>
+      ) : null}
+
+      {placement.danglingLaneId !== null ? (
+        <p
+          className="shrink-0 border-b border-border/50 bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground"
+          title={`Removed lane: ${placement.danglingLaneId}`}
+        >
+          Lane removed
         </p>
       ) : null}
 
@@ -535,15 +548,33 @@ function AttentionStrip({
   );
 }
 
-function StatusDot({ status }: { readonly status: ReturnType<typeof resolveSidebarV2Status> }) {
+function runtimeChromeClassName(status: ThreadRuntimeState): string {
+  switch (status) {
+    case "approval":
+    case "input":
+    case "plan-ready":
+      return "before:bg-amber-500/80";
+    case "working":
+    case "connecting":
+      return "before:animate-pulse before:bg-blue-500/80";
+    case "failed":
+      return "before:bg-red-500/80";
+    case "idle":
+      return "before:bg-muted-foreground/25";
+  }
+}
+
+function StatusDot({ status }: { readonly status: ThreadRuntimeState }) {
   const className =
     status === "approval" || status === "input"
       ? "bg-amber-500"
-      : status === "working"
+      : status === "working" || status === "connecting"
         ? "bg-blue-500 animate-pulse"
         : status === "failed"
           ? "bg-red-500"
-          : "bg-muted-foreground/40";
+          : status === "plan-ready"
+            ? "bg-amber-500"
+            : "bg-muted-foreground/40";
   return (
     <span
       data-testid="board-card-status"

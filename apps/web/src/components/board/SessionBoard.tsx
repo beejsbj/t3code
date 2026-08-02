@@ -47,8 +47,14 @@ interface BoardLaneColumn {
   readonly lane: LaneDefinition;
 }
 
-const NEEDS_YOU_LANE = LaneId.make("needs-you");
-const NEEDS_YOU_DROPPABLE_ID = "board:needs-you";
+const DONE_LANE = LaneId.make("done");
+const DEFAULT_DONE_LANE: LaneDefinition = {
+  id: DONE_LANE,
+  name: "Done",
+  description: "Settled sessions drain here",
+  order: Number.MAX_SAFE_INTEGER,
+  interrupt: "move",
+};
 
 function laneColumnKey(environmentId: EnvironmentId, laneId: WorkflowLane): string {
   return JSON.stringify([environmentId, laneId]);
@@ -96,15 +102,17 @@ export function SessionBoard() {
 
   const boardLanes = useMemo<ReadonlyArray<BoardLaneColumn>>(
     () =>
-      [...laneRegistries.entries()].flatMap(([environmentId, lanes]) =>
-        lanes
-          .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id))
-          .map((lane) => ({
-            key: laneColumnKey(environmentId, lane.id),
-            environmentId,
-            lane,
-          })),
-      ),
+      [...laneRegistries.entries()].flatMap(([environmentId, lanes]) => {
+        const orderedIntentLanes = lanes
+          .filter((lane) => lane.id !== DONE_LANE)
+          .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id));
+        const doneLane = lanes.find((lane) => lane.id === DONE_LANE) ?? DEFAULT_DONE_LANE;
+        return [...orderedIntentLanes, doneLane].map((lane) => ({
+          key: laneColumnKey(environmentId, lane.id),
+          environmentId,
+          lane,
+        }));
+      }),
     [laneRegistries],
   );
 
@@ -151,14 +159,14 @@ export function SessionBoard() {
     const map = new Map<string, Array<PlacedThread>>();
     for (const column of boardLanes) map.set(column.key, []);
     for (const entry of placed) {
-      if (entry.placement.lane === null || entry.placement.source === "attention") continue;
+      if (entry.placement.lane === null || entry.placement.inNeedsYouRail) continue;
       map.get(laneColumnKey(entry.ref.environmentId, entry.placement.lane))?.push(entry);
     }
     return map;
   }, [boardLanes, placed]);
 
   const needsYou = useMemo(
-    () => placed.filter((entry) => entry.placement.source === "attention"),
+    () => placed.filter((entry) => entry.placement.inNeedsYouRail),
     [placed],
   );
 
@@ -195,7 +203,7 @@ export function SessionBoard() {
       // Drag/drop moves the *session-owned* field only. It never touches the
       // runtime attention that may currently be displacing the card, so
       // dropping a working session into "Ready" records the intent and the
-      // card stays visibly held in "Active" until the run finishes.
+      // card remains there with live working chrome until the run finishes.
       if (entry.placement.assignedLane === targetLaneId) return;
 
       void setWorkflowLane({
@@ -241,6 +249,7 @@ export function SessionBoard() {
         onDragCancel={() => setDraggingKey(null)}
       >
         <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
+          <NeedsYouRail entries={needsYou} draggingKey={draggingKey} />
           {boardLanes.map((column) => (
             <LaneColumn
               key={column.key}
@@ -252,15 +261,6 @@ export function SessionBoard() {
               draggingKey={draggingKey}
             />
           ))}
-          <LaneColumn
-            droppableId={NEEDS_YOU_DROPPABLE_ID}
-            laneId={NEEDS_YOU_LANE}
-            label="Needs you"
-            hint="Temporary attention grouping; P6b replaces this"
-            entries={needsYou}
-            draggingKey={draggingKey}
-            droppable={false}
-          />
         </div>
       </DndContext>
     </div>
@@ -274,7 +274,6 @@ function LaneColumn({
   hint,
   entries,
   draggingKey,
-  droppable = true,
 }: {
   readonly droppableId: string;
   readonly laneId: WorkflowLane;
@@ -282,9 +281,8 @@ function LaneColumn({
   readonly hint: string;
   readonly entries: ReadonlyArray<PlacedThread>;
   readonly draggingKey: string | null;
-  readonly droppable?: boolean;
 }) {
-  const { isOver, setNodeRef } = useDroppable({ id: droppableId, disabled: !droppable });
+  const { isOver, setNodeRef } = useDroppable({ id: droppableId });
 
   return (
     <section
@@ -301,6 +299,47 @@ function LaneColumn({
           <span className="ml-auto text-[11px] text-muted-foreground/70">{entries.length}</span>
         </div>
         <p className="mt-0.5 text-[11px] text-muted-foreground/60">{hint}</p>
+      </header>
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+        {entries.map((entry) => (
+          <BoardSessionCard
+            key={entry.key}
+            cardKey={entry.key}
+            threadRef={entry.ref}
+            thread={entry.thread}
+            placement={entry.placement}
+            lanes={entry.lanes}
+            projectTitle={entry.projectTitle}
+            isDragging={draggingKey === entry.key}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function NeedsYouRail({
+  entries,
+  draggingKey,
+}: {
+  readonly entries: ReadonlyArray<PlacedThread>;
+  readonly draggingKey: string | null;
+}) {
+  return (
+    <section
+      data-board-rail="needs-you"
+      className="flex min-w-[232px] flex-1 basis-0 flex-col rounded-lg border border-slate-400/40 bg-slate-500/10 shadow-inner dark:border-slate-500/40 dark:bg-slate-400/[0.06]"
+    >
+      <header className="shrink-0 border-b border-slate-400/30 bg-slate-500/10 px-3 py-2 dark:border-slate-500/30 dark:bg-slate-400/[0.05]">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-slate-700 dark:text-slate-200">Needs you</span>
+          <span className="ml-auto text-[11px] text-slate-500 dark:text-slate-400">
+            {entries.length}
+          </span>
+        </div>
+        <p className="mt-0.5 text-[11px] text-slate-500/90 dark:text-slate-400">
+          Live attention, placed by the system
+        </p>
       </header>
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
         {entries.map((entry) => (

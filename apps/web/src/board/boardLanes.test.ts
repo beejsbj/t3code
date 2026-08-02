@@ -7,7 +7,6 @@ import {
   type BoardLaneInput,
   boardLaneLabel,
   boardLaneInterruptPolicy,
-  isAttentionLane,
   isWorkflowLane,
   placementReason,
   resolveBoardPlacement,
@@ -253,16 +252,18 @@ describe("resolveBoardPlacement", () => {
     expect(placement.lane).toBe("shaping");
     expect(placement.source).toBe("assigned");
     expect(placement.heldInPlace).toBe(true);
+    expect(placement.inNeedsYouRail).toBe(false);
     expect(placement.attention).toBe("blocked");
   });
 
-  it("moves pending user input out of a move-policy lane", () => {
+  it("moves a pending approval from a move-policy lane to the rail", () => {
     const placement = resolveBoardPlacement(
-      shell({ workflowLane: "ready", hasPendingUserInput: true }),
+      shell({ workflowLane: "ready", hasPendingApprovals: true }),
       AT(NOW),
     )!;
 
-    expect(placement.lane).toBe("blocked");
+    expect(placement.lane).toBeNull();
+    expect(placement.inNeedsYouRail).toBe(true);
     expect(placement.heldInPlace).toBe(false);
   });
 
@@ -273,17 +274,19 @@ describe("resolveBoardPlacement", () => {
     )!;
 
     expect(placement.lane).toBe("done");
+    expect(placement.inNeedsYouRail).toBe(false);
     expect(placement.heldInPlace).toBe(false);
   });
 
-  it("leaves a settled thread unplaced when the done lane is absent", () => {
+  it("uses the fixed done outlet even when it is absent from the registry", () => {
     const placement = resolveBoardPlacement(shell({ settledOverride: "settled" }), {
       ...AT(NOW),
       lanes: LANES.filter((lane) => lane.id !== "done"),
     })!;
 
-    expect(placement.lane).toBeNull();
+    expect(placement.lane).toBe("done");
     expect(placement.source).toBe("native-done");
+    expect(placement.inNeedsYouRail).toBe(false);
   });
 
   it("holds pending approval in a badge-policy lane", () => {
@@ -306,9 +309,11 @@ describe("resolveBoardPlacement", () => {
       ),
     })!;
 
-    expect(movePlacement.lane).toBe("blocked");
+    expect(movePlacement.lane).toBeNull();
+    expect(movePlacement.inNeedsYouRail).toBe(true);
     expect(movePlacement.heldInPlace).toBe(false);
     expect(badgePlacement.lane).toBe("ready");
+    expect(badgePlacement.inNeedsYouRail).toBe(false);
     expect(badgePlacement.heldInPlace).toBe(true);
   });
 
@@ -321,6 +326,7 @@ describe("resolveBoardPlacement", () => {
       attention: null,
       overridden: false,
       heldInPlace: false,
+      inNeedsYouRail: false,
     });
   });
 
@@ -363,14 +369,16 @@ describe("resolveBoardPlacement", () => {
       AT(NOW),
     );
 
-    expect(placement?.lane).toBe("blocked");
+    expect(placement?.lane).toBeNull();
+    expect(placement?.inNeedsYouRail).toBe(true);
     expect(placement?.attention).toBe("blocked");
   });
 
   it("surfaces a failed session in blocked with a failure reason", () => {
     const placement = resolveBoardPlacement(shell({ session: session("error") }), AT(NOW));
 
-    expect(placement?.lane).toBe("blocked");
+    expect(placement?.lane).toBeNull();
+    expect(placement?.inNeedsYouRail).toBe(true);
     expect(placement?.attention).toBe("failed");
     expect(placement === null ? null : placementReason(placement, LANES)).toBe(
       "the session failed",
@@ -386,6 +394,7 @@ describe("resolveBoardPlacement", () => {
       attention: null,
       overridden: false,
       heldInPlace: false,
+      inNeedsYouRail: false,
     });
   });
 
@@ -396,41 +405,52 @@ describe("resolveBoardPlacement", () => {
     expect(placement.overridden).toBe(false);
   });
 
-  it("lets runtime attention temporarily override the assigned lane", () => {
+  it("keeps live work in its assigned move-policy lane", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "ready", session: session("running") }),
       AT(NOW),
     )!;
-    expect(placement.lane).toBe("active");
-    expect(placement.source).toBe("attention");
-    expect(placement.overridden).toBe(true);
-    // The persisted assignment is untouched — this is the whole point.
+    expect(placement.lane).toBe("ready");
+    expect(placement.source).toBe("assigned");
+    expect(placement.inNeedsYouRail).toBe(false);
+    expect(placement.attention).toBe("active");
+    expect(placement.overridden).toBe(false);
     expect(placement.assignedLane).toBe("ready");
   });
 
-  it("does not report an override when attention agrees with the assignment", () => {
+  it("does not report an override for a legacy attention assignment", () => {
     const placement = resolveBoardPlacement(
       shell({ workflowLane: "active", session: session("running") }),
       AT(NOW),
     )!;
-    expect(placement.lane).toBe("active");
+    expect(placement.lane).toBeNull();
     expect(placement.source).toBe("attention");
+    expect(placement.inNeedsYouRail).toBe(true);
     expect(placement.overridden).toBe(false);
   });
 
-  it("pulls an unplaced session onto a lane while it needs attention", () => {
+  it("pulls an unplaced session onto the rail while it needs attention", () => {
     expect(resolveBoardPlacement(shell({ hasPendingApprovals: true }), AT(NOW))).toEqual({
-      lane: "blocked",
+      lane: null,
       source: "attention",
       assignedLane: null,
       danglingLaneId: null,
       attention: "blocked",
       overridden: false,
       heldInPlace: false,
+      inNeedsYouRail: true,
     });
   });
 
-  it("keeps live work active even when explicitly settled", () => {
+  it("pulls unplaced live work onto the rail", () => {
+    const placement = resolveBoardPlacement(shell({ session: session("running") }), AT(NOW))!;
+
+    expect(placement.lane).toBeNull();
+    expect(placement.attention).toBe("active");
+    expect(placement.inNeedsYouRail).toBe(true);
+  });
+
+  it("keeps live work on the rail while effective settlement is suppressed", () => {
     const placement = resolveBoardPlacement(
       shell({
         workflowLane: "review",
@@ -439,26 +459,26 @@ describe("resolveBoardPlacement", () => {
       }),
       AT(NOW),
     )!;
-    expect(placement.lane).toBe("active");
+    expect(placement.lane).toBeNull();
     expect(placement.source).toBe("attention");
+    expect(placement.inNeedsYouRail).toBe(true);
     expect(placement.assignedLane).toBe("review");
   });
 
-  it("keeps a settled session in blocked when it is still waiting on a human", () => {
-    // Burying a pending approval under Done is the exact failure the board
-    // exists to prevent, so blocked outranks even an explicit settle pin.
+  it("keeps pending attention on the rail while effective settlement is suppressed", () => {
     const placement = resolveBoardPlacement(
       shell({ settledOverride: "settled", hasPendingApprovals: true }),
       AT(NOW),
     )!;
-    expect(placement.lane).toBe("blocked");
+    expect(placement.lane).toBeNull();
     expect(placement.source).toBe("attention");
+    expect(placement.inNeedsYouRail).toBe(true);
   });
 
   it("restores the assigned lane once attention clears", () => {
     const assigned = shell({ workflowLane: "ready" });
     const working = { ...assigned, session: session("running") };
-    expect(resolveBoardPlacement(working, AT(NOW))!.lane).toBe("active");
+    expect(resolveBoardPlacement(working, AT(NOW))!.lane).toBe("ready");
     expect(resolveBoardPlacement(assigned, AT(NOW))!.lane).toBe("ready");
   });
 });
@@ -496,17 +516,6 @@ describe("placementReason", () => {
     expect(
       placementReason(resolveBoardPlacement(shell({ workflowLane: "active" }), AT(NOW))!, LANES),
     ).toBeNull();
-  });
-});
-
-describe("isAttentionLane", () => {
-  it("separates runtime-owned lanes from human-intent lanes", () => {
-    expect(isAttentionLane(LaneId.make("active"))).toBe(true);
-    expect(isAttentionLane(LaneId.make("blocked"))).toBe(true);
-    expect(isAttentionLane(LaneId.make("review"))).toBe(true);
-    expect(isAttentionLane(LaneId.make("shaping"))).toBe(false);
-    expect(isAttentionLane(LaneId.make("ready"))).toBe(false);
-    expect(isAttentionLane(LaneId.make("done"))).toBe(false);
   });
 });
 

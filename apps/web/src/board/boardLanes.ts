@@ -16,12 +16,11 @@ import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
  *
  * A card's lane is decided by native lifecycle state plus persisted intent:
  *
- * 1. **Runtime attention** (derived, native, never persisted). If the session
- *    is currently doing something a human must see — it is running, or it is
- *    blocked waiting on an approval / an answer / a plan decision — that fact
- *    temporarily displaces cards from move-policy lanes. Badge-policy lanes
- *    keep the card in place and expose the attention there instead. The
- *    assigned lane underneath is never overwritten.
+ * 1. **Runtime attention** (derived, native, never persisted). Interrupting
+ *    attention — approval, input, failure, or plan review — temporarily
+ *    displaces cards from move-policy lanes. Working cards stay in their
+ *    assigned lane and show live status chrome. Badge-policy lanes keep every
+ *    kind of attention in place. The assigned lane is never overwritten.
  * 2. **Assigned lane** (`thread.workflowLane`, session-owned, persisted). This
  *    is what a drag/drop writes, and the only thing a drag/drop writes.
  *
@@ -38,9 +37,6 @@ import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
  * what `workflowLane` stores.
  */
 
-const ACTIVE_LANE = LaneId.make("active");
-const BLOCKED_LANE = LaneId.make("blocked");
-const REVIEW_LANE = LaneId.make("review");
 const DONE_LANE = LaneId.make("done");
 
 export function isWorkflowLane(
@@ -109,26 +105,6 @@ export function resolveRuntimeAttention(thread: BoardLaneInput): RuntimeAttentio
 }
 
 /**
- * Lanes split into two classes, and the distinction is what keeps the model
- * honest:
- *
- * Registry lanes describe what a human decided. The derived attention ids
- * (`active`, `blocked`, `review`) are not registry lanes; they survive only as
- * a compact placement concept until the Needs-you rail replaces them.
- * Keeping that concept independent preserves precedence without pretending
- * derived states are droppable workflow lanes.
- */
-export const ATTENTION_LANES: ReadonlySet<WorkflowLane> = new Set([
-  ACTIVE_LANE,
-  BLOCKED_LANE,
-  REVIEW_LANE,
-]);
-
-export function isAttentionLane(lane: WorkflowLane): boolean {
-  return ATTENTION_LANES.has(lane);
-}
-
-/**
  * Placement options carry the clock, change-request state, and the same
  * persisted auto-settle setting used by the sidebar. Keeping them explicit
  * preserves deterministic tests and keeps this module independent of React
@@ -144,7 +120,7 @@ export interface BoardPlacementOptions {
 export type BoardPlacementSource = "attention" | "assigned" | "native-done" | "inbox";
 
 export interface BoardPlacement {
-  /** `null` means the session is in the inbox/source queue, not on a lane. */
+  /** `null` means the session is not in a persisted lane column. */
   readonly lane: WorkflowLane | null;
   readonly source: BoardPlacementSource;
   /** The persisted, human-assigned lane — unchanged by attention overrides. */
@@ -156,6 +132,8 @@ export interface BoardPlacement {
   readonly overridden: boolean;
   /** True when a badge-policy lane is keeping runtime attention in place. */
   readonly heldInPlace: boolean;
+  /** Derived rail membership. The rail is never persisted or droppable. */
+  readonly inNeedsYouRail: boolean;
 }
 
 export function resolveBoardPlacement(
@@ -166,6 +144,8 @@ export function resolveBoardPlacement(
   const danglingLaneId =
     assignedLane !== null && !isWorkflowLane(assignedLane, options.lanes) ? assignedLane : null;
   const attention = resolveRuntimeAttention(thread);
+  const interruptsPlacement =
+    attention === "blocked" || attention === "failed" || attention === "review";
   const holdsAttention =
     assignedLane !== null &&
     danglingLaneId === null &&
@@ -183,23 +163,9 @@ export function resolveBoardPlacement(
     return null;
   }
 
-  // Blocking or failed attention outranks everything, including settled. A
-  // session holding an approval or exposing a failure needs a human now;
-  // burying it under Done is exactly the failure this board exists to prevent.
-  // (The server already refuses to settle a thread with pending work, so this
-  // is a belt-and-braces ordering rather than a common case.)
-  if ((attention === "blocked" || attention === "failed") && !holdsAttention) {
-    return {
-      lane: BLOCKED_LANE,
-      source: "attention",
-      assignedLane,
-      danglingLaneId,
-      attention,
-      overridden: assignedLane !== null && assignedLane !== "blocked",
-      heldInPlace: false,
-    };
-  }
-
+  // Done is the fixed drain outlet rather than a user-defined intent lane.
+  // Once effective settlement applies, it wins over badge policy and runtime
+  // attention so settled work cannot remain on the active board.
   if (
     effectiveSettled(thread as OrchestrationThreadShell, {
       now: options.now,
@@ -208,13 +174,14 @@ export function resolveBoardPlacement(
     })
   ) {
     return {
-      lane: isWorkflowLane(DONE_LANE, options.lanes) ? DONE_LANE : null,
+      lane: DONE_LANE,
       source: "native-done",
       assignedLane,
       danglingLaneId,
       attention,
       overridden: assignedLane !== null && assignedLane !== "done",
       heldInPlace: false,
+      inNeedsYouRail: false,
     };
   }
 
@@ -227,18 +194,38 @@ export function resolveBoardPlacement(
       attention,
       overridden: false,
       heldInPlace: true,
+      inNeedsYouRail: false,
+    };
+  }
+
+  if (
+    attention !== null &&
+    !interruptsPlacement &&
+    assignedLane !== null &&
+    danglingLaneId === null
+  ) {
+    return {
+      lane: assignedLane,
+      source: "assigned",
+      assignedLane,
+      danglingLaneId,
+      attention,
+      overridden: false,
+      heldInPlace: false,
+      inNeedsYouRail: false,
     };
   }
 
   if (attention !== null) {
     return {
-      lane: attention === "failed" ? BLOCKED_LANE : LaneId.make(attention),
+      lane: null,
       source: "attention",
       assignedLane,
       danglingLaneId,
       attention,
-      overridden: assignedLane !== null && assignedLane !== attention,
+      overridden: assignedLane !== null && danglingLaneId === null,
       heldInPlace: false,
+      inNeedsYouRail: true,
     };
   }
 
@@ -251,6 +238,7 @@ export function resolveBoardPlacement(
       attention,
       overridden: false,
       heldInPlace: false,
+      inNeedsYouRail: false,
     };
   }
 
@@ -262,6 +250,7 @@ export function resolveBoardPlacement(
     attention,
     overridden: false,
     heldInPlace: false,
+    inNeedsYouRail: false,
   };
 }
 
