@@ -203,3 +203,52 @@ T3 Code already injects a per-thread MCP server into provider sessions — `apps
 - Time-based escalation out of badge lanes.
 - Ghost runtime strip (watching lifecycle flow as chips).
 - Drag from sidebar directly into a lane.
+
+## Known limitations
+
+### Change-request state coverage is bounded by sidebar row mounting (D1)
+
+D1 made the board honor change-request state when settling, so a merged or
+closed PR drains the card to Done exactly as it drains the row in the sidebar.
+The state itself is discovered per rendered sidebar row (each row subscribes to
+`vcsEnvironment.status` and scopes via `resolveThreadPr`), and D1 lifts those
+reports into a shared store both the sidebar and the board read.
+
+Neither the shell snapshot nor any client-runtime aggregate carries PR state, so
+a board-wide source does not exist. That leaves the discovery bounded by which
+rows actually mount. Three gates were examined:
+
+| Gate                                | Impact                                                                                                                                                                                                              |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Snoozed shelf, collapsed by default | Benign. Snooze already outranks settled classification, and a woken thread moves into the never-gated active list, so its row mounts and the store self-heals.                                                      |
+| Settled tail pagination             | Narrow. Only bites if a PR _reopens_ while its row sits beyond the page cutoff.                                                                                                                                     |
+| **Project scope filter**            | **The real gap.** Scoping the sidebar to one project excludes other projects' threads _before_ classification, so their rows never mount and never report. The board reads all threads independently of that scope. |
+
+**Degradation is safe.** Missing coverage reads as `null`, which means "not
+settled", so the card stays in its current lane. Nothing is ever wrongly placed
+in Done and no state is corrupted — this is staleness, not incorrectness.
+
+**Retention narrows it further.** The row's reporting effect has no cleanup, so
+a value persists in the store after its row unmounts. The scope selection is
+plain component state that resets to "all" on page load, remounting every active
+row once. So the exposure window is specific: the user narrows scope during a
+long-lived session, a PR state changes for an out-of-scope thread inside that
+window, and the board is consulted before any reload or scope widening.
+
+**Why it is not fixed here.** Closing it means decoupling PR-state discovery
+from row rendering — running the `vcsEnvironment.status` subscription per
+environment or per thread shell rather than per rendered row. That is the
+"shared source" approach D1's own investigation established does not exist.
+Building it either reintroduces the per-card request fan-out D1 was explicitly
+scoped to avoid, or requires restructuring the subscription keying. That is a
+moderate architectural change and belongs in its own packet, not folded into UI
+work.
+
+### Archiving the `done` lane strands settled sessions (P6a)
+
+`resolveBoardPlacement` returns `lane: null` for an effectively-settled thread
+when the `done` lane is absent from the registry. The thread is still visible in
+the sidebar (the exhaustive view), so nothing is lost, but it silently stops
+appearing on the board. Not reachable today because lane management does not
+exist yet. **P6c must either block archiving `done` or handle the strand
+explicitly.**
