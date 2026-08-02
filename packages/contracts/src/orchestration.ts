@@ -694,9 +694,6 @@ const ThreadWorkflowLaneSetCommand = Schema.Struct({
   threadId: ThreadId,
   // `null` returns the session to the inbox/source queue.
   workflowLane: Schema.NullOr(WorkflowLane),
-  placedBy: Schema.optional(WorkflowLanePlacedBy).pipe(
-    Schema.withDecodingDefault(Effect.succeed("user" as const)),
-  ),
 });
 
 const LaneCreateCommand = Schema.Struct({

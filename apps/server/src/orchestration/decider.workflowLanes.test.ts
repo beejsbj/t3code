@@ -1,6 +1,7 @@
 import {
   CommandId,
   LaneId,
+  OrchestrationCommand,
   type OrchestrationEvent,
   ProjectId,
   ProviderInstanceId,
@@ -11,11 +12,13 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 import { projectEvent } from "./projector.ts";
 
 const NOW = "2026-07-28T12:00:00.000Z";
+const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 
 type Decided = Effect.Success<ReturnType<typeof decideOrchestrationCommand>>;
 type EventType = OrchestrationEvent["type"];
@@ -78,13 +81,13 @@ it.layer(NodeServices.layer)("workflow lane decider", (it) => {
           commandId: CommandId.make("cmd-agent-over-user"),
           threadId: ThreadId.make("thread-1"),
           workflowLane: LaneId.make("ready"),
-          placedBy: "agent",
         },
         readModel: readModel({
           ...thread(LaneId.make("shaping")),
           workflowLanePlacedBy: "user",
           workflowLanePlacedAt: NOW,
         }),
+        workflowLanePlacementProvenance: "agent",
       }).pipe(Effect.flip);
 
       expect(error._tag).toBe("OrchestrationCommandInvariantError");
@@ -92,6 +95,23 @@ it.layer(NodeServices.layer)("workflow lane decider", (it) => {
         return yield* Effect.die("Expected an orchestration invariant error");
       }
       expect(error.detail).toContain("user placement");
+    }),
+  );
+
+  it.effect("treats a legacy non-null lane without provenance as user-owned", () =>
+    Effect.gen(function* () {
+      const error = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.workflow-lane.set",
+          commandId: CommandId.make("cmd-agent-over-legacy-user"),
+          threadId: ThreadId.make("thread-1"),
+          workflowLane: LaneId.make("ready"),
+        },
+        readModel: readModel(thread(LaneId.make("shaping"))),
+        workflowLanePlacementProvenance: "agent",
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
     }),
   );
 
@@ -112,9 +132,9 @@ it.layer(NodeServices.layer)("workflow lane decider", (it) => {
               commandId: CommandId.make(`cmd-agent-${current.workflowLane ?? "null"}`),
               threadId: ThreadId.make("thread-1"),
               workflowLane: LaneId.make("ready"),
-              placedBy: "agent",
             },
             readModel: readModel(current),
+            workflowLanePlacementProvenance: "agent",
           }),
           "thread.workflow-lane-set",
         );
@@ -138,9 +158,34 @@ it.layer(NodeServices.layer)("workflow lane decider", (it) => {
             workflowLanePlacedBy: "agent",
             workflowLanePlacedAt: NOW,
           }),
+          workflowLanePlacementProvenance: "user",
         }),
         "thread.workflow-lane-set",
       );
+      expect(event.payload.placedBy).toBe("user");
+    }),
+  );
+
+  it.effect("drops forged client provenance and uses trusted dispatch provenance", () =>
+    Effect.gen(function* () {
+      const clientCommand = yield* decodeOrchestrationCommand({
+        type: "thread.workflow-lane.set",
+        commandId: "cmd-caller-asserted-agent",
+        threadId: "thread-1",
+        workflowLane: "ready",
+        placedBy: "agent",
+      });
+      expect("placedBy" in clientCommand).toBe(false);
+
+      const event = expectEvent(
+        yield* decideOrchestrationCommand({
+          command: clientCommand,
+          readModel: readModel(),
+          workflowLanePlacementProvenance: "user",
+        }),
+        "thread.workflow-lane-set",
+      );
+
       expect(event.payload.placedBy).toBe("user");
     }),
   );
@@ -162,6 +207,7 @@ it.layer(NodeServices.layer)("workflow lane decider", (it) => {
             },
           },
           readModel: model,
+          workflowLanePlacementProvenance: "user",
         }),
         "lane.created",
       );
@@ -178,6 +224,7 @@ it.layer(NodeServices.layer)("workflow lane decider", (it) => {
             interrupt: "badge",
           },
           readModel: model,
+          workflowLanePlacementProvenance: "user",
         }),
         "lane.updated",
       );
@@ -193,6 +240,7 @@ it.layer(NodeServices.layer)("workflow lane decider", (it) => {
             laneId: LaneId.make("on-deck"),
           },
           readModel: model,
+          workflowLanePlacementProvenance: "user",
         }),
         "lane.archived",
       );

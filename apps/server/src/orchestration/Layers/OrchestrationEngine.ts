@@ -4,6 +4,7 @@ import type {
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
+  WorkflowLanePlacedBy,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -53,6 +54,7 @@ const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvar
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
+  workflowLanePlacementProvenance: WorkflowLanePlacedBy;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
   startedAtMs: number;
 }
@@ -165,6 +167,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
+          workflowLanePlacementProvenance: envelope.workflowLanePlacementProvenance,
         }).pipe(
           Effect.provideService(Crypto.Crypto, crypto),
           Effect.mapError((cause) =>
@@ -326,6 +329,22 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
       yield* Queue.offer(commandQueue, {
         command,
+        workflowLanePlacementProvenance: "user",
+        result,
+        startedAtMs: yield* Clock.currentTimeMillis,
+      });
+      return yield* Deferred.await(result);
+    });
+
+  const dispatchWorkflowLanePlacement: OrchestrationEngineShape["dispatchWorkflowLanePlacement"] = (
+    command,
+    placedBy,
+  ) =>
+    Effect.gen(function* () {
+      const result = yield* Deferred.make<{ sequence: number }, OrchestrationDispatchError>();
+      yield* Queue.offer(commandQueue, {
+        command,
+        workflowLanePlacementProvenance: placedBy,
         result,
         startedAtMs: yield* Clock.currentTimeMillis,
       });
@@ -335,6 +354,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   return {
     readEvents,
     dispatch,
+    dispatchWorkflowLanePlacement,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (wsServer, ProviderRuntimeIngestion, CheckpointReactor, etc.)
     // each independently receive all domain events.

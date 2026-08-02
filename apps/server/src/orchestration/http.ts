@@ -81,13 +81,15 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           const normalizedCommand = yield* normalizeDispatchCommand(args.payload).pipe(
             Effect.catch(() => failEnvironmentInvalidRequest("invalid_command")),
           );
-          return yield* orchestrationEngine
-            .dispatch(normalizedCommand)
-            .pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("orchestration_dispatch_failed", cause),
-              ),
-            );
+          const dispatchEffect =
+            normalizedCommand.type === "thread.workflow-lane.set"
+              ? orchestrationEngine.dispatchWorkflowLanePlacement(normalizedCommand, "user")
+              : orchestrationEngine.dispatch(normalizedCommand);
+          return yield* dispatchEffect.pipe(
+            Effect.catch((cause) =>
+              failEnvironmentInternal("orchestration_dispatch_failed", cause),
+            ),
+          );
         }),
       );
   }),

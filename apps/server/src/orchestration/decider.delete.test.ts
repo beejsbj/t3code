@@ -15,6 +15,10 @@ import { expect, it } from "@effect/vitest";
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
+const decideUserOrchestrationCommand = (
+  input: Omit<Parameters<typeof decideOrchestrationCommand>[0], "workflowLanePlacementProvenance">,
+) => decideOrchestrationCommand({ ...input, workflowLanePlacementProvenance: "user" });
+
 const asCommandId = (value: string): CommandId => CommandId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
@@ -141,7 +145,7 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
     Effect.gen(function* () {
       const readModel = yield* seedReadModel;
       const error = yield* Effect.flip(
-        decideOrchestrationCommand({
+        decideUserOrchestrationCommand({
           command: {
             type: "project.delete",
             commandId: asCommandId("cmd-project-delete-no-force"),
@@ -164,7 +168,7 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
         force: true,
       };
 
-      const forcedResult = yield* decideOrchestrationCommand({
+      const forcedResult = yield* decideUserOrchestrationCommand({
         command: projectDeleteCommand,
         readModel,
       });
@@ -196,7 +200,7 @@ it.layer(NodeServices.layer)("decider deletion flows", (it) => {
           projectId: asProjectId("project-delete"),
         },
       ] satisfies ReadonlyArray<OrchestrationCommand>) {
-        const decided = yield* decideOrchestrationCommand({
+        const decided = yield* decideUserOrchestrationCommand({
           command: nextCommand,
           readModel: sequentialReadModel,
         });

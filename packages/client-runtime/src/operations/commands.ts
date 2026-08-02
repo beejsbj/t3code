@@ -256,9 +256,10 @@ export const setThreadRuntimeMode: (input: SetThreadRuntimeModeInput) => Command
 export const setThreadWorkflowLane: (input: SetThreadWorkflowLaneInput) => CommandEffect =
   Effect.fn("EnvironmentCommands.setThreadWorkflowLane")(function* (input) {
     return yield* dispatch({
-      ...input,
       type: "thread.workflow-lane.set",
       commandId: yield* commandId(input),
+      threadId: input.threadId,
+      workflowLane: input.workflowLane,
     });
   });
 

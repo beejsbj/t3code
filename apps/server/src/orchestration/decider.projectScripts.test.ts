@@ -15,6 +15,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
+const decideUserOrchestrationCommand = (
+  input: Omit<Parameters<typeof decideOrchestrationCommand>[0], "workflowLanePlacementProvenance">,
+) => decideOrchestrationCommand({ ...input, workflowLanePlacementProvenance: "user" });
+
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
@@ -24,7 +28,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       const now = "2026-01-01T00:00:00.000Z";
       const readModel = createEmptyReadModel(now);
 
-      const result = yield* decideOrchestrationCommand({
+      const result = yield* decideUserOrchestrationCommand({
         command: {
           type: "project.create",
           commandId: CommandId.make("cmd-project-create-scripts"),
@@ -78,7 +82,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         },
       ] as const;
 
-      const result = yield* decideOrchestrationCommand({
+      const result = yield* decideUserOrchestrationCommand({
         command: {
           type: "project.meta.update",
           commandId: CommandId.make("cmd-project-update-scripts"),
@@ -121,7 +125,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       });
 
       const failure = yield* Effect.flip(
-        decideOrchestrationCommand({
+        decideUserOrchestrationCommand({
           command: {
             type: "project.create",
             commandId: CommandId.make("cmd-project-create-duplicate-root"),
@@ -188,7 +192,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
       });
 
       const failure = yield* Effect.flip(
-        decideOrchestrationCommand({
+        decideUserOrchestrationCommand({
           command: {
             type: "project.meta.update",
             commandId: CommandId.make("cmd-project-update-duplicate-root"),
@@ -258,7 +262,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         },
       });
 
-      const result = yield* decideOrchestrationCommand({
+      const result = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.turn.start",
           commandId: CommandId.make("cmd-turn-start"),
@@ -355,7 +359,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         },
       });
 
-      const result = yield* decideOrchestrationCommand({
+      const result = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.runtime-mode.set",
           commandId: CommandId.make("cmd-runtime-mode-set"),
@@ -433,7 +437,7 @@ it.layer(NodeServices.layer)("decider project scripts", (it) => {
         },
       });
 
-      const result = yield* decideOrchestrationCommand({
+      const result = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.interaction-mode.set",
           commandId: CommandId.make("cmd-interaction-mode-set"),
