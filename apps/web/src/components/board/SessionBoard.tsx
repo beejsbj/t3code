@@ -18,19 +18,37 @@ import {
   type WorkflowLane,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { resolveBoardPlacement, type BoardPlacement } from "../../board/boardLanes.ts";
 import { useBoardCardStore } from "../../board/boardCardStore.ts";
 import { useNowMinute } from "../../hooks/useNowMinute.ts";
 import { useClientSettings } from "../../hooks/useSettings.ts";
 import { useLaneRegistries, useProjects, useThreadShells } from "../../state/entities.ts";
+import { orchestrationEnvironment } from "../../state/orchestration.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import { useThreadChangeRequestStateStore } from "../../threadChangeRequestStateStore.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
+import { Button } from "../ui/button.tsx";
+import { Input } from "../ui/input.tsx";
+import {
+  Popover,
+  PopoverDescription,
+  PopoverPopup,
+  PopoverTitle,
+  PopoverTrigger,
+} from "../ui/popover.tsx";
+import { Switch } from "../ui/switch.tsx";
+import { Textarea } from "../ui/textarea.tsx";
 import { cn } from "~/lib/utils";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
+import {
+  laneArchiveIntent,
+  laneIdForName,
+  nextLaneOrder,
+  reorderLaneUpdates,
+} from "./SessionBoard.logic.ts";
 
 interface PlacedThread {
   readonly ref: ScopedThreadRef;
@@ -45,6 +63,13 @@ interface BoardLaneColumn {
   readonly key: string;
   readonly environmentId: EnvironmentId;
   readonly lane: LaneDefinition;
+}
+
+interface LaneDraft {
+  readonly name: string;
+  readonly description: string;
+  readonly order: number;
+  readonly interrupt: "move" | "badge";
 }
 
 const DONE_LANE = LaneId.make("done");
@@ -74,6 +99,9 @@ export function SessionBoard() {
   const setWorkflowLane = useAtomCommand(threadEnvironment.setWorkflowLane, {
     reportFailure: false,
   });
+  const createLane = useAtomCommand(orchestrationEnvironment.createLane);
+  const updateLane = useAtomCommand(orchestrationEnvironment.updateLane);
+  const archiveLane = useAtomCommand(orchestrationEnvironment.archiveLane);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [snoozeWakeTick, setSnoozeWakeTick] = useState(0);
 
@@ -114,6 +142,64 @@ export function SessionBoard() {
         }));
       }),
     [laneRegistries],
+  );
+
+  const laneMemberCountByKey = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const thread of threads) {
+      if (thread.workflowLane == null) continue;
+      const key = laneColumnKey(thread.environmentId, thread.workflowLane);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  }, [threads]);
+
+  const handleCreateLane = useCallback(
+    async (
+      environmentId: EnvironmentId,
+      lanes: ReadonlyArray<LaneDefinition>,
+      draft: LaneDraft,
+    ) => {
+      const result = await createLane({
+        environmentId,
+        input: { lane: { id: laneIdForName(draft.name, lanes), ...draft } },
+      });
+      return result._tag === "Success";
+    },
+    [createLane],
+  );
+
+  const handleUpdateLane = useCallback(
+    async (environmentId: EnvironmentId, laneId: LaneDefinition["id"], draft: LaneDraft) => {
+      const result = await updateLane({ environmentId, input: { laneId, ...draft } });
+      return result._tag === "Success";
+    },
+    [updateLane],
+  );
+
+  const handleReorderLane = useCallback(
+    async (
+      environmentId: EnvironmentId,
+      lanes: ReadonlyArray<LaneDefinition>,
+      laneId: LaneDefinition["id"],
+      direction: "up" | "down",
+    ) => {
+      for (const input of reorderLaneUpdates(lanes, laneId, direction)) {
+        await updateLane({ environmentId, input });
+      }
+    },
+    [updateLane],
+  );
+
+  const handleArchiveLane = useCallback(
+    async (environmentId: EnvironmentId, laneId: LaneDefinition["id"], memberCount: number) => {
+      const intent = laneArchiveIntent(laneId, memberCount);
+      if (intent.kind === "blocked") return false;
+      if (intent.kind === "confirm" && !window.confirm(intent.explanation)) return false;
+      const result = await archiveLane({ environmentId, input: { laneId } });
+      return result._tag === "Success";
+    },
+    [archiveLane],
   );
 
   const placed = useMemo<ReadonlyArray<PlacedThread>>(() => {
@@ -223,6 +309,15 @@ export function SessionBoard() {
           moves itself until it doesn&apos;t.
         </p>
         <div className="ml-auto flex items-center gap-2">
+          {[...laneRegistries.entries()].map(([environmentId, lanes]) => (
+            <NewLanePopover
+              key={environmentId}
+              environmentId={environmentId}
+              lanes={lanes}
+              showEnvironment={laneRegistries.size > 1}
+              onCreate={handleCreateLane}
+            />
+          ))}
           {focusedThreadKey !== null ? (
             <button
               type="button"
@@ -254,11 +349,15 @@ export function SessionBoard() {
             <LaneColumn
               key={column.key}
               droppableId={column.key}
-              laneId={column.lane.id}
-              label={column.lane.name}
-              hint={column.lane.description}
+              environmentId={column.environmentId}
+              lane={column.lane}
+              lanes={laneRegistries.get(column.environmentId) ?? []}
+              memberCount={laneMemberCountByKey.get(column.key) ?? 0}
               entries={byLane.get(column.key) ?? []}
               draggingKey={draggingKey}
+              onUpdate={handleUpdateLane}
+              onReorder={handleReorderLane}
+              onArchive={handleArchiveLane}
             />
           ))}
         </div>
@@ -267,27 +366,336 @@ export function SessionBoard() {
   );
 }
 
+function NewLanePopover({
+  environmentId,
+  lanes,
+  showEnvironment,
+  onCreate,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly lanes: ReadonlyArray<LaneDefinition>;
+  readonly showEnvironment: boolean;
+  readonly onCreate: (
+    environmentId: EnvironmentId,
+    lanes: ReadonlyArray<LaneDefinition>,
+    draft: LaneDraft,
+  ) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [order, setOrder] = useState(() => String(nextLaneOrder(lanes)));
+  const [interrupt, setInterrupt] = useState<"move" | "badge">("move");
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen) return;
+    setName("");
+    setDescription("");
+    setOrder(String(nextLaneOrder(lanes)));
+    setInterrupt("move");
+  };
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const numericOrder = Number(order);
+    if (name.trim() === "" || description.trim() === "" || !Number.isFinite(numericOrder)) return;
+    const created = await onCreate(environmentId, lanes, {
+      name: name.trim(),
+      description: description.trim(),
+      order: numericOrder,
+      interrupt,
+    });
+    if (created) setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={handleOpenChange}>
+      <PopoverTrigger render={<Button size="xs" variant="outline" />}>
+        New lane{showEnvironment ? ` · ${environmentId}` : ""}
+      </PopoverTrigger>
+      <PopoverPopup align="end" className="w-80">
+        <form className="space-y-3" onSubmit={(event) => void handleSubmit(event)}>
+          <div className="space-y-1">
+            <PopoverTitle className="text-sm">Create lane</PopoverTitle>
+            <PopoverDescription className="text-xs">
+              Add an intent column to this board.
+            </PopoverDescription>
+          </div>
+          <LaneFields
+            name={name}
+            description={description}
+            order={order}
+            interrupt={interrupt}
+            onNameChange={setName}
+            onDescriptionChange={setDescription}
+            onOrderChange={setOrder}
+            onInterruptChange={setInterrupt}
+          />
+          <div className="flex justify-end gap-2">
+            <Button type="button" size="xs" variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" size="xs">
+              Create lane
+            </Button>
+          </div>
+        </form>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+function LaneEditorPopover({
+  environmentId,
+  lane,
+  lanes,
+  memberCount,
+  onUpdate,
+  onReorder,
+  onArchive,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly lane: LaneDefinition;
+  readonly lanes: ReadonlyArray<LaneDefinition>;
+  readonly memberCount: number;
+  readonly onUpdate: (
+    environmentId: EnvironmentId,
+    laneId: LaneDefinition["id"],
+    draft: LaneDraft,
+  ) => Promise<boolean>;
+  readonly onReorder: (
+    environmentId: EnvironmentId,
+    lanes: ReadonlyArray<LaneDefinition>,
+    laneId: LaneDefinition["id"],
+    direction: "up" | "down",
+  ) => Promise<void>;
+  readonly onArchive: (
+    environmentId: EnvironmentId,
+    laneId: LaneDefinition["id"],
+    memberCount: number,
+  ) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(lane.name);
+  const [description, setDescription] = useState(lane.description);
+  const [order, setOrder] = useState(String(lane.order));
+  const [interrupt, setInterrupt] = useState<"move" | "badge">(lane.interrupt);
+  const isDone = lane.id === DONE_LANE;
+  const archiveIntent = laneArchiveIntent(lane.id, memberCount);
+  const canMoveUp = reorderLaneUpdates(lanes, lane.id, "up").length > 0;
+  const canMoveDown = reorderLaneUpdates(lanes, lane.id, "down").length > 0;
+
+  useEffect(() => {
+    setName(lane.name);
+    setDescription(lane.description);
+    setOrder(String(lane.order));
+    setInterrupt(lane.interrupt);
+  }, [lane]);
+
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const numericOrder = isDone ? lane.order : Number(order);
+    if (name.trim() === "" || description.trim() === "" || !Number.isFinite(numericOrder)) return;
+    const updated = await onUpdate(environmentId, lane.id, {
+      name: name.trim(),
+      description: description.trim(),
+      order: numericOrder,
+      interrupt: isDone ? "move" : interrupt,
+    });
+    if (updated) setOpen(false);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button type="button" className="rounded px-1 text-muted-foreground hover:bg-accent" />
+        }
+      >
+        <span aria-hidden>•••</span>
+        <span className="sr-only">Manage {lane.name} lane</span>
+      </PopoverTrigger>
+      <PopoverPopup align="start" className="w-80">
+        <form className="space-y-3" onSubmit={(event) => void handleSubmit(event)}>
+          <div className="space-y-1">
+            <PopoverTitle className="text-sm">Manage lane</PopoverTitle>
+            <PopoverDescription className="text-xs">Lane id: {lane.id}</PopoverDescription>
+          </div>
+          <LaneFields
+            name={name}
+            description={description}
+            order={order}
+            interrupt={isDone ? "move" : interrupt}
+            orderDisabled={isDone}
+            interruptDisabled={isDone}
+            onNameChange={setName}
+            onDescriptionChange={setDescription}
+            onOrderChange={setOrder}
+            onInterruptChange={setInterrupt}
+          />
+          {isDone ? (
+            <p className="rounded-md bg-muted px-2 py-1.5 text-[11px] text-muted-foreground">
+              {archiveIntent.kind === "blocked" ? archiveIntent.explanation : null}
+            </p>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-muted-foreground">Move column</span>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={!canMoveUp}
+                onClick={() => void onReorder(environmentId, lanes, lane.id, "up")}
+              >
+                Left
+              </Button>
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                disabled={!canMoveDown}
+                onClick={() => void onReorder(environmentId, lanes, lane.id, "down")}
+              >
+                Right
+              </Button>
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-2 border-t border-border/60 pt-3">
+            <Button
+              type="button"
+              size="xs"
+              variant="destructive-outline"
+              disabled={isDone}
+              onClick={async () => {
+                if (await onArchive(environmentId, lane.id, memberCount)) setOpen(false);
+              }}
+            >
+              Archive lane
+            </Button>
+            <Button type="submit" size="xs">
+              Save changes
+            </Button>
+          </div>
+        </form>
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
+function LaneFields({
+  name,
+  description,
+  order,
+  interrupt,
+  orderDisabled = false,
+  interruptDisabled = false,
+  onNameChange,
+  onDescriptionChange,
+  onOrderChange,
+  onInterruptChange,
+}: {
+  readonly name: string;
+  readonly description: string;
+  readonly order: string;
+  readonly interrupt: "move" | "badge";
+  readonly orderDisabled?: boolean;
+  readonly interruptDisabled?: boolean;
+  readonly onNameChange: (value: string) => void;
+  readonly onDescriptionChange: (value: string) => void;
+  readonly onOrderChange: (value: string) => void;
+  readonly onInterruptChange: (value: "move" | "badge") => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <label className="block space-y-1 text-xs">
+        <span className="font-medium">Name</span>
+        <Input required value={name} onChange={(event) => onNameChange(event.target.value)} />
+      </label>
+      <label className="block space-y-1 text-xs">
+        <span className="font-medium">Description</span>
+        <Textarea
+          required
+          size="sm"
+          value={description}
+          onChange={(event) => onDescriptionChange(event.target.value)}
+        />
+        <span className="block text-[11px] text-muted-foreground">
+          Agents will use this description to understand where work belongs.
+        </span>
+      </label>
+      <label className="block space-y-1 text-xs">
+        <span className="font-medium">Order</span>
+        <Input
+          nativeInput
+          required
+          type="number"
+          step="any"
+          disabled={orderDisabled}
+          value={order}
+          onChange={(event) => onOrderChange(event.target.value)}
+        />
+      </label>
+      <div className="flex items-start justify-between gap-3 rounded-md border border-border/60 p-2">
+        <div>
+          <p className="text-xs font-medium">Keep attention in this lane</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            Keep cards here when they need you — for lanes you&apos;re already watching.
+          </p>
+        </div>
+        <Switch
+          aria-label="Keep cards in this lane when they need you"
+          checked={interrupt === "badge"}
+          disabled={interruptDisabled}
+          onCheckedChange={(checked) => onInterruptChange(checked ? "badge" : "move")}
+        />
+      </div>
+    </div>
+  );
+}
+
 function LaneColumn({
   droppableId,
-  laneId,
-  label,
-  hint,
+  environmentId,
+  lane,
+  lanes,
+  memberCount,
   entries,
   draggingKey,
+  onUpdate,
+  onReorder,
+  onArchive,
 }: {
   readonly droppableId: string;
-  readonly laneId: WorkflowLane;
-  readonly label: string;
-  readonly hint: string;
+  readonly environmentId: EnvironmentId;
+  readonly lane: LaneDefinition;
+  readonly lanes: ReadonlyArray<LaneDefinition>;
+  readonly memberCount: number;
   readonly entries: ReadonlyArray<PlacedThread>;
   readonly draggingKey: string | null;
+  readonly onUpdate: (
+    environmentId: EnvironmentId,
+    laneId: LaneDefinition["id"],
+    draft: LaneDraft,
+  ) => Promise<boolean>;
+  readonly onReorder: (
+    environmentId: EnvironmentId,
+    lanes: ReadonlyArray<LaneDefinition>,
+    laneId: LaneDefinition["id"],
+    direction: "up" | "down",
+  ) => Promise<void>;
+  readonly onArchive: (
+    environmentId: EnvironmentId,
+    laneId: LaneDefinition["id"],
+    memberCount: number,
+  ) => Promise<boolean>;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: droppableId });
 
   return (
     <section
       ref={setNodeRef}
-      data-lane={laneId}
+      data-lane={lane.id}
       className={cn(
         "flex min-w-[212px] flex-1 basis-0 flex-col rounded-lg border border-border/70 bg-card/20",
         isOver && "border-primary/60 bg-accent/40",
@@ -295,10 +703,19 @@ function LaneColumn({
     >
       <header className="shrink-0 border-b border-border/60 px-3 py-2">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-medium">{label}</span>
+          <span className="text-xs font-medium">{lane.name}</span>
           <span className="ml-auto text-[11px] text-muted-foreground/70">{entries.length}</span>
+          <LaneEditorPopover
+            environmentId={environmentId}
+            lane={lane}
+            lanes={lanes}
+            memberCount={memberCount}
+            onUpdate={onUpdate}
+            onReorder={onReorder}
+            onArchive={onArchive}
+          />
         </div>
-        <p className="mt-0.5 text-[11px] text-muted-foreground/60">{hint}</p>
+        <p className="mt-0.5 text-[11px] text-muted-foreground/60">{lane.description}</p>
       </header>
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
         {entries.map((entry) => (
