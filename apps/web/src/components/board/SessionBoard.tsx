@@ -19,12 +19,28 @@ import {
 import { ChevronDownIcon, ChevronRightIcon, FolderIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
-import { resolveBoardLane } from "../../board/boardLanes.ts";
-import { useLaneRegistries, useProjects, useThreadShells } from "../../state/entities.ts";
+import {
+  boardLaneCollapsedByDefault,
+  isLifecycleBoardLane,
+  resolveBoardLane,
+  SETTLED_BOARD_LANE_ID,
+  SNOOZED_BOARD_LANE_ID,
+  type BoardLaneResolutionOptions,
+} from "../../board/boardLanes.ts";
+import { useThreadActions } from "../../hooks/useThreadActions.ts";
+import { useNowMinute } from "../../hooks/useNowMinute.ts";
+import {
+  useLaneRegistries,
+  useProjects,
+  useServerConfigs,
+  useThreadShells,
+} from "../../state/entities.ts";
 import { orchestrationEnvironment } from "../../state/orchestration.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
+import { useThreadChangeRequestStateStore } from "../../threadChangeRequestStateStore.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
+import { resolveSnoozePresets } from "../Sidebar.snooze.ts";
 import { Button } from "../ui/button.tsx";
 import { Input } from "../ui/input.tsx";
 import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
@@ -37,6 +53,7 @@ import {
 } from "../ui/popover.tsx";
 import { Textarea } from "../ui/textarea.tsx";
 import { cn } from "~/lib/utils";
+import { useClientSettings } from "~/hooks/useSettings";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
 import {
   applyProjectFilterToggle,
@@ -82,10 +99,19 @@ function laneColumnKey(environmentId: EnvironmentId, laneId: WorkflowLane): stri
   return JSON.stringify([environmentId, laneId]);
 }
 
+function laneColumnExpandKey(swimlaneProjectKey: string, laneColumnKeyValue: string): string {
+  return `${swimlaneProjectKey}:${laneColumnKeyValue}`;
+}
+
 export function SessionBoard() {
   const threads = useThreadShells();
   const projects = useProjects();
   const laneRegistries = useLaneRegistries();
+  const serverConfigs = useServerConfigs();
+  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const nowMinute = useNowMinute();
+  const changeRequestStateByKey = useThreadChangeRequestStateStore((state) => state.byThreadKey);
+  const { settleThread, unsettleThread, snoozeThread, unsnoozeThread } = useThreadActions();
   const setWorkflowLane = useAtomCommand(threadEnvironment.setWorkflowLane, {
     reportFailure: false,
   });
@@ -98,6 +124,39 @@ export function SessionBoard() {
   );
   const [collapsedProjectKeys, setCollapsedProjectKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
+  );
+  const [expandedLaneColumnKeys, setExpandedLaneColumnKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const [snoozeWakeTick, setSnoozeWakeTick] = useState(0);
+
+  const snoozeNow = useMemo(() => new Date().toISOString(), [nowMinute, snoozeWakeTick]);
+  const settledNow = useMemo(() => `${nowMinute}:00.000Z`, [nowMinute]);
+
+  const boardLaneBaseResolution = useMemo(
+    (): Omit<BoardLaneResolutionOptions, "changeRequestState"> => ({
+      now: snoozeNow,
+      settledNow,
+      autoSettleAfterDays,
+    }),
+    [autoSettleAfterDays, settledNow, snoozeNow],
+  );
+
+  const resolveThreadLane = useCallback(
+    (thread: SidebarThreadSummary, lanes: ReadonlyArray<LaneDefinition>) => {
+      const supportsSettlement =
+        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
+      const supportsSnooze =
+        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze === true;
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      return resolveBoardLane(thread, lanes, {
+        ...boardLaneBaseResolution,
+        supportsSettlement,
+        supportsSnooze,
+        changeRequestState: changeRequestStateByKey.get(threadKey) ?? null,
+      });
+    },
+    [boardLaneBaseResolution, changeRequestStateByKey, serverConfigs],
   );
 
   const projectTitleById = useMemo(() => {
@@ -127,13 +186,13 @@ export function SessionBoard() {
     for (const thread of threads) {
       if (thread.archivedAt !== null) continue;
       const lanes = laneRegistries.get(thread.environmentId) ?? [];
-      const laneId = resolveBoardLane(thread, lanes);
+      const laneId = resolveThreadLane(thread, lanes);
       if (laneId === null) continue;
       const key = laneColumnKey(thread.environmentId, laneId);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return counts;
-  }, [laneRegistries, threads]);
+  }, [laneRegistries, resolveThreadLane, threads]);
 
   const handleCreateLane = useCallback(
     async (
@@ -189,7 +248,7 @@ export function SessionBoard() {
         const ref = scopeThreadRef(thread.environmentId, thread.id);
         const key = scopedThreadKey(ref);
         const lanes = laneRegistries.get(thread.environmentId) ?? [];
-        const laneId = resolveBoardLane(thread, lanes);
+        const laneId = resolveThreadLane(thread, lanes);
         if (laneId === null) return null;
         const columnKey = laneColumnKey(thread.environmentId, laneId);
         return {
@@ -207,7 +266,7 @@ export function SessionBoard() {
       })
       .filter((entry): entry is PlacedThread => entry !== null)
       .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt));
-  }, [laneRegistries, projectTitleById, threads]);
+  }, [laneRegistries, projectTitleById, resolveThreadLane, threads]);
 
   const projectsWithSessions = useMemo(() => listProjectsWithSessions(placed), [placed]);
 
@@ -253,6 +312,33 @@ export function SessionBoard() {
     });
   }, []);
 
+  const toggleLaneColumnExpanded = useCallback((expandKey: string) => {
+    setExpandedLaneColumnKeys((current) => {
+      const next = new Set(current);
+      if (next.has(expandKey)) next.delete(expandKey);
+      else next.add(expandKey);
+      return next;
+    });
+  }, []);
+
+  const nextSnoozeWakeAtMs = useMemo(() => {
+    let next = Number.NaN;
+    for (const thread of threads) {
+      if (thread.archivedAt !== null || thread.snoozedUntil == null) continue;
+      const wake = Date.parse(thread.snoozedUntil);
+      if (Number.isNaN(wake) || wake <= Date.now()) continue;
+      if (Number.isNaN(next) || wake < next) next = wake;
+    }
+    return next;
+  }, [snoozeWakeTick, threads]);
+
+  useEffect(() => {
+    if (Number.isNaN(nextSnoozeWakeAtMs)) return;
+    const delayMs = Math.min(Math.max(0, nextSnoozeWakeAtMs - Date.now()) + 50, 2_147_483_647);
+    const id = window.setTimeout(() => setSnoozeWakeTick((tick) => tick + 1), delayMs);
+    return () => window.clearTimeout(id);
+  }, [nextSnoozeWakeAtMs]);
+
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const collisionDetection = useCallback<CollisionDetection>((args) => pointerWithin(args), []);
@@ -276,15 +362,51 @@ export function SessionBoard() {
       const target = boardLanes.find((column) => column.key === laneColumnKeyFromDrop);
       if (!target || target.environmentId !== entry.ref.environmentId) return;
       const targetLaneId = target.lane.id;
+      const sourceLaneId = entry.laneId;
 
-      if (entry.thread.workflowLane === targetLaneId) return;
+      if (sourceLaneId === targetLaneId) {
+        if (isLifecycleBoardLane(targetLaneId)) return;
+        if (entry.thread.workflowLane === targetLaneId) return;
+      }
 
-      void setWorkflowLane({
-        environmentId: entry.ref.environmentId,
-        input: { threadId: entry.ref.threadId, workflowLane: targetLaneId },
-      });
+      const applyDrop = async () => {
+        const leavingSettled = sourceLaneId === SETTLED_BOARD_LANE_ID;
+        const leavingSnoozed = sourceLaneId === SNOOZED_BOARD_LANE_ID;
+        const enteringSettled = targetLaneId === SETTLED_BOARD_LANE_ID;
+        const enteringSnoozed = targetLaneId === SNOOZED_BOARD_LANE_ID;
+
+        if (leavingSettled) await unsettleThread(entry.ref);
+        if (leavingSnoozed) await unsnoozeThread(entry.ref);
+
+        if (enteringSettled) {
+          await settleThread(entry.ref);
+          return;
+        }
+        if (enteringSnoozed) {
+          const preset = resolveSnoozePresets(new Date())[0];
+          if (preset !== undefined) {
+            await snoozeThread(entry.ref, preset.snoozedUntil);
+          }
+          return;
+        }
+
+        await setWorkflowLane({
+          environmentId: entry.ref.environmentId,
+          input: { threadId: entry.ref.threadId, workflowLane: targetLaneId },
+        });
+      };
+
+      void applyDrop();
     },
-    [boardLanes, placed, setWorkflowLane],
+    [
+      boardLanes,
+      placed,
+      setWorkflowLane,
+      settleThread,
+      snoozeThread,
+      unsettleThread,
+      unsnoozeThread,
+    ],
   );
 
   return (
@@ -353,21 +475,31 @@ export function SessionBoard() {
                   )}
                   {collapsed && !hideSwimlaneProjectHeader ? null : (
                     <div className="flex flex-nowrap gap-3">
-                      {boardLanes.map((column) => (
-                        <LaneColumn
-                          key={`${swimlane.projectKey}:${column.key}`}
-                          droppableId={swimlaneLaneDroppableId(swimlane.projectKey, column.key)}
-                          environmentId={column.environmentId}
-                          lane={column.lane}
-                          lanes={laneRegistries.get(column.environmentId) ?? []}
-                          memberCount={laneMemberCountByKey.get(column.key) ?? 0}
-                          entries={bySwimlaneLane.get(column.key) ?? []}
-                          draggingKey={draggingKey}
-                          onUpdate={handleUpdateLane}
-                          onReorder={handleReorderLane}
-                          onArchive={handleArchiveLane}
-                        />
-                      ))}
+                      {boardLanes.map((column) => {
+                        const expandKey = laneColumnExpandKey(swimlane.projectKey, column.key);
+                        const collapsedByDefault = boardLaneCollapsedByDefault(column.lane.id);
+                        const laneExpanded =
+                          !collapsedByDefault || expandedLaneColumnKeys.has(expandKey);
+
+                        return (
+                          <LaneColumn
+                            key={`${swimlane.projectKey}:${column.key}`}
+                            droppableId={swimlaneLaneDroppableId(swimlane.projectKey, column.key)}
+                            environmentId={column.environmentId}
+                            lane={column.lane}
+                            lanes={laneRegistries.get(column.environmentId) ?? []}
+                            memberCount={laneMemberCountByKey.get(column.key) ?? 0}
+                            entries={bySwimlaneLane.get(column.key) ?? []}
+                            draggingKey={draggingKey}
+                            cardsVisible={laneExpanded}
+                            collapsedByDefault={collapsedByDefault}
+                            onToggleExpanded={() => toggleLaneColumnExpanded(expandKey)}
+                            onUpdate={handleUpdateLane}
+                            onReorder={handleReorderLane}
+                            onArchive={handleArchiveLane}
+                          />
+                        );
+                      })}
                     </div>
                   )}
                 </section>
@@ -666,6 +798,9 @@ function LaneColumn({
   memberCount,
   entries,
   draggingKey,
+  cardsVisible,
+  collapsedByDefault,
+  onToggleExpanded,
   onUpdate,
   onReorder,
   onArchive,
@@ -677,6 +812,9 @@ function LaneColumn({
   readonly memberCount: number;
   readonly entries: ReadonlyArray<PlacedThread>;
   readonly draggingKey: string | null;
+  readonly cardsVisible: boolean;
+  readonly collapsedByDefault: boolean;
+  readonly onToggleExpanded: () => void;
   readonly onUpdate: (
     environmentId: EnvironmentId,
     laneId: LaneDefinition["id"],
@@ -707,6 +845,23 @@ function LaneColumn({
     >
       <header className="shrink-0 border-b border-border/60 px-3 py-2">
         <div className="flex items-center gap-2">
+          {collapsedByDefault ? (
+            <button
+              type="button"
+              className="rounded p-0.5 text-muted-foreground hover:bg-accent"
+              onClick={onToggleExpanded}
+              aria-expanded={cardsVisible}
+            >
+              {cardsVisible ? (
+                <ChevronDownIcon className="size-3.5" />
+              ) : (
+                <ChevronRightIcon className="size-3.5" />
+              )}
+              <span className="sr-only">
+                {cardsVisible ? "Collapse" : "Expand"} {lane.name}
+              </span>
+            </button>
+          ) : null}
           <span className="text-xs font-medium">{lane.name}</span>
           <span className="ml-auto text-[11px] text-muted-foreground/70">{entries.length}</span>
           <LaneEditorPopover
@@ -721,20 +876,22 @@ function LaneColumn({
         </div>
         <p className="mt-0.5 text-[11px] text-muted-foreground/60">{lane.description}</p>
       </header>
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
-        {entries.map((entry) => (
-          <BoardSessionCard
-            key={entry.key}
-            cardKey={entry.key}
-            threadRef={entry.ref}
-            thread={entry.thread}
-            laneId={entry.laneId}
-            lanes={entry.lanes}
-            projectTitle={entry.projectTitle}
-            isDragging={draggingKey === entry.key}
-          />
-        ))}
-      </div>
+      {cardsVisible ? (
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+          {entries.map((entry) => (
+            <BoardSessionCard
+              key={entry.key}
+              cardKey={entry.key}
+              threadRef={entry.ref}
+              thread={entry.thread}
+              laneId={entry.laneId}
+              lanes={entry.lanes}
+              projectTitle={entry.projectTitle}
+              isDragging={draggingKey === entry.key}
+            />
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
