@@ -729,6 +729,7 @@ function LaneColumn({
             threadRef={entry.ref}
             thread={entry.thread}
             laneId={entry.laneId}
+            lanes={entry.lanes}
             projectTitle={entry.projectTitle}
             isDragging={draggingKey === entry.key}
           />

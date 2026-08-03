@@ -1,6 +1,8 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useDraggable } from "@dnd-kit/core";
 import type {
   ApprovalRequestId,
+  LaneDefinition,
   ProviderApprovalDecision,
   ScopedThreadRef,
   ServerProvider,
@@ -23,7 +25,9 @@ import {
   type PendingApproval,
   type PendingUserInput,
 } from "../../session-logic.ts";
-import { useServerConfigs, useThread } from "../../state/entities.ts";
+import { readProject, useServerConfigs, useThread } from "../../state/entities.ts";
+import { useUiStateStore } from "../../uiStateStore.ts";
+import { useThreadContextMenu } from "../useThreadContextMenu.ts";
 import {
   resolveThreadRuntimeState,
   type ThreadRuntimeState,
@@ -49,12 +53,16 @@ export interface BoardSessionCardProps {
   readonly threadRef: ScopedThreadRef;
   readonly thread: SidebarThreadSummary;
   readonly laneId: WorkflowLane | null;
+  readonly lanes: ReadonlyArray<LaneDefinition>;
   readonly projectTitle: string;
   readonly isDragging: boolean;
 }
 
 export function BoardSessionCard(props: BoardSessionCardProps) {
-  const { cardKey, threadRef, thread, laneId, projectTitle } = props;
+  const { cardKey, threadRef, thread, laneId, lanes, projectTitle } = props;
+
+  const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const { openThreadContextMenu } = useThreadContextMenu({ onMarkUnread: markThreadUnread });
 
   const setHeight = useBoardCardStore((state) => state.setHeight);
   const setSize = useBoardCardStore((state) => state.setSize);
@@ -111,6 +119,25 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   const effectiveHeight = draggingHeight ?? heightPx;
   const size = cardSizeForHeight(effectiveHeight);
 
+  const handleContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const threadProject = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
+      const workspacePath = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
+      void openThreadContextMenu(
+        {
+          threadRef,
+          thread,
+          workspacePath,
+          lanes,
+        },
+        { x: event.clientX, y: event.clientY },
+      );
+    },
+    [lanes, openThreadContextMenu, thread, threadRef],
+  );
+
   return (
     <div
       ref={slotRef}
@@ -127,6 +154,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           runtimeChromeClassName(status),
         )}
         style={{ height: `${effectiveHeight}px` }}
+        onContextMenu={handleContextMenu}
       >
         <header className="flex shrink-0 items-start gap-1.5 border-b border-border/60 px-2 py-1.5">
           <button
