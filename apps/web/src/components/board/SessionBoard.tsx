@@ -574,7 +574,7 @@ function LaneColumn({
       ref={setNodeRef}
       data-lane={lane.id}
       className={cn(
-        "flex min-w-[380px] shrink-0 flex-col rounded-lg border border-border/70 bg-card/20",
+        "flex min-w-[380px] max-w-[380px] shrink-0 flex-col rounded-lg border border-border/70 bg-card/20",
         isOver && "border-primary/60 bg-accent/40",
       )}
     >
