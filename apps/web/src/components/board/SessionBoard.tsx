@@ -265,7 +265,7 @@ export function SessionBoard() {
         onDragEnd={handleDragEnd}
         onDragCancel={() => setDraggingKey(null)}
       >
-        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto p-3">
+        <div className="flex min-h-0 flex-1 flex-nowrap gap-3 overflow-x-auto p-3">
           {boardLanes.map((column) => (
             <LaneColumn
               key={column.key}
@@ -574,7 +574,7 @@ function LaneColumn({
       ref={setNodeRef}
       data-lane={lane.id}
       className={cn(
-        "flex min-w-[212px] flex-1 basis-0 flex-col rounded-lg border border-border/70 bg-card/20",
+        "flex min-w-[380px] shrink-0 flex-col rounded-lg border border-border/70 bg-card/20",
         isOver && "border-primary/60 bg-accent/40",
       )}
     >

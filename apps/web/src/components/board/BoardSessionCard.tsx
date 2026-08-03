@@ -147,10 +147,10 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           </button>
         ) : null}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-xs font-medium leading-4" title={thread.title}>
+          <p className="truncate text-[11px] font-medium leading-4" title={thread.title}>
             {thread.title}
           </p>
-          <p className="truncate text-[10px] text-muted-foreground/60">
+          <p className="truncate text-[9px] text-muted-foreground/60">
             {projectTitle}
             {thread.branch ? ` · ${thread.branch}` : ""}
           </p>
@@ -187,7 +187,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           messageTail={isFocused ? FOCUSED_MESSAGE_TAIL : COMPACT_MESSAGE_TAIL}
         />
       ) : (
-        <div className="flex flex-1 items-center justify-center text-[11px] text-muted-foreground/50">
+        <div className="flex flex-1 items-center justify-center text-[10px] text-muted-foreground/50">
           Scroll into view to connect
         </div>
       )}
@@ -270,14 +270,14 @@ function BoardCardChatSurface({
     <>
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 py-2">
         {tail.length === 0 ? (
-          <p className="py-4 text-center text-[11px] text-muted-foreground/50">No messages yet</p>
+          <p className="py-4 text-center text-[10px] text-muted-foreground/50">No messages yet</p>
         ) : (
           tail.map((message) => (
             <div
               key={message.id}
               data-message-role={message.role}
               className={cn(
-                "rounded-md px-2 py-1.5 text-[11px] leading-snug",
+                "rounded-md px-2 py-1.5 text-[10px] leading-snug",
                 message.role === "user"
                   ? "bg-accent/60 text-foreground"
                   : "bg-muted/40 text-foreground/90",
