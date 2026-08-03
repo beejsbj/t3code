@@ -637,6 +637,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             workflowLane: null,
             workflowLanePlacedBy: null,
             workflowLanePlacedAt: null,
+            workflowLanePlacementReason: null,
             latestUserMessageAt: null,
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
@@ -790,6 +791,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               event.payload.workflowLane === null ? null : (event.payload.placedBy ?? "user"),
             workflowLanePlacedAt:
               event.payload.workflowLane === null ? null : event.payload.updatedAt,
+            workflowLanePlacementReason:
+              event.payload.workflowLane === null ? null : (event.payload.placementReason ?? null),
             updatedAt: event.payload.updatedAt,
           });
           return;

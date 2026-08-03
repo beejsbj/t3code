@@ -796,6 +796,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           workflowLane: command.workflowLane,
           placedBy,
+          placementReason: command.workflowLane === null ? null : (command.placementReason ?? null),
           updatedAt: occurredAt,
         },
       };

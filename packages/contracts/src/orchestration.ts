@@ -409,6 +409,7 @@ export const OrchestrationThread = Schema.Struct({
   workflowLane: Schema.optional(Schema.NullOr(WorkflowLane)),
   workflowLanePlacedBy: Schema.optional(Schema.NullOr(WorkflowLanePlacedBy)),
   workflowLanePlacedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  workflowLanePlacementReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -465,6 +466,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   workflowLane: Schema.optional(Schema.NullOr(WorkflowLane)),
   workflowLanePlacedBy: Schema.optional(Schema.NullOr(WorkflowLanePlacedBy)),
   workflowLanePlacedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  workflowLanePlacementReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -694,6 +696,10 @@ const ThreadWorkflowLaneSetCommand = Schema.Struct({
   threadId: ThreadId,
   // `null` returns the session to the inbox/source queue.
   workflowLane: Schema.NullOr(WorkflowLane),
+  // A free-text note from whoever filed the session, rendered on the card. It
+  // carries no authority — provenance is stamped server-side at the dispatch
+  // seam — so unlike `placedBy` it is safe to accept from the caller.
+  placementReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 
 const LaneCreateCommand = Schema.Struct({
@@ -1133,6 +1139,7 @@ export const ThreadWorkflowLaneSetPayload = Schema.Struct({
   placedBy: Schema.optional(WorkflowLanePlacedBy).pipe(
     Schema.withDecodingDefault(Effect.succeed("user" as const)),
   ),
+  placementReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: IsoDateTime,
 });
 

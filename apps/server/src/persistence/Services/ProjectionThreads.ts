@@ -45,6 +45,7 @@ export const ProjectionThread = Schema.Struct({
   workflowLane: Schema.NullOr(WorkflowLane),
   workflowLanePlacedBy: Schema.NullOr(WorkflowLanePlacedBy),
   workflowLanePlacedAt: Schema.NullOr(IsoDateTime),
+  workflowLanePlacementReason: Schema.NullOr(Schema.String),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,

@@ -322,6 +322,8 @@ describe("resolveBoardPlacement", () => {
       lane: null,
       source: "inbox",
       assignedLane: LaneId.make("retired"),
+      assignedBy: "user",
+      assignedReason: null,
       danglingLaneId: LaneId.make("retired"),
       attention: null,
       overridden: false,
@@ -390,6 +392,8 @@ describe("resolveBoardPlacement", () => {
       lane: null,
       source: "inbox",
       assignedLane: null,
+      assignedBy: null,
+      assignedReason: null,
       danglingLaneId: null,
       attention: null,
       overridden: false,
@@ -434,6 +438,8 @@ describe("resolveBoardPlacement", () => {
       lane: null,
       source: "attention",
       assignedLane: null,
+      assignedBy: null,
+      assignedReason: null,
       danglingLaneId: null,
       attention: "blocked",
       overridden: false,
@@ -509,6 +515,54 @@ describe("placementReason", () => {
     expect(
       placementReason(resolveBoardPlacement(shell({ workflowLane: "ready" }), AT(NOW))!, LANES),
     ).toBeNull();
+  });
+
+  it("names the agent and its reason when the agent filed the card", () => {
+    const placement = resolveBoardPlacement(
+      shell({
+        workflowLane: "ready",
+        workflowLanePlacedBy: "agent",
+        workflowLanePlacementReason: "the plan is approved and the work is scoped",
+      }),
+      AT(NOW),
+    )!;
+
+    expect(placement.assignedBy).toBe("agent");
+    expect(placementReason(placement, LANES)).toBe(
+      "Filed here by the agent — the plan is approved and the work is scoped",
+    );
+  });
+
+  it("still attributes an agent placement that came with no reason", () => {
+    const placement = resolveBoardPlacement(
+      shell({ workflowLane: "ready", workflowLanePlacedBy: "agent" }),
+      AT(NOW),
+    )!;
+
+    expect(placementReason(placement, LANES)).toBe("Filed here by the agent");
+  });
+
+  it("keeps the badge explanation and the agent attribution together", () => {
+    const placement = resolveBoardPlacement(
+      shell({
+        workflowLane: "shaping",
+        hasPendingUserInput: true,
+        workflowLanePlacedBy: "agent",
+        workflowLanePlacementReason: "still working out the shape",
+      }),
+      AT(NOW),
+    )!;
+
+    expect(placementReason(placement, LANES)).toBe(
+      "waiting on you — held here: this lane keeps your attention. Filed here by the agent — still working out the shape",
+    );
+  });
+
+  it("treats a placement with no recorded provenance as the user's", () => {
+    const placement = resolveBoardPlacement(shell({ workflowLane: "ready" }), AT(NOW))!;
+
+    expect(placement.assignedBy).toBe("user");
+    expect(placementReason(placement, LANES)).toBeNull();
   });
 
   it("says so when a card sits in an attention lane only because it was dragged there", () => {

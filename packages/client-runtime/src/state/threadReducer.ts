@@ -186,6 +186,8 @@ export function applyThreadDetailEvent(
           workflowLanePlacedBy: event.payload.workflowLane === null ? null : event.payload.placedBy,
           workflowLanePlacedAt:
             event.payload.workflowLane === null ? null : event.payload.updatedAt,
+          workflowLanePlacementReason:
+            event.payload.workflowLane === null ? null : (event.payload.placementReason ?? null),
           updatedAt: event.payload.updatedAt,
         },
       };

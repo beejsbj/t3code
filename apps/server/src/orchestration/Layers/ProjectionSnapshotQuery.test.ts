@@ -315,6 +315,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           workflowLane: null,
           workflowLanePlacedBy: null,
           workflowLanePlacedAt: null,
+          workflowLanePlacementReason: null,
           deletedAt: null,
           messages: [
             {
@@ -432,6 +433,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           workflowLane: null,
           workflowLanePlacedBy: null,
           workflowLanePlacedAt: null,
+          workflowLanePlacementReason: null,
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",

@@ -96,6 +96,7 @@ describe("orchestration projector", () => {
         workflowLane: null,
         workflowLanePlacedBy: null,
         workflowLanePlacedAt: null,
+        workflowLanePlacementReason: null,
         deletedAt: null,
         messages: [],
         proposedPlans: [],

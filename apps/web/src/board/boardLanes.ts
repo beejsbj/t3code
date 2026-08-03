@@ -4,6 +4,7 @@ import {
   type LaneDefinition,
   type OrchestrationThreadShell,
   type WorkflowLane,
+  type WorkflowLanePlacedBy,
 } from "@t3tools/contracts";
 import { effectiveSettled } from "@t3tools/client-runtime/state/thread-settled";
 
@@ -77,6 +78,8 @@ export type BoardLaneInput = Pick<
   | "snoozedUntil"
 > & {
   readonly workflowLane?: WorkflowLane | null | undefined;
+  readonly workflowLanePlacedBy?: WorkflowLanePlacedBy | null | undefined;
+  readonly workflowLanePlacementReason?: string | null | undefined;
 };
 
 /**
@@ -125,6 +128,10 @@ export interface BoardPlacement {
   readonly source: BoardPlacementSource;
   /** The persisted, human-assigned lane — unchanged by attention overrides. */
   readonly assignedLane: WorkflowLane | null;
+  /** Who filed the persisted lane. `null` when the session was never placed. */
+  readonly assignedBy: WorkflowLanePlacedBy | null;
+  /** The note the placer left, if any. Rendered so agent placement explains itself. */
+  readonly assignedReason: string | null;
   /** Persisted lane id absent from the live registry, retained for later UI. */
   readonly danglingLaneId: WorkflowLane | null;
   readonly attention: RuntimeAttention;
@@ -141,6 +148,12 @@ export function resolveBoardPlacement(
   options: BoardPlacementOptions,
 ): BoardPlacement | null {
   const assignedLane = thread.workflowLane ?? null;
+  // A lane set before provenance existed reads as the user's: treating legacy
+  // placement as human keeps the never-overwrite-a-human rule conservative.
+  const assignedBy: WorkflowLanePlacedBy | null =
+    assignedLane === null ? null : (thread.workflowLanePlacedBy ?? "user");
+  const assignedReason =
+    assignedLane === null ? null : (thread.workflowLanePlacementReason ?? null);
   const danglingLaneId =
     assignedLane !== null && !isWorkflowLane(assignedLane, options.lanes) ? assignedLane : null;
   const attention = resolveRuntimeAttention(thread);
@@ -177,6 +190,8 @@ export function resolveBoardPlacement(
       lane: DONE_LANE,
       source: "native-done",
       assignedLane,
+      assignedBy,
+      assignedReason,
       danglingLaneId,
       attention,
       overridden: assignedLane !== null && assignedLane !== "done",
@@ -190,6 +205,8 @@ export function resolveBoardPlacement(
       lane: assignedLane,
       source: "assigned",
       assignedLane,
+      assignedBy,
+      assignedReason,
       danglingLaneId,
       attention,
       overridden: false,
@@ -208,6 +225,8 @@ export function resolveBoardPlacement(
       lane: assignedLane,
       source: "assigned",
       assignedLane,
+      assignedBy,
+      assignedReason,
       danglingLaneId,
       attention,
       overridden: false,
@@ -221,6 +240,8 @@ export function resolveBoardPlacement(
       lane: null,
       source: "attention",
       assignedLane,
+      assignedBy,
+      assignedReason,
       danglingLaneId,
       attention,
       overridden: assignedLane !== null && danglingLaneId === null,
@@ -234,6 +255,8 @@ export function resolveBoardPlacement(
       lane: assignedLane,
       source: "assigned",
       assignedLane,
+      assignedBy,
+      assignedReason,
       danglingLaneId,
       attention,
       overridden: false,
@@ -246,6 +269,8 @@ export function resolveBoardPlacement(
     lane: null,
     source: "inbox",
     assignedLane,
+    assignedBy,
+    assignedReason,
     danglingLaneId,
     attention,
     overridden: false,
@@ -273,14 +298,29 @@ export function placementReason(
         : attentionLabel(placement.attention);
     case "native-done":
       return "Settled";
-    case "assigned":
+    case "assigned": {
+      const filed = agentPlacementNote(placement);
       if (placement.heldInPlace) {
-        return `${attentionLabel(placement.attention)} — held here: this lane keeps your attention`;
+        const held = `${attentionLabel(placement.attention)} — held here: this lane keeps your attention`;
+        return filed === null ? held : `${held}. ${filed}`;
       }
-      return null;
+      return filed;
+    }
     case "inbox":
       return null;
   }
+}
+
+/**
+ * Agent placement is visible or it is not trustworthy. The card names the
+ * agent as the placer and shows the reason it gave, so a wrong call is
+ * obvious and one drag undoes it.
+ */
+function agentPlacementNote(placement: BoardPlacement): string | null {
+  if (placement.assignedBy !== "agent") return null;
+  return placement.assignedReason === null
+    ? "Filed here by the agent"
+    : `Filed here by the agent — ${placement.assignedReason}`;
 }
 
 function attentionLabel(attention: RuntimeAttention): string {

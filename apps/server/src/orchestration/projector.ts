@@ -322,6 +322,7 @@ export function projectEvent(
             workflowLane: null,
             workflowLanePlacedBy: null,
             workflowLanePlacedAt: null,
+            workflowLanePlacementReason: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -461,6 +462,8 @@ export function projectEvent(
             workflowLane: payload.workflowLane,
             workflowLanePlacedBy: payload.workflowLane === null ? null : payload.placedBy,
             workflowLanePlacedAt: payload.workflowLane === null ? null : payload.updatedAt,
+            workflowLanePlacementReason:
+              payload.workflowLane === null ? null : (payload.placementReason ?? null),
             updatedAt: payload.updatedAt,
           }),
         })),
