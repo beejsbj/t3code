@@ -515,8 +515,10 @@ const laneMoveCommand = Command.make("move", {
   ),
 );
 
-export const laneCommand = Command.make("lane").pipe(
-  Command.withDescription("Manage workflow lanes and session placement."),
+export const boardCommand = Command.make("board").pipe(
+  Command.withDescription(
+    "Inspect and manage the session board: its lanes and where sessions sit.",
+  ),
   Command.withSubcommands([
     laneListCommand,
     laneCreateCommand,

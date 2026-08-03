@@ -34,7 +34,7 @@ import {
   laneIdForName,
   nextLaneOrder,
   sortedLanes,
-} from "./lane.ts";
+} from "./board.ts";
 import { decideOrchestrationCommand } from "../orchestration/decider.ts";
 
 const LANES: ReadonlyArray<LaneDefinition> = [
