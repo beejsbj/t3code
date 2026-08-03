@@ -342,7 +342,7 @@ describe("OrchestrationEngine", () => {
       workflowLane: LaneId.make("ready"),
       placedBy: "agent" as const,
     };
-    await system.run(engine.dispatchWorkflowLanePlacement(callerAssertedCommand, "user"));
+    await system.run(engine.dispatch(callerAssertedCommand));
 
     const events = await system.run(Stream.runCollect(engine.readEvents(0)));
     const persisted = Array.from(events).find((event) => event.type === "thread.workflow-lane-set");
@@ -350,7 +350,7 @@ describe("OrchestrationEngine", () => {
     if (persisted?.type !== "thread.workflow-lane-set") {
       throw new Error("Expected a persisted workflow lane event");
     }
-    expect(persisted.payload.placedBy).toBe("user");
+    expect(persisted.payload.workflowLane).toBe("ready");
     await system.dispose();
   });
 

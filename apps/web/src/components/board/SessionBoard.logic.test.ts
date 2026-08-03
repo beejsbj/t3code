@@ -14,21 +14,18 @@ const lanes: ReadonlyArray<LaneDefinition> = [
     name: "Shaping",
     description: "Work out the shape",
     order: 0,
-    interrupt: "badge",
   },
   {
     id: LaneId.make("ready"),
     name: "Ready",
     description: "Ready to start",
     order: 10,
-    interrupt: "move",
   },
   {
     id: LaneId.make("done"),
     name: "Done",
-    description: "Settled sessions drain here",
+    description: "Finished work",
     order: 20,
-    interrupt: "move",
   },
 ];
 
@@ -40,31 +37,22 @@ describe("laneIdForName", () => {
 });
 
 describe("nextLaneOrder", () => {
-  it("places a new intent lane after existing intent lanes while Done remains fixed", () => {
-    expect(nextLaneOrder(lanes)).toBe(11);
+  it("places a new lane after the highest existing order", () => {
+    expect(nextLaneOrder(lanes)).toBe(21);
   });
 });
 
 describe("reorderLaneUpdates", () => {
-  it("swaps neighbouring intent lanes and never reorders Done", () => {
+  it("swaps neighbouring lanes", () => {
     expect(reorderLaneUpdates(lanes, LaneId.make("ready"), "up")).toEqual([
       { laneId: LaneId.make("ready"), order: 0 },
       { laneId: LaneId.make("shaping"), order: 10 },
     ]);
-    expect(reorderLaneUpdates(lanes, LaneId.make("ready"), "down")).toEqual([]);
-    expect(reorderLaneUpdates(lanes, LaneId.make("done"), "up")).toEqual([]);
+    expect(reorderLaneUpdates(lanes, LaneId.make("done"), "down")).toEqual([]);
   });
 });
 
 describe("laneArchiveIntent", () => {
-  it("blocks archiving Done because it is the board drain outlet", () => {
-    expect(laneArchiveIntent(LaneId.make("done"), 4)).toEqual({
-      kind: "blocked",
-      explanation:
-        "Done is the board's drain outlet. It cannot be archived because settled sessions must remain visible.",
-    });
-  });
-
   it("requires member-aware confirmation before archiving a populated lane", () => {
     expect(laneArchiveIntent(LaneId.make("ready"), 3)).toEqual({
       kind: "confirm",
@@ -74,7 +62,7 @@ describe("laneArchiveIntent", () => {
     });
   });
 
-  it("allows an empty non-Done lane to be archived immediately", () => {
-    expect(laneArchiveIntent(LaneId.make("ready"), 0)).toEqual({ kind: "archive" });
+  it("allows an empty lane to be archived immediately", () => {
+    expect(laneArchiveIntent(LaneId.make("done"), 0)).toEqual({ kind: "archive" });
   });
 });

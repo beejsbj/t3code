@@ -11,14 +11,12 @@ const LANES: ReadonlyArray<LaneDefinition> = [
     name: "Grilling / shaping",
     description: "Working out what this actually is",
     order: 0,
-    interrupt: "badge",
   },
   {
     id: LaneId.make("ready"),
     name: "Ready",
     description: "Groomed and ready to pick up",
     order: 1,
-    interrupt: "move",
   },
 ];
 

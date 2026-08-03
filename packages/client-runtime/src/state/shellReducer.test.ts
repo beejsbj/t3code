@@ -184,7 +184,6 @@ describe("applyShellStreamEvent", () => {
       name: "On deck",
       description: "Next work",
       order: 3,
-      interrupt: "move" as const,
     };
     const added = applyShellStreamEvent(baseSnapshot, {
       kind: "lane-upserted",

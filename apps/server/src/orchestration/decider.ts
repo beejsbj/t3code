@@ -3,7 +3,6 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
-  type WorkflowLanePlacedBy,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -198,7 +197,6 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
     const decided = yield* decideOrchestrationCommand({
       command: nextCommand,
       readModel: nextReadModel,
-      workflowLanePlacementProvenance: "user",
     });
     const nextEvents = Array.isArray(decided) ? decided : [decided];
     for (const nextEvent of nextEvents) {
@@ -217,11 +215,9 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
-  workflowLanePlacementProvenance,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
-  readonly workflowLanePlacementProvenance: WorkflowLanePlacedBy;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandInvariantError | PlatformError.PlatformError,
@@ -395,7 +391,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ...(command.name !== undefined ? { name: command.name } : {}),
             ...(command.description !== undefined ? { description: command.description } : {}),
             ...(command.order !== undefined ? { order: command.order } : {}),
-            ...(command.interrupt !== undefined ? { interrupt: command.interrupt } : {}),
           },
           updatedAt: occurredAt,
         },
@@ -766,23 +761,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.workflow-lane.set": {
-      const thread = yield* requireThread({
+      yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      const placedBy = workflowLanePlacementProvenance;
-      if (
-        placedBy === "agent" &&
-        thread.workflowLane !== null &&
-        thread.workflowLane !== undefined &&
-        (thread.workflowLanePlacedBy ?? "user") === "user"
-      ) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `Agent placement cannot overwrite the user placement on thread '${command.threadId}'.`,
-        });
-      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
@@ -795,8 +778,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           workflowLane: command.workflowLane,
-          placedBy,
-          placementReason: command.workflowLane === null ? null : (command.placementReason ?? null),
           updatedAt: occurredAt,
         },
       };

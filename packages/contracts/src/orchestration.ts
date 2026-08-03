@@ -365,15 +365,11 @@ export type LaneId = typeof LaneId.Type;
 export const WorkflowLane = LaneId;
 export type WorkflowLane = typeof WorkflowLane.Type;
 
-export const LaneInterruptPolicy = Schema.Literals(["move", "badge"]);
-export type LaneInterruptPolicy = typeof LaneInterruptPolicy.Type;
-
 export const LaneDefinition = Schema.Struct({
   id: LaneId,
   name: TrimmedNonEmptyString,
   description: TrimmedNonEmptyString,
   order: Schema.Number,
-  interrupt: LaneInterruptPolicy,
 });
 export type LaneDefinition = typeof LaneDefinition.Type;
 
@@ -715,7 +711,6 @@ const LaneUpdateCommand = Schema.Struct({
   name: Schema.optional(TrimmedNonEmptyString),
   description: Schema.optional(TrimmedNonEmptyString),
   order: Schema.optional(Schema.Number),
-  interrupt: Schema.optional(LaneInterruptPolicy),
 });
 
 const LaneArchiveCommand = Schema.Struct({

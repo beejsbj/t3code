@@ -1,11 +1,11 @@
 import { useDraggable } from "@dnd-kit/core";
 import type {
   ApprovalRequestId,
-  LaneDefinition,
   ProviderApprovalDecision,
   ScopedThreadRef,
   ServerProvider,
   ServerProviderSkill,
+  WorkflowLane,
 } from "@t3tools/contracts";
 import {
   ChevronsDownUpIcon,
@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { placementReason, type BoardPlacement } from "../../board/boardLanes.ts";
 import {
   CARD_MIN_HEIGHT,
   cardSizeForHeight,
@@ -41,7 +40,6 @@ import { useAtomCommand } from "../../state/use-atom-command.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "../ChatMarkdown.tsx";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
 import { BoardCardComposer } from "./BoardCardComposer.tsx";
 import { useInViewport } from "./useInViewport.ts";
 
@@ -57,30 +55,22 @@ export interface BoardSessionCardProps {
   readonly cardKey: string;
   readonly threadRef: ScopedThreadRef;
   readonly thread: SidebarThreadSummary;
-  readonly placement: BoardPlacement;
-  readonly lanes: ReadonlyArray<LaneDefinition>;
+  readonly laneId: WorkflowLane | null;
   readonly projectTitle: string;
   readonly isDragging: boolean;
 }
 
 export function BoardSessionCard(props: BoardSessionCardProps) {
-  const { cardKey, threadRef, thread, placement, lanes, projectTitle } = props;
+  const { cardKey, threadRef, thread, laneId, projectTitle } = props;
 
   const focusedThreadKey = useBoardCardStore((state) => state.focusedThreadKey);
   const toggleFocus = useBoardCardStore((state) => state.toggleFocus);
   const setHeight = useBoardCardStore((state) => state.setHeight);
   const setSize = useBoardCardStore((state) => state.setSize);
-  const setWorkflowLane = useAtomCommand(threadEnvironment.setWorkflowLane, {
-    reportFailure: false,
-  });
   const heightPx = useBoardCardStore((state) => selectCardHeight(state.byThreadKey, threadRef));
   const isFocused = focusedThreadKey === cardKey;
 
   const slotRef = useRef<HTMLDivElement | null>(null);
-  // Cards that have never been scrolled into view do not mount a chat surface
-  // at all. `once` means a card that has been seen keeps its live subscription
-  // for the rest of the session, so scrolling back and forth does not thrash
-  // the per-thread websocket subscription.
   const hasBeenVisible = useInViewport(slotRef, { once: true, rootMargin: "300px" });
   const live = hasBeenVisible || isFocused;
 
@@ -90,12 +80,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   });
 
   const status = resolveThreadRuntimeState(thread);
-  const reason = placementReason(placement, lanes);
 
-  // The drag is tracked locally and only committed to the store on release.
-  // Writing on every pointermove would serialize the whole card map to
-  // localStorage per frame, which is exactly the kind of jank a resize handle
-  // must not have.
   const [draggingHeight, setDraggingHeight] = useState<number | null>(null);
   const teardownResizeRef = useRef<(() => void) | null>(null);
 
@@ -144,9 +129,6 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           ? "fixed inset-6 z-50 border-primary/50 shadow-2xl md:inset-x-[12vw] md:inset-y-[6vh]"
           : "relative border-border/70",
         (isDragging || props.isDragging) && "opacity-60",
-        (placement.overridden || placement.heldInPlace) &&
-          !isFocused &&
-          "border-l-2 border-l-amber-500/70",
         runtimeChromeClassName(status),
       )}
       style={isFocused ? undefined : { height: `${effectiveHeight}px` }}
@@ -174,26 +156,6 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           </p>
         </div>
         <StatusDot status={status} />
-        <Menu>
-          <MenuTrigger
-            aria-label={`Board actions for ${thread.title}`}
-            className="rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-          >
-            <EllipsisIcon className="size-3.5" />
-          </MenuTrigger>
-          <MenuPopup align="end">
-            <MenuItem
-              onClick={() =>
-                void setWorkflowLane({
-                  environmentId: threadRef.environmentId,
-                  input: { threadId: threadRef.threadId, workflowLane: null },
-                })
-              }
-            >
-              Remove from board
-            </MenuItem>
-          </MenuPopup>
-        </Menu>
         <button
           type="button"
           onClick={() => setSize(threadRef, size === "tall" ? "compact" : "tall")}
@@ -216,21 +178,6 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           )}
         </button>
       </header>
-
-      {reason !== null ? (
-        <p className="shrink-0 border-b border-border/50 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-300">
-          {reason}
-        </p>
-      ) : null}
-
-      {placement.danglingLaneId !== null ? (
-        <p
-          className="shrink-0 border-b border-border/50 bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground"
-          title={`Removed lane: ${placement.danglingLaneId}`}
-        >
-          Lane removed
-        </p>
-      ) : null}
 
       {live ? (
         <BoardCardChatSurface
@@ -262,22 +209,13 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
     <div
       ref={slotRef}
       data-board-card={thread.id}
-      data-lane={placement.lane ?? "inbox"}
-      data-held-in-place={placement.heldInPlace || undefined}
+      data-lane={laneId ?? "unknown"}
       style={
         !isFocused && transform
           ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
           : undefined
       }
     >
-      {/*
-        Zooming must not remount the chat surface, so the element structure
-        here is fixed: the placeholder is always rendered (collapsed to zero
-        height when not focused) and `cardBody` is always its next sibling in
-        the same position. Swapping between `cardBody` and a fragment wrapping
-        it would change the child sequence and let React unmount the Lexical
-        editor and the live thread subscription underneath.
-      */}
       <div
         aria-hidden
         className={cn(

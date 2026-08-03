@@ -9,15 +9,10 @@ import type * as Types from "effect/Types";
 import { McpSchema, McpServer, Tool } from "effect/unstable/ai";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import type { LaneDefinition } from "@t3tools/contracts";
-
 import packageJson from "../../package.json" with { type: "json" };
-import { ProjectionLaneRepository } from "../persistence/Services/ProjectionLanes.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
-import { makeBoardToolkitHandlersLive } from "./toolkits/board/handlers.ts";
-import { makeBoardToolkit } from "./toolkits/board/tools.ts";
 import {
   PreviewSnapshotToolkitHandlersLive,
   PreviewStandardToolkitHandlersLive,
@@ -221,39 +216,10 @@ export const PreviewToolkitRegistrationLive = Layer.mergeAll(
   PreviewSnapshotRegistrationLive,
 );
 
-/**
- * The `set_board_lane` description is the entire prompt surface for agent
- * self-placement — there is no skill and no system-prompt append — so it is
- * rendered from the live lane registry instead of being written by hand.
- *
- * It is rendered once, when the MCP layer is built. A lane the user renames
- * while the server is running is therefore picked up on the next start, not
- * immediately; MCP tool descriptions are fixed at registration time.
- */
-export const BoardToolkitRegistrationLive = Layer.unwrap(
-  Effect.gen(function* () {
-    const laneRepository = yield* ProjectionLaneRepository;
-    const lanes = yield* laneRepository.listAll().pipe(
-      Effect.catch((cause) =>
-        // Losing the whole toolkit because one query failed is worse than
-        // offering a tool that reports it has no lanes to file into.
-        Effect.logWarning("could not read the lane registry for set_board_lane", {
-          cause,
-        }).pipe(Effect.as([] as ReadonlyArray<LaneDefinition>)),
-      ),
-    );
-    const toolkit = makeBoardToolkit(lanes);
-    return McpServer.toolkit(toolkit).pipe(Layer.provide(makeBoardToolkitHandlersLive(toolkit)));
-  }),
-);
-
 const McpTransportLive = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
   path: "/mcp",
 }).pipe(Layer.provide(McpAuthMiddlewareLive));
 
-export const layer = Layer.mergeAll(
-  PreviewToolkitRegistrationLive,
-  BoardToolkitRegistrationLive,
-).pipe(Layer.provideMerge(McpTransportLive));
+export const layer = PreviewToolkitRegistrationLive.pipe(Layer.provideMerge(McpTransportLive));

@@ -18,20 +18,19 @@ const makeProjectionLaneRepository = Effect.gen(function* () {
   const upsertRow = SqlSchema.void({
     Request: ProjectionLane,
     execute: (lane) => sql`
-      INSERT INTO projection_lanes (lane_id, name, description, lane_order, interrupt)
-      VALUES (${lane.id}, ${lane.name}, ${lane.description}, ${lane.order}, ${lane.interrupt})
+      INSERT INTO projection_lanes (lane_id, name, description, lane_order)
+      VALUES (${lane.id}, ${lane.name}, ${lane.description}, ${lane.order})
       ON CONFLICT (lane_id) DO UPDATE SET
         name = excluded.name,
         description = excluded.description,
-        lane_order = excluded.lane_order,
-        interrupt = excluded.interrupt
+        lane_order = excluded.lane_order
     `,
   });
   const getRow = SqlSchema.findOneOption({
     Request: GetProjectionLaneInput,
     Result: ProjectionLane,
     execute: ({ laneId }) => sql`
-      SELECT lane_id AS id, name, description, lane_order AS "order", interrupt
+      SELECT lane_id AS id, name, description, lane_order AS "order"
       FROM projection_lanes
       WHERE lane_id = ${laneId}
     `,
@@ -40,7 +39,7 @@ const makeProjectionLaneRepository = Effect.gen(function* () {
     Request: Schema.Void,
     Result: ProjectionLane,
     execute: () => sql`
-      SELECT lane_id AS id, name, description, lane_order AS "order", interrupt
+      SELECT lane_id AS id, name, description, lane_order AS "order"
       FROM projection_lanes
       ORDER BY lane_order ASC, lane_id ASC
     `,

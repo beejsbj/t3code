@@ -15,9 +15,8 @@ import * as Effect from "effect/Effect";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 
-const decideUserOrchestrationCommand = (
-  input: Omit<Parameters<typeof decideOrchestrationCommand>[0], "workflowLanePlacementProvenance">,
-) => decideOrchestrationCommand({ ...input, workflowLanePlacementProvenance: "user" });
+const decideUserOrchestrationCommand = (input: Parameters<typeof decideOrchestrationCommand>[0]) =>
+  decideOrchestrationCommand(input);
 
 const NOW = "2026-01-01T00:00:00.000Z";
 const SETTLED_AT = "2025-12-30T00:00:00.000Z";

@@ -320,9 +320,6 @@ export function projectEvent(
             snoozedUntil: null,
             snoozedAt: null,
             workflowLane: null,
-            workflowLanePlacedBy: null,
-            workflowLanePlacedAt: null,
-            workflowLanePlacementReason: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -460,10 +457,6 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             workflowLane: payload.workflowLane,
-            workflowLanePlacedBy: payload.workflowLane === null ? null : payload.placedBy,
-            workflowLanePlacedAt: payload.workflowLane === null ? null : payload.updatedAt,
-            workflowLanePlacementReason:
-              payload.workflowLane === null ? null : (payload.placementReason ?? null),
             updatedAt: payload.updatedAt,
           }),
         })),

@@ -1079,21 +1079,13 @@ const makeWsRpcLayer = (
         const dispatchEffect =
           normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
             ? dispatchBootstrapTurnStart(normalizedCommand)
-            : normalizedCommand.type === "thread.workflow-lane.set"
-              ? orchestrationEngine
-                  .dispatchWorkflowLanePlacement(normalizedCommand, "user")
-                  .pipe(
-                    Effect.mapError((cause) =>
-                      toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-                    ),
-                  )
-              : orchestrationEngine
-                  .dispatch(normalizedCommand)
-                  .pipe(
-                    Effect.mapError((cause) =>
-                      toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
-                    ),
-                  );
+            : orchestrationEngine
+                .dispatch(normalizedCommand)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+                  ),
+                );
 
         return startup
           .enqueueCommand(dispatchEffect)

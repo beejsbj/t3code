@@ -15,9 +15,8 @@ import { expect, it } from "@effect/vitest";
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
-const decideUserOrchestrationCommand = (
-  input: Omit<Parameters<typeof decideOrchestrationCommand>[0], "workflowLanePlacementProvenance">,
-) => decideOrchestrationCommand({ ...input, workflowLanePlacementProvenance: "user" });
+const decideUserOrchestrationCommand = (input: Parameters<typeof decideOrchestrationCommand>[0]) =>
+  decideOrchestrationCommand(input);
 
 const asCommandId = (value: string): CommandId => CommandId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);

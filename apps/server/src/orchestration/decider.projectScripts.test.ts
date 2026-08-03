@@ -15,9 +15,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
 
-const decideUserOrchestrationCommand = (
-  input: Omit<Parameters<typeof decideOrchestrationCommand>[0], "workflowLanePlacementProvenance">,
-) => decideOrchestrationCommand({ ...input, workflowLanePlacementProvenance: "user" });
+const decideUserOrchestrationCommand = (input: Parameters<typeof decideOrchestrationCommand>[0]) =>
+  decideOrchestrationCommand(input);
 
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
