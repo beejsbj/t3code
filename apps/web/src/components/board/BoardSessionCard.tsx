@@ -1,5 +1,6 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useDraggable } from "@dnd-kit/core";
+import type { LegendListRef } from "@legendapp/list/react";
 import type {
   ApprovalRequestId,
   LaneDefinition,
@@ -7,10 +8,15 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ServerProviderSkill,
+  TurnId,
   WorkflowLane,
 } from "@t3tools/contracts";
 import { ChevronsDownUpIcon, GripVerticalIcon, Maximize2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import {
   cardSizeForHeight,
@@ -18,7 +24,10 @@ import {
   selectCardHeight,
   useBoardCardStore,
 } from "../../board/boardCardStore.ts";
+import { useDiffPanelStore } from "../../diffPanelStore.ts";
+import { useRightPanelStore } from "../../rightPanelStore.ts";
 import { useTheme } from "../../hooks/useTheme.ts";
+import { readLocalApi } from "../../localApi.ts";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -36,17 +45,16 @@ import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
 import { cn } from "~/lib/utils";
-import ChatMarkdown from "../ChatMarkdown.tsx";
-import { BoardCardComposer } from "./BoardCardComposer.tsx";
+import { useThreadTimeline } from "../chat/useThreadTimeline.ts";
+import { ChatComposer } from "../chat/ChatComposer.tsx";
+import { useBoardThreadComposer } from "../chat/useThreadComposer.ts";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { useInViewport } from "./useInViewport.ts";
+import { MessagesTimeline } from "../chat/MessagesTimeline.tsx";
+import { ExpandedImageDialog } from "../chat/ExpandedImageDialog.tsx";
+import { type ExpandedImagePreview } from "../chat/ExpandedImagePreview.tsx";
 
 const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
-/**
- * Compact cards show a tail, not the whole conversation. The full history is
- * one zoom away, and capping here is what keeps N mounted cards affordable.
- */
-const COMPACT_MESSAGE_TAIL = 6;
 
 export interface BoardSessionCardProps {
   readonly cardKey: string;
@@ -231,67 +239,150 @@ function BoardCardChatSurface({
   readonly threadRef: ScopedThreadRef;
   readonly thread: SidebarThreadSummary;
 }) {
-  const detail = useThread(threadRef);
+  const fullThread = useThread(threadRef);
   const serverConfigs = useServerConfigs();
   const { resolvedTheme } = useTheme();
+  const legendListRef = useRef<LegendListRef | null>(null);
+  const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
+    reportFailure: false,
+  });
 
   const providerStatuses = useMemo<ReadonlyArray<ServerProvider>>(
     () => serverConfigs.get(threadRef.environmentId)?.providers ?? [],
     [serverConfigs, threadRef.environmentId],
   );
 
-  const messages = detail?.messages ?? [];
-  const activities = detail?.activities ?? [];
+  const activities = fullThread?.activities ?? [];
+  const timelineMessages = fullThread?.messages ?? [];
 
   const pendingApprovals = useMemo(() => derivePendingApprovals(activities), [activities]);
   const pendingUserInputs = useMemo(() => derivePendingUserInputs(activities), [activities]);
 
-  const tail = useMemo(() => messages.slice(-COMPACT_MESSAGE_TAIL), [messages]);
+  const onRevertToTurnCount = useCallback(
+    async (turnCount: number) => {
+      if (!fullThread || isRevertingCheckpoint) {
+        return;
+      }
+      const localApi = readLocalApi();
+      const confirmed = localApi
+        ? await localApi.dialogs.confirm(
+            [
+              `Revert this thread to checkpoint ${turnCount}?`,
+              "This will discard newer messages and turn diffs in this thread.",
+              "This action cannot be undone.",
+            ].join("\n"),
+          )
+        : window.confirm(`Revert this thread to checkpoint ${turnCount}? This cannot be undone.`);
+      if (!confirmed) {
+        return;
+      }
 
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const lastMessage = tail.at(-1);
-  useEffect(() => {
-    const node = scrollRef.current;
-    if (node) node.scrollTop = node.scrollHeight;
-  }, [lastMessage?.id, lastMessage?.text]);
+      setIsRevertingCheckpoint(true);
+      const result = await revertThreadCheckpoint({
+        environmentId: threadRef.environmentId,
+        input: {
+          threadId: threadRef.threadId,
+          turnCount,
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        console.error(error instanceof Error ? error.message : "Failed to revert thread state.");
+      }
+      setIsRevertingCheckpoint(false);
+    },
+    [fullThread, isRevertingCheckpoint, revertThreadCheckpoint, threadRef],
+  );
 
-  const isWorking = thread.session?.status === "running" || thread.session?.status === "starting";
+  const {
+    timelineEntries,
+    latestTurn,
+    runningTurnId,
+    isWorking,
+    activeTurnInProgress,
+    activeTurnStartedAt,
+    turnDiffSummaryByAssistantMessageId,
+    revertTurnCountByUserMessageId,
+    onRevertUserMessage,
+    markdownCwd,
+    workspaceRoot,
+    resolvedTheme: timelineTheme,
+    timestampFormat,
+    skills,
+    routeThreadKey,
+    activeThreadEnvironmentId,
+    isRevertingCheckpoint: timelineIsRevertingCheckpoint,
+  } = useThreadTimeline({
+    threadRef,
+    thread: fullThread,
+    timelineMessages,
+    isRevertingCheckpoint,
+    onRevertToTurnCount,
+    resolvedTheme,
+    skills: providerSkills(providerStatuses, thread) ?? EMPTY_SKILLS,
+  });
+
+  const onOpenTurnDiff = useCallback(
+    (turnId: TurnId, filePath?: string) => {
+      useDiffPanelStore.getState().selectTurn(threadRef, turnId, filePath);
+      useRightPanelStore.getState().open(threadRef, "diff");
+    },
+    [threadRef],
+  );
+
+  const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
+    setExpandedImage(preview);
+  }, []);
+
+  const { chatComposerProps } = useBoardThreadComposer({
+    threadRef,
+    thread: fullThread,
+    summary: thread,
+    resolvedTheme,
+    onExpandImage: onExpandTimelineImage,
+  });
 
   return (
     <>
-      <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 py-2">
-        {tail.length === 0 ? (
-          <p className="py-4 text-center text-[10px] text-muted-foreground/50">No messages yet</p>
-        ) : (
-          tail.map((message) => (
-            <div
-              key={message.id}
-              data-message-role={message.role}
-              className={cn(
-                "rounded-md px-2 py-1.5 text-[10px] leading-snug",
-                message.role === "user"
-                  ? "bg-accent/60 text-foreground"
-                  : "bg-muted/40 text-foreground/90",
-              )}
-            >
-              <span className="mb-0.5 block text-[9px] uppercase tracking-wide text-muted-foreground/50">
-                {message.role}
-              </span>
-              <ChatMarkdown
-                text={message.text}
-                cwd={thread.worktreePath ?? undefined}
-                threadRef={threadRef}
-                isStreaming={message.streaming}
-                lineBreaks={message.role === "user"}
-                className="prose-xs [&_pre]:text-[10px]"
-              />
-            </div>
-          ))
-        )}
-        {isWorking ? (
-          <p className="animate-pulse px-2 text-[10px] text-muted-foreground/60">Working…</p>
-        ) : null}
+      <div className="flex min-h-0 flex-1 flex-col">
+        <MessagesTimeline
+          density="compact"
+          isWorking={isWorking}
+          activeTurnInProgress={activeTurnInProgress}
+          activeTurnStartedAt={activeTurnStartedAt}
+          listRef={legendListRef}
+          timelineEntries={timelineEntries}
+          latestTurn={latestTurn}
+          runningTurnId={runningTurnId}
+          turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+          routeThreadKey={routeThreadKey}
+          onOpenTurnDiff={onOpenTurnDiff}
+          revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+          onRevertUserMessage={onRevertUserMessage}
+          isRevertingCheckpoint={timelineIsRevertingCheckpoint}
+          onImageExpand={onExpandTimelineImage}
+          activeThreadEnvironmentId={activeThreadEnvironmentId}
+          markdownCwd={markdownCwd}
+          resolvedTheme={timelineTheme}
+          timestampFormat={timestampFormat}
+          workspaceRoot={workspaceRoot}
+          skills={skills}
+          anchorMessageId={null}
+          onAnchorReady={() => {}}
+          onAnchorSizeChanged={() => {}}
+          contentInsetEndAdjustment={0}
+          onIsAtEndChange={() => {}}
+          onManualNavigation={() => {}}
+          hideEmptyPlaceholder={false}
+          topFadeEnabled={false}
+        />
       </div>
+
+      {expandedImage ? (
+        <ExpandedImageDialog preview={expandedImage} onClose={() => setExpandedImage(null)} />
+      ) : null}
 
       <AttentionStrip
         threadRef={threadRef}
@@ -299,14 +390,9 @@ function BoardCardChatSurface({
         pendingUserInputs={pendingUserInputs}
       />
 
-      <BoardCardComposer
-        threadRef={threadRef}
-        thread={thread}
-        providerStatuses={providerStatuses}
-        skills={providerSkills(providerStatuses, thread) ?? EMPTY_SKILLS}
-        resolvedTheme={resolvedTheme}
-        isWorking={isWorking}
-      />
+      <div className="shrink-0 border-t border-border/60 px-1.5 py-1">
+        <ChatComposer {...chatComposerProps} />
+      </div>
     </>
   );
 }

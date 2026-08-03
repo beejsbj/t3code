@@ -223,6 +223,21 @@ function buildUserTimelineEntry(text: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("renders the same user message in default and compact density", () => {
+    const timelineEntries = [buildUserTimelineEntry("Hello from the board")];
+
+    const defaultMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
+    const compactMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} density="compact" />,
+    );
+
+    expect(defaultMarkup).toContain("Hello from the board");
+    expect(compactMarkup).toContain("Hello from the board");
+    expect(compactMarkup).toContain('class="h-1"');
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
