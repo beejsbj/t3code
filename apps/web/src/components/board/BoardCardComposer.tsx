@@ -43,7 +43,6 @@ export interface BoardCardComposerProps {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
   readonly resolvedTheme: "light" | "dark";
   readonly isWorking: boolean;
-  readonly isFocused: boolean;
 }
 
 /**

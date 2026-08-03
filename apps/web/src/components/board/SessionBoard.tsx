@@ -19,7 +19,6 @@ import {
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { resolveBoardLane } from "../../board/boardLanes.ts";
-import { useBoardCardStore } from "../../board/boardCardStore.ts";
 import { useLaneRegistries, useProjects, useThreadShells } from "../../state/entities.ts";
 import { orchestrationEnvironment } from "../../state/orchestration.ts";
 import { threadEnvironment } from "../../state/threads.ts";
@@ -73,8 +72,6 @@ export function SessionBoard() {
   const threads = useThreadShells();
   const projects = useProjects();
   const laneRegistries = useLaneRegistries();
-  const focusedThreadKey = useBoardCardStore((state) => state.focusedThreadKey);
-  const clearFocus = useBoardCardStore((state) => state.clearFocus);
   const setWorkflowLane = useAtomCommand(threadEnvironment.setWorkflowLane, {
     reportFailure: false,
   });
@@ -246,15 +243,6 @@ export function SessionBoard() {
               onCreate={handleCreateLane}
             />
           ))}
-          {focusedThreadKey !== null ? (
-            <button
-              type="button"
-              onClick={clearFocus}
-              className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent"
-            >
-              Collapse focused card
-            </button>
-          ) : null}
         </div>
       </header>
 

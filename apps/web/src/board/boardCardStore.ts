@@ -3,8 +3,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 
 /**
- * Per-card presentation state for the session board: how tall a card is, and
- * which single card is currently zoomed.
+ * Per-card presentation state for the session board: how tall each card is.
  *
  * This is deliberately client-only, unlike the lane assignment. Card height is
  * a property of *this screen* — it says nothing about the session and should
@@ -34,12 +33,8 @@ interface PersistedBoardCardState {
 }
 
 interface BoardCardStoreState extends PersistedBoardCardState {
-  /** Exactly one card may be zoomed at a time; `null` means none. */
-  readonly focusedThreadKey: string | null;
   readonly setHeight: (ref: ScopedThreadRef, heightPx: number) => void;
   readonly setSize: (ref: ScopedThreadRef, size: BoardCardSize) => void;
-  readonly toggleFocus: (ref: ScopedThreadRef) => void;
-  readonly clearFocus: () => void;
 }
 
 export function clampCardHeight(heightPx: number): number {
@@ -87,7 +82,6 @@ function persistState(state: PersistedBoardCardState): void {
 
 export const useBoardCardStore = create<BoardCardStoreState>()((set) => ({
   ...readPersistedState(),
-  focusedThreadKey: null,
   setHeight: (ref, heightPx) =>
     set((state) => {
       const threadKey = scopedThreadKey(ref);
@@ -106,12 +100,6 @@ export const useBoardCardStore = create<BoardCardStoreState>()((set) => ({
       persistState({ byThreadKey });
       return { byThreadKey };
     }),
-  toggleFocus: (ref) =>
-    set((state) => {
-      const threadKey = scopedThreadKey(ref);
-      return { focusedThreadKey: state.focusedThreadKey === threadKey ? null : threadKey };
-    }),
-  clearFocus: () => set({ focusedThreadKey: null }),
 }));
 
 export function selectCardHeight(

@@ -7,17 +7,10 @@ import type {
   ServerProviderSkill,
   WorkflowLane,
 } from "@t3tools/contracts";
-import {
-  ChevronsDownUpIcon,
-  EllipsisIcon,
-  GripVerticalIcon,
-  Maximize2Icon,
-  Minimize2Icon,
-} from "lucide-react";
+import { ChevronsDownUpIcon, GripVerticalIcon, Maximize2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-  CARD_MIN_HEIGHT,
   cardSizeForHeight,
   clampCardHeight,
   selectCardHeight,
@@ -41,6 +34,7 @@ import type { SidebarThreadSummary } from "../../types.ts";
 import { cn } from "~/lib/utils";
 import ChatMarkdown from "../ChatMarkdown.tsx";
 import { BoardCardComposer } from "./BoardCardComposer.tsx";
+import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { useInViewport } from "./useInViewport.ts";
 
 const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
@@ -49,7 +43,6 @@ const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
  * one zoom away, and capping here is what keeps N mounted cards affordable.
  */
 const COMPACT_MESSAGE_TAIL = 6;
-const FOCUSED_MESSAGE_TAIL = 40;
 
 export interface BoardSessionCardProps {
   readonly cardKey: string;
@@ -63,20 +56,17 @@ export interface BoardSessionCardProps {
 export function BoardSessionCard(props: BoardSessionCardProps) {
   const { cardKey, threadRef, thread, laneId, projectTitle } = props;
 
-  const focusedThreadKey = useBoardCardStore((state) => state.focusedThreadKey);
-  const toggleFocus = useBoardCardStore((state) => state.toggleFocus);
   const setHeight = useBoardCardStore((state) => state.setHeight);
   const setSize = useBoardCardStore((state) => state.setSize);
   const heightPx = useBoardCardStore((state) => selectCardHeight(state.byThreadKey, threadRef));
-  const isFocused = focusedThreadKey === cardKey;
+  const [expanded, setExpanded] = useState(false);
 
   const slotRef = useRef<HTMLDivElement | null>(null);
   const hasBeenVisible = useInViewport(slotRef, { once: true, rootMargin: "300px" });
-  const live = hasBeenVisible || isFocused;
+  const live = hasBeenVisible;
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: cardKey,
-    disabled: isFocused,
   });
 
   const status = resolveThreadRuntimeState(thread);
@@ -121,20 +111,24 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   const effectiveHeight = draggingHeight ?? heightPx;
   const size = cardSizeForHeight(effectiveHeight);
 
-  const cardBody = (
+  return (
     <div
-      className={cn(
-        "flex min-h-0 flex-col overflow-hidden rounded-lg border bg-card shadow-sm before:absolute before:inset-x-0 before:top-0 before:z-10 before:h-0.5",
-        isFocused
-          ? "fixed inset-6 z-50 border-primary/50 shadow-2xl md:inset-x-[12vw] md:inset-y-[6vh]"
-          : "relative border-border/70",
-        (isDragging || props.isDragging) && "opacity-60",
-        runtimeChromeClassName(status),
-      )}
-      style={isFocused ? undefined : { height: `${effectiveHeight}px` }}
+      ref={slotRef}
+      data-board-card={thread.id}
+      data-lane={laneId ?? "unknown"}
+      style={
+        transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined
+      }
     >
-      <header className="flex shrink-0 items-start gap-1.5 border-b border-border/60 px-2 py-1.5">
-        {!isFocused ? (
+      <div
+        className={cn(
+          "relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm before:absolute before:inset-x-0 before:top-0 before:z-10 before:h-0.5",
+          (isDragging || props.isDragging) && "opacity-60",
+          runtimeChromeClassName(status),
+        )}
+        style={{ height: `${effectiveHeight}px` }}
+      >
+        <header className="flex shrink-0 items-start gap-1.5 border-b border-border/60 px-2 py-1.5">
           <button
             type="button"
             ref={setNodeRef}
@@ -145,54 +139,43 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           >
             <GripVerticalIcon className="size-3.5" />
           </button>
-        ) : null}
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[11px] font-medium leading-4" title={thread.title}>
-            {thread.title}
-          </p>
-          <p className="truncate text-[9px] text-muted-foreground/60">
-            {projectTitle}
-            {thread.branch ? ` · ${thread.branch}` : ""}
-          </p>
-        </div>
-        <StatusDot status={status} />
-        <button
-          type="button"
-          onClick={() => setSize(threadRef, size === "tall" ? "compact" : "tall")}
-          aria-label={size === "tall" ? "Make card compact" : "Make card tall"}
-          className="rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-        >
-          <ChevronsDownUpIcon className="size-3.5" />
-        </button>
-        <button
-          type="button"
-          onClick={() => toggleFocus(threadRef)}
-          aria-label={isFocused ? "Collapse session" : "Zoom into session"}
-          data-testid={`board-card-zoom-${thread.id}`}
-          className="rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
-        >
-          {isFocused ? (
-            <Minimize2Icon className="size-3.5" />
-          ) : (
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[11px] font-medium leading-4" title={thread.title}>
+              {thread.title}
+            </p>
+            <p className="truncate text-[9px] text-muted-foreground/60">
+              {projectTitle}
+              {thread.branch ? ` · ${thread.branch}` : ""}
+            </p>
+          </div>
+          <StatusDot status={status} />
+          <button
+            type="button"
+            onClick={() => setSize(threadRef, size === "tall" ? "compact" : "tall")}
+            aria-label={size === "tall" ? "Make card compact" : "Make card tall"}
+            className="rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+          >
+            <ChevronsDownUpIcon className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            aria-label="Zoom into session"
+            data-testid={`board-card-zoom-${thread.id}`}
+            className="rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+          >
             <Maximize2Icon className="size-3.5" />
-          )}
-        </button>
-      </header>
+          </button>
+        </header>
 
-      {live ? (
-        <BoardCardChatSurface
-          threadRef={threadRef}
-          thread={thread}
-          isFocused={isFocused}
-          messageTail={isFocused ? FOCUSED_MESSAGE_TAIL : COMPACT_MESSAGE_TAIL}
-        />
-      ) : (
-        <div className="flex flex-1 items-center justify-center text-[10px] text-muted-foreground/50">
-          Scroll into view to connect
-        </div>
-      )}
+        {live ? (
+          <BoardCardChatSurface threadRef={threadRef} thread={thread} />
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-[10px] text-muted-foreground/50">
+            Scroll into view to connect
+          </div>
+        )}
 
-      {!isFocused ? (
         <div
           onPointerDown={handleResizePointerDown}
           role="separator"
@@ -201,30 +184,14 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           data-testid={`board-card-resize-${thread.id}`}
           className="h-2 shrink-0 cursor-ns-resize border-t border-border/40 bg-transparent hover:bg-accent"
         />
-      ) : null}
-    </div>
-  );
+      </div>
 
-  return (
-    <div
-      ref={slotRef}
-      data-board-card={thread.id}
-      data-lane={laneId ?? "unknown"}
-      style={
-        !isFocused && transform
-          ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
-          : undefined
-      }
-    >
-      <div
-        aria-hidden
-        className={cn(
-          "rounded-lg border border-dashed border-border/60 bg-card/30",
-          !isFocused && "hidden",
-        )}
-        style={isFocused ? { height: `${Math.max(CARD_MIN_HEIGHT, heightPx)}px` } : undefined}
+      <BoardCardExpandedSheet
+        threadRef={threadRef}
+        title={thread.title}
+        open={expanded}
+        onOpenChange={setExpanded}
       />
-      {cardBody}
     </div>
   );
 }
@@ -232,13 +199,9 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
 function BoardCardChatSurface({
   threadRef,
   thread,
-  isFocused,
-  messageTail,
 }: {
   readonly threadRef: ScopedThreadRef;
   readonly thread: SidebarThreadSummary;
-  readonly isFocused: boolean;
-  readonly messageTail: number;
 }) {
   const detail = useThread(threadRef);
   const serverConfigs = useServerConfigs();
@@ -255,7 +218,7 @@ function BoardCardChatSurface({
   const pendingApprovals = useMemo(() => derivePendingApprovals(activities), [activities]);
   const pendingUserInputs = useMemo(() => derivePendingUserInputs(activities), [activities]);
 
-  const tail = useMemo(() => messages.slice(-messageTail), [messages, messageTail]);
+  const tail = useMemo(() => messages.slice(-COMPACT_MESSAGE_TAIL), [messages]);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const lastMessage = tail.at(-1);
@@ -315,7 +278,6 @@ function BoardCardChatSurface({
         skills={providerSkills(providerStatuses, thread) ?? EMPTY_SKILLS}
         resolvedTheme={resolvedTheme}
         isWorking={isWorking}
-        isFocused={isFocused}
       />
     </>
   );
