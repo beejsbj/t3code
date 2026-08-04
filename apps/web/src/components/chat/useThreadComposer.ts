@@ -1,13 +1,13 @@
 import {
   type ApprovalRequestId,
   type EnvironmentId,
+  type OrchestrationThreadActivity,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ScopedThreadRef,
   type ServerProvider,
-  type ThreadId,
 } from "@t3tools/contracts";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { useAtomValue } from "@effect/atom-react";
@@ -21,6 +21,8 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
+  type PendingApproval,
+  type PendingUserInput,
 } from "../../session-logic.ts";
 import { useEnvironmentSettings } from "../../hooks/useSettings.ts";
 import { newMessageId } from "../../lib/utils.ts";
@@ -42,15 +44,33 @@ import {
   readFileAsDataUrl,
 } from "../ChatView.logic.ts";
 import { useComposerDraftStore, type ComposerImageAttachment } from "../../composerDraftStore.ts";
+import type { TerminalContextDraft } from "../../lib/terminalContext.ts";
+import type { ElementContextDraft } from "../../lib/elementContext.ts";
 import type { ChatComposerProps } from "./ChatComposer.tsx";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview.tsx";
 
+// Hoisted so `thread?.activities ?? []` doesn't allocate a fresh array (and
+// bust the memos keyed on it) on every render when a thread has no activities.
+const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PENDING_USER_INPUT_DRAFT_ANSWERS = {} as const;
+
+// Board composer never surfaces inline approvals/user-input prompts (that UI
+// lives on the route only), so these are always-empty by construction. Hoisted
+// so `ChatComposer`'s `memo` sees a stable reference for them across renders.
+const EMPTY_PENDING_APPROVALS: PendingApproval[] = [];
+const EMPTY_PENDING_USER_INPUTS: PendingUserInput[] = [];
+const EMPTY_RESPONDING_REQUEST_IDS: ApprovalRequestId[] = [];
+const EMPTY_PROVIDER_STATUSES: ServerProvider[] = [];
+// Shared no-op for the handful of board composer callbacks that are inert
+// (plan sidebar, focus scheduling, etc. don't apply to embedded cards). A
+// zero-arg function is structurally assignable to every callback prop type
+// below regardless of its arity, so one constant covers all of them.
+const NOOP = () => {};
 
 export type ThreadComposerSurface = "route" | "board";
 
 export function useThreadComposerRouteState(thread: Thread | null | undefined) {
-  const threadActivities = thread?.activities ?? [];
+  const threadActivities = thread?.activities ?? EMPTY_ACTIVITIES;
   const pendingApprovals = useMemo(
     () => derivePendingApprovals(threadActivities),
     [threadActivities],
@@ -87,8 +107,13 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const composerRef = useRef<import("./ChatComposer.tsx").ChatComposerHandle | null>(null);
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
-  const composerTerminalContextsRef = useRef([]);
-  const composerElementContextsRef = useRef([]);
+  // Board composer doesn't support inline terminal/element context chips, so
+  // these start empty; typed explicitly rather than inferred as `never[]` to
+  // match what ChatComposerProps expects. Each card gets its own array — a
+  // ref is a mutable cell, so seeding several from one shared array would let
+  // a future in-place write leak across every card on the board.
+  const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
+  const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
 
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
@@ -105,7 +130,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   });
 
   const providerStatuses = useMemo<ServerProvider[]>(
-    () => [...(serverConfigs.get(environmentId)?.providers ?? [])],
+    () => [...(serverConfigs.get(environmentId)?.providers ?? EMPTY_PROVIDER_STATUSES)],
     [environmentId, serverConfigs],
   );
 
@@ -128,7 +153,8 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
 
   const phase: SessionPhase = derivePhase(thread?.session ?? null);
   const isConnecting = phase === "connecting";
-  const isSendBusy = false;
+  // Board composer has no local "sending" state of its own; always false.
+  const isSendBusy: boolean = false;
   const isWorking = phase === "running" || isConnecting || thread?.session?.status === "starting";
 
   const runtimeMode = thread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
@@ -244,79 +270,117 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     [environmentId, setThreadInteractionMode, thread, threadRef],
   );
 
-  const noop = useCallback(() => {}, []);
-  const setThreadError = useCallback((_threadId: ThreadId | null, _error: string | null) => {}, []);
-
-  const chatComposerProps: ChatComposerProps = {
-    composerRef,
-    composerDraftTarget: threadRef,
-    environmentId,
-    routeKind: "server",
-    routeThreadRef: threadRef,
-    draftId: null,
-    activeThreadId: thread?.id ?? null,
-    activeThreadEnvironmentId: environmentId,
-    activeThread: thread ?? undefined,
-    isServerThread: true,
-    isLocalDraftThread: false,
-    forceExpandedOnMobile: false,
-    projectSelectionRequired: false,
-    phase,
-    isConnecting,
-    isSendBusy,
-    isPreparingWorktree: false,
-    environmentUnavailable: null,
-    activePendingApproval: null,
-    pendingApprovals: [],
-    pendingUserInputs: [],
-    activePendingProgress: null,
-    activePendingResolvedAnswers: null,
-    activePendingIsResponding: false,
-    activePendingDraftAnswers: EMPTY_PENDING_USER_INPUT_DRAFT_ANSWERS,
-    activePendingQuestionIndex: 0,
-    respondingRequestIds: [],
-    showPlanFollowUpPrompt: false,
-    activeProposedPlan: null,
-    activePlan: null,
-    sidebarProposedPlan: null,
-    planSidebarLabel: "",
-    planSidebarOpen: false,
-    runtimeMode,
-    interactionMode,
-    lockedProvider,
-    providerStatuses,
-    activeProjectDefaultModelSelection: project?.defaultModelSelection,
-    activeThreadModelSelection: summary.modelSelection,
-    activeThreadActivities: thread?.activities,
-    resolvedTheme,
-    settings,
-    keybindings,
-    terminalOpen: false,
-    gitCwd,
-    promptRef,
-    composerImagesRef,
-    composerTerminalContextsRef,
-    composerElementContextsRef,
-    onSend,
-    onInterrupt,
-    onImplementPlanInNewThread: noop,
-    onRespondToApproval,
-    onSelectActivePendingUserInputOption: noop,
-    onAdvanceActivePendingUserInput: noop,
-    onPreviousActivePendingUserInputQuestion: noop,
-    onChangeActivePendingUserInputCustomAnswer: noop,
-    onProviderModelSelect,
-    getModelDisabledReason,
-    toggleInteractionMode,
-    handleRuntimeModeChange,
-    handleInteractionModeChange,
-    togglePlanSidebar: noop,
-    focusComposer: noop,
-    scheduleComposerFocus: noop,
-    setThreadError,
-    onExpandImage: onExpandImage,
-    density: "compact",
-  };
+  // `ChatComposer` is wrapped in `React.memo`, and a board renders one live
+  // instance of it per card, so this object must not be rebuilt on every
+  // render — that would hand every field a fresh reference and defeat the
+  // memo for every card on every board tick. Deps list only values that can
+  // actually vary; the ~30 always-empty/no-op fields above are inlined here
+  // straight from module-level constants so recomputation (when it does
+  // happen) doesn't reallocate them either.
+  const chatComposerProps = useMemo<ChatComposerProps>(
+    () => ({
+      composerRef,
+      composerDraftTarget: threadRef,
+      environmentId,
+      routeKind: "server",
+      routeThreadRef: threadRef,
+      draftId: null,
+      activeThreadId: thread?.id ?? null,
+      activeThreadEnvironmentId: environmentId,
+      activeThread: thread ?? undefined,
+      isServerThread: true,
+      isLocalDraftThread: false,
+      forceExpandedOnMobile: false,
+      projectSelectionRequired: false,
+      phase,
+      isConnecting,
+      isSendBusy,
+      isPreparingWorktree: false,
+      environmentUnavailable: null,
+      activePendingApproval: null,
+      pendingApprovals: EMPTY_PENDING_APPROVALS,
+      pendingUserInputs: EMPTY_PENDING_USER_INPUTS,
+      activePendingProgress: null,
+      activePendingResolvedAnswers: null,
+      activePendingIsResponding: false,
+      activePendingDraftAnswers: EMPTY_PENDING_USER_INPUT_DRAFT_ANSWERS,
+      activePendingQuestionIndex: 0,
+      respondingRequestIds: EMPTY_RESPONDING_REQUEST_IDS,
+      showPlanFollowUpPrompt: false,
+      activeProposedPlan: null,
+      activePlan: null,
+      sidebarProposedPlan: null,
+      planSidebarLabel: "",
+      planSidebarOpen: false,
+      runtimeMode,
+      interactionMode,
+      lockedProvider,
+      providerStatuses,
+      activeProjectDefaultModelSelection: project?.defaultModelSelection,
+      activeThreadModelSelection: summary.modelSelection,
+      activeThreadActivities: thread?.activities,
+      resolvedTheme,
+      settings,
+      keybindings,
+      terminalOpen: false,
+      gitCwd,
+      promptRef,
+      composerImagesRef,
+      composerTerminalContextsRef,
+      composerElementContextsRef,
+      onSend,
+      onInterrupt,
+      onImplementPlanInNewThread: NOOP,
+      onRespondToApproval,
+      onSelectActivePendingUserInputOption: NOOP,
+      onAdvanceActivePendingUserInput: NOOP,
+      onPreviousActivePendingUserInputQuestion: NOOP,
+      onChangeActivePendingUserInputCustomAnswer: NOOP,
+      onProviderModelSelect,
+      getModelDisabledReason,
+      toggleInteractionMode,
+      handleRuntimeModeChange,
+      handleInteractionModeChange,
+      togglePlanSidebar: NOOP,
+      focusComposer: NOOP,
+      scheduleComposerFocus: NOOP,
+      setThreadError: NOOP,
+      onExpandImage,
+      density: "compact",
+    }),
+    [
+      composerRef,
+      threadRef,
+      environmentId,
+      thread,
+      phase,
+      isConnecting,
+      isSendBusy,
+      runtimeMode,
+      interactionMode,
+      lockedProvider,
+      providerStatuses,
+      project,
+      summary,
+      resolvedTheme,
+      settings,
+      keybindings,
+      gitCwd,
+      promptRef,
+      composerImagesRef,
+      composerTerminalContextsRef,
+      composerElementContextsRef,
+      onSend,
+      onInterrupt,
+      onRespondToApproval,
+      onProviderModelSelect,
+      getModelDisabledReason,
+      toggleInteractionMode,
+      handleRuntimeModeChange,
+      handleInteractionModeChange,
+      onExpandImage,
+    ],
+  );
 
   return { chatComposerProps, composerRef };
 }

@@ -149,6 +149,8 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = <div className="h-10 sm:h-12" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const TIMELINE_LIST_COMPACT_HEADER = <div className="h-1" />;
+const TIMELINE_LIST_COMPACT_FOOTER = <div className="h-1" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
 // ---------------------------------------------------------------------------
@@ -526,15 +528,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               topFadeEnabled && "chat-timeline-scroll-fade",
             )}
             ListHeaderComponent={
-              isCompact ? (
-                <div className="h-1" />
-              ) : topFadeEnabled ? (
-                TIMELINE_LIST_FADE_HEADER
-              ) : (
-                TIMELINE_LIST_HEADER
-              )
+              isCompact
+                ? TIMELINE_LIST_COMPACT_HEADER
+                : topFadeEnabled
+                  ? TIMELINE_LIST_FADE_HEADER
+                  : TIMELINE_LIST_HEADER
             }
-            ListFooterComponent={isCompact ? <div className="h-1" /> : TIMELINE_LIST_FOOTER}
+            ListFooterComponent={isCompact ? TIMELINE_LIST_COMPACT_FOOTER : TIMELINE_LIST_FOOTER}
           />
           {!isCompact ? (
             <TimelineMinimap

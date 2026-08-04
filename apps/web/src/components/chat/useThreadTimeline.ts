@@ -1,5 +1,10 @@
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { MessageId, ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
+import type {
+  MessageId,
+  ScopedThreadRef,
+  ServerProvider,
+  ServerProviderSkill,
+} from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { useCallback, useMemo, useRef } from "react";
@@ -18,6 +23,7 @@ import type { ChatMessage, Thread, TurnDiffSummary } from "../../types.ts";
 import type { TimelineLatestTurn } from "./MessagesTimeline.logic.ts";
 
 const EMPTY_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_PROVIDERS: ServerProvider[] = [];
 
 export function deriveRevertTurnCountByUserMessageId(
   timelineEntries: ReturnType<typeof deriveTimelineEntries>,
@@ -88,7 +94,7 @@ export function useThreadTimeline(input: UseThreadTimelineInput) {
   );
   const serverConfigs = useServerConfigs();
   const providerStatuses = useMemo(
-    () => serverConfigs.get(threadRef.environmentId)?.providers ?? [],
+    () => serverConfigs.get(threadRef.environmentId)?.providers ?? EMPTY_PROVIDERS,
     [serverConfigs, threadRef.environmentId],
   );
 
