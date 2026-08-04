@@ -16,7 +16,7 @@ import {
   type ScopedThreadRef,
   type WorkflowLane,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon, FolderIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FolderIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
 import {
@@ -29,6 +29,7 @@ import {
 } from "../../board/boardLanes.ts";
 import { useThreadActions } from "../../hooks/useThreadActions.ts";
 import { useNowMinute } from "../../hooks/useNowMinute.ts";
+import { ensureLocalApi } from "../../localApi.ts";
 import {
   useLaneRegistries,
   useProjects,
@@ -51,6 +52,7 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "../ui/popover.tsx";
+import { SidebarInset } from "../ui/sidebar.tsx";
 import { Textarea } from "../ui/textarea.tsx";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -211,7 +213,10 @@ export function SessionBoard() {
 
   const handleUpdateLane = useCallback(
     async (environmentId: EnvironmentId, laneId: LaneDefinition["id"], draft: LaneDraft) => {
-      const result = await updateLane({ environmentId, input: { laneId, ...draft } });
+      const result = await updateLane({
+        environmentId,
+        input: { laneId, ...draft },
+      });
       return result._tag === "Success";
     },
     [updateLane],
@@ -234,7 +239,12 @@ export function SessionBoard() {
   const handleArchiveLane = useCallback(
     async (environmentId: EnvironmentId, laneId: LaneDefinition["id"], memberCount: number) => {
       const intent = laneArchiveIntent(laneId, memberCount);
-      if (intent.kind === "confirm" && !window.confirm(intent.explanation)) return false;
+      if (
+        intent.kind === "confirm" &&
+        !(await ensureLocalApi().dialogs.confirm(intent.explanation))
+      ) {
+        return false;
+      }
       const result = await archiveLane({ environmentId, input: { laneId } });
       return result._tag === "Success";
     },
@@ -410,7 +420,7 @@ export function SessionBoard() {
   );
 
   return (
-    <div className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
         <h1 className="text-sm font-medium">Session board</h1>
         <p className="hidden text-xs text-muted-foreground/70 sm:block">
@@ -508,7 +518,7 @@ export function SessionBoard() {
           </div>
         </div>
       </DndContext>
-    </div>
+    </SidebarInset>
   );
 }
 
@@ -519,7 +529,10 @@ function BoardProjectFilter({
   onToggle,
 }: {
   readonly label: string;
-  readonly projects: ReadonlyArray<{ readonly projectKey: string; readonly projectTitle: string }>;
+  readonly projects: ReadonlyArray<{
+    readonly projectKey: string;
+    readonly projectTitle: string;
+  }>;
   readonly selectedProjectKeys: ReadonlySet<string>;
   readonly onToggle: (projectKey: string, checked: boolean) => void;
 }) {
@@ -679,12 +692,9 @@ function LaneEditorPopover({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
-        render={
-          <button type="button" className="rounded px-1 text-muted-foreground hover:bg-accent" />
-        }
+        render={<Button size="icon-xs" variant="ghost" aria-label={`Manage ${lane.name} lane`} />}
       >
-        <span aria-hidden>•••</span>
-        <span className="sr-only">Manage {lane.name} lane</span>
+        <EllipsisIcon className="size-3.5" />
       </PopoverTrigger>
       <PopoverPopup align="start" className="w-80">
         <form className="space-y-3" onSubmit={(event) => void handleSubmit(event)}>
@@ -877,7 +887,10 @@ function LaneColumn({
         <p className="mt-0.5 text-[11px] text-muted-foreground/60">{lane.description}</p>
       </header>
       {cardsVisible ? (
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+        // Not a bounded scroll region: this section sits in a content-sized row
+        // inside the board's own page-level scroller, so it never receives a
+        // height shorter than its content. `overflow-y-auto` here is unreachable.
+        <div className="space-y-2 p-2">
           {entries.map((entry) => (
             <BoardSessionCard
               key={entry.key}

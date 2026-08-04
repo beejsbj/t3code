@@ -27,7 +27,7 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore.ts";
 import { useRightPanelStore } from "../../rightPanelStore.ts";
 import { useTheme } from "../../hooks/useTheme.ts";
-import { readLocalApi } from "../../localApi.ts";
+import { ensureLocalApi } from "../../localApi.ts";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -39,6 +39,7 @@ import { useUiStateStore } from "../../uiStateStore.ts";
 import { useThreadContextMenu } from "../useThreadContextMenu.ts";
 import {
   resolveThreadRuntimeState,
+  threadRuntimeStateAppearance,
   type ThreadRuntimeState,
 } from "../../state/threadRuntimeState.ts";
 import { threadEnvironment } from "../../state/threads.ts";
@@ -48,6 +49,7 @@ import { cn } from "~/lib/utils";
 import { useThreadTimeline } from "../chat/useThreadTimeline.ts";
 import { ChatComposer } from "../chat/ChatComposer.tsx";
 import { useBoardThreadComposer } from "../chat/useThreadComposer.ts";
+import { Button } from "../ui/button.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { useInViewport } from "./useInViewport.ts";
 import { MessagesTimeline } from "../chat/MessagesTimeline.tsx";
@@ -70,7 +72,9 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   const { cardKey, threadRef, thread, laneId, lanes, projectTitle } = props;
 
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
-  const { openThreadContextMenu } = useThreadContextMenu({ onMarkUnread: markThreadUnread });
+  const { openThreadContextMenu } = useThreadContextMenu({
+    onMarkUnread: markThreadUnread,
+  });
 
   const setHeight = useBoardCardStore((state) => state.setHeight);
   const setSize = useBoardCardStore((state) => state.setSize);
@@ -78,14 +82,23 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   const [expanded, setExpanded] = useState(false);
 
   const slotRef = useRef<HTMLDivElement | null>(null);
-  const hasBeenVisible = useInViewport(slotRef, { once: true, rootMargin: "300px" });
-  const live = hasBeenVisible;
+  const hasBeenVisible = useInViewport(slotRef, {
+    once: true,
+    rootMargin: "300px",
+  });
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    isDragging: isDraggingSelf,
+  } = useDraggable({
     id: cardKey,
   });
 
   const status = resolveThreadRuntimeState(thread);
+  const appearance = threadRuntimeStateAppearance(status);
 
   const [draggingHeight, setDraggingHeight] = useState<number | null>(null);
   const teardownResizeRef = useRef<(() => void) | null>(null);
@@ -157,13 +170,20 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
     >
       <div
         className={cn(
-          "relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm before:absolute before:inset-x-0 before:top-0 before:z-10 before:h-0.5",
-          (isDragging || props.isDragging) && "opacity-60",
-          runtimeChromeClassName(status),
+          "relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm",
+          (isDraggingSelf || props.isDragging) && "opacity-60",
         )}
         style={{ height: `${effectiveHeight}px` }}
         onContextMenu={handleContextMenu}
       >
+        <span
+          aria-hidden
+          className={cn(
+            "absolute inset-x-0 top-0 z-10 h-0.5",
+            appearance.accentClass,
+            appearance.pulse && "animate-status-pulse motion-reduce:animate-none",
+          )}
+        />
         <header className="flex shrink-0 items-start gap-1.5 border-b border-border/60 px-2 py-1.5">
           <button
             type="button"
@@ -179,32 +199,34 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
             <p className="truncate text-[11px] font-medium leading-4" title={thread.title}>
               {thread.title}
             </p>
-            <p className="truncate text-[9px] text-muted-foreground/60">
+            <p className="truncate text-[10px] text-muted-foreground/60">
               {projectTitle}
               {thread.branch ? ` · ${thread.branch}` : ""}
             </p>
           </div>
           <StatusDot status={status} />
-          <button
-            type="button"
+          <Button
+            size="icon-xs"
+            variant="ghost"
             onClick={() => setSize(threadRef, size === "tall" ? "compact" : "tall")}
             aria-label={size === "tall" ? "Make card compact" : "Make card tall"}
-            className="rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+            className="text-muted-foreground/60 hover:text-foreground"
           >
             <ChevronsDownUpIcon className="size-3.5" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
             onClick={() => setExpanded(true)}
             aria-label="Zoom into session"
             data-testid={`board-card-zoom-${thread.id}`}
-            className="rounded p-0.5 text-muted-foreground/60 hover:bg-accent hover:text-foreground"
+            className="text-muted-foreground/60 hover:text-foreground"
           >
             <Maximize2Icon className="size-3.5" />
-          </button>
+          </Button>
         </header>
 
-        {live ? (
+        {hasBeenVisible ? (
           <BoardCardChatSurface threadRef={threadRef} thread={thread} />
         ) : (
           <div className="flex flex-1 items-center justify-center text-[10px] text-muted-foreground/50">
@@ -265,16 +287,13 @@ function BoardCardChatSurface({
       if (!fullThread || isRevertingCheckpoint) {
         return;
       }
-      const localApi = readLocalApi();
-      const confirmed = localApi
-        ? await localApi.dialogs.confirm(
-            [
-              `Revert this thread to checkpoint ${turnCount}?`,
-              "This will discard newer messages and turn diffs in this thread.",
-              "This action cannot be undone.",
-            ].join("\n"),
-          )
-        : window.confirm(`Revert this thread to checkpoint ${turnCount}? This cannot be undone.`);
+      const confirmed = await ensureLocalApi().dialogs.confirm(
+        [
+          `Revert this thread to checkpoint ${turnCount}?`,
+          "This will discard newer messages and turn diffs in this thread.",
+          "This action cannot be undone.",
+        ].join("\n"),
+      );
       if (!confirmed) {
         return;
       }
@@ -458,10 +477,21 @@ function AttentionStrip({
   const answer = useCallback(
     async (requestId: ApprovalRequestId, answers: Record<string, unknown>) => {
       setBusy(requestId);
-      await respondToUserInput({
+      const result = await respondToUserInput({
         environmentId: threadRef.environmentId,
         input: { threadId: threadRef.threadId, requestId, answers },
       });
+      if (result._tag === "Success") {
+        // Free the draft once it has been sent; otherwise a later request that
+        // reuses the same id (unlikely, but the map has no other eviction) would
+        // resurrect stale picks.
+        setAnswersByRequest((current) => {
+          if (!(requestId in current)) return current;
+          const next = { ...current };
+          delete next[requestId];
+          return next;
+        });
+      }
       setBusy(null);
     },
     [respondToUserInput, threadRef],
@@ -469,14 +499,21 @@ function AttentionStrip({
 
   if (!approval && !question) return null;
 
+  // Approval and input are different states in the app's color language
+  // (amber vs indigo); when both are pending, approval outranks input the
+  // same way resolveThreadRuntimeState does.
+  const attentionTextClass = threadRuntimeStateAppearance(
+    approval ? "approval" : "input",
+  ).textClass;
+
   return (
     <div
       data-testid="board-card-attention"
-      className="shrink-0 space-y-1.5 border-t border-amber-500/40 bg-amber-500/10 px-2 py-1.5"
+      className="shrink-0 space-y-1.5 border-t border-border/60 bg-muted/40 px-2 py-1.5"
     >
       {approval ? (
         <div>
-          <p className="text-[10px] font-medium text-amber-800 dark:text-amber-200">
+          <p className={cn("text-[10px] font-medium", attentionTextClass)}>
             Approval needed · {approval.requestKind}
           </p>
           {approval.detail ? (
@@ -487,20 +524,20 @@ function AttentionStrip({
           <div className="mt-1 flex flex-wrap gap-1">
             {(
               [
-                ["accept", "Approve"],
-                ["acceptForSession", "Always"],
-                ["decline", "Decline"],
+                ["accept", "Approve", "default"],
+                ["acceptForSession", "Always", "outline"],
+                ["decline", "Decline", "destructive-outline"],
               ] as const
-            ).map(([decision, label]) => (
-              <button
+            ).map(([decision, label, variant]) => (
+              <Button
                 key={decision}
-                type="button"
+                size="xs"
+                variant={variant}
                 disabled={busy === approval.requestId}
                 onClick={() => void decide(approval.requestId, decision)}
-                className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] hover:bg-accent disabled:opacity-50"
               >
                 {label}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
@@ -510,31 +547,27 @@ function AttentionStrip({
         <div>
           {question.questions.map((entry) => (
             <div key={entry.id} className="mb-1 last:mb-0">
-              <p className="text-[10px] font-medium text-amber-800 dark:text-amber-200">
-                {entry.header}
-              </p>
+              <p className={cn("text-[10px] font-medium", attentionTextClass)}>{entry.header}</p>
               <p className="mt-0.5 text-[10px] text-muted-foreground">{entry.question}</p>
               <div className="mt-1 flex flex-wrap gap-1">
                 {entry.options.map((option) => {
                   const selected = picked[entry.id] === option.label;
                   return (
-                    <button
+                    <Button
                       key={option.label}
-                      type="button"
+                      size="xs"
+                      variant={selected ? "default" : "outline"}
                       title={option.description}
                       disabled={busy === question.requestId}
                       onClick={() =>
-                        setPicked((current) => ({ ...current, [entry.id]: option.label }))
+                        setPicked((current) => ({
+                          ...current,
+                          [entry.id]: option.label,
+                        }))
                       }
-                      className={cn(
-                        "rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-50",
-                        selected
-                          ? "border-amber-600 bg-amber-500/25 font-medium"
-                          : "border-border bg-background hover:bg-accent",
-                      )}
                     >
                       {option.label}
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
@@ -545,56 +578,37 @@ function AttentionStrip({
             drop the remaining questions of a multi-question request, so the
             send button stays disabled until each one has a pick.
           */}
-          <button
-            type="button"
+          <Button
+            size="xs"
             disabled={busy === question.requestId || !allAnswered}
             onClick={() => void answer(question.requestId, picked)}
             data-testid="board-card-answer-submit"
-            className="mt-1 rounded bg-primary px-2 py-0.5 text-[10px] text-primary-foreground disabled:opacity-40"
+            className="mt-1"
           >
             {allAnswered
               ? "Send answer"
               : `Pick ${question.questions.length - Object.keys(picked).length} more`}
-          </button>
+          </Button>
         </div>
       ) : null}
     </div>
   );
 }
 
-function runtimeChromeClassName(status: ThreadRuntimeState): string {
-  switch (status) {
-    case "approval":
-    case "input":
-    case "plan-ready":
-      return "before:bg-amber-500/80";
-    case "working":
-    case "connecting":
-      return "before:animate-pulse before:bg-blue-500/80";
-    case "failed":
-      return "before:bg-red-500/80";
-    case "idle":
-      return "before:bg-muted-foreground/25";
-  }
-}
-
+// Matches resolveThreadStatusPill's colorClass for the same states (Sidebar.logic.ts)
+// so the strip's headings read the same hue as the sidebar pill for approval/input.
 function StatusDot({ status }: { readonly status: ThreadRuntimeState }) {
-  const className =
-    status === "approval" || status === "input"
-      ? "bg-amber-500"
-      : status === "working" || status === "connecting"
-        ? "bg-blue-500 animate-pulse"
-        : status === "failed"
-          ? "bg-red-500"
-          : status === "plan-ready"
-            ? "bg-amber-500"
-            : "bg-muted-foreground/40";
+  const appearance = threadRuntimeStateAppearance(status);
   return (
     <span
       data-testid="board-card-status"
       data-status={status}
-      title={status}
-      className={cn("mt-1 size-1.5 shrink-0 rounded-full", className)}
+      title={appearance.label}
+      className={cn(
+        "mt-1 size-1.5 shrink-0 rounded-full",
+        appearance.accentClass,
+        appearance.pulse && "animate-status-pulse motion-reduce:animate-none",
+      )}
     />
   );
 }
