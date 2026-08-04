@@ -1,6 +1,9 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
+
+import { resolveStorage } from "../lib/storage";
 
 /**
  * Per-card presentation state for the session board: how tall each card is.
@@ -15,7 +18,8 @@ import { create } from "zustand";
  * per-thread client stores.
  */
 
-const PERSISTED_STATE_KEY = "t3code:board-cards:v1";
+const BOARD_CARD_STORAGE_KEY = "t3code:board-cards:v1";
+const BOARD_CARD_STORAGE_VERSION = 1;
 
 export const CARD_MIN_HEIGHT = 180;
 export const CARD_MAX_HEIGHT = 900;
@@ -28,13 +32,11 @@ export interface BoardCardState {
   readonly heightPx: number;
 }
 
-interface PersistedBoardCardState {
+interface BoardCardStoreState {
   readonly byThreadKey: Record<string, BoardCardState>;
-}
-
-interface BoardCardStoreState extends PersistedBoardCardState {
   readonly setHeight: (ref: ScopedThreadRef, heightPx: number) => void;
   readonly setSize: (ref: ScopedThreadRef, size: BoardCardSize) => void;
+  readonly removeThread: (ref: ScopedThreadRef) => void;
 }
 
 export function clampCardHeight(heightPx: number): number {
@@ -46,61 +48,71 @@ export function cardSizeForHeight(heightPx: number): BoardCardSize {
   return heightPx >= (CARD_COMPACT_HEIGHT + CARD_TALL_HEIGHT) / 2 ? "tall" : "compact";
 }
 
-function readPersistedState(): PersistedBoardCardState {
-  if (typeof window === "undefined") return { byThreadKey: {} };
-  try {
-    const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
-    if (!raw) return { byThreadKey: {} };
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return { byThreadKey: {} };
-    const source = (parsed as { byThreadKey?: unknown }).byThreadKey;
-    if (typeof source !== "object" || source === null) return { byThreadKey: {} };
-    const byThreadKey: Record<string, BoardCardState> = {};
-    for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
-      const height = (value as { heightPx?: unknown } | null)?.heightPx;
-      if (typeof height === "number") {
-        byThreadKey[key] = { heightPx: clampCardHeight(height) };
-      }
+/** Clamps persisted heights on read, since storage is not trusted blindly. */
+function normalizePersistedByThreadKey(persistedState: unknown): Record<string, BoardCardState> {
+  if (typeof persistedState !== "object" || persistedState === null) return {};
+  const source = (persistedState as { byThreadKey?: unknown }).byThreadKey;
+  if (typeof source !== "object" || source === null) return {};
+  const byThreadKey: Record<string, BoardCardState> = {};
+  for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
+    const height = (value as { heightPx?: unknown } | null)?.heightPx;
+    if (typeof height === "number") {
+      byThreadKey[key] = { heightPx: clampCardHeight(height) };
     }
-    return { byThreadKey };
-  } catch {
-    return { byThreadKey: {} };
   }
+  return byThreadKey;
 }
 
-function persistState(state: PersistedBoardCardState): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      PERSISTED_STATE_KEY,
-      JSON.stringify({ byThreadKey: state.byThreadKey }),
-    );
-  } catch {
-    // Ignore quota/storage errors; card height is not worth breaking the board.
-  }
-}
-
-export const useBoardCardStore = create<BoardCardStoreState>()((set) => ({
-  ...readPersistedState(),
-  setHeight: (ref, heightPx) =>
-    set((state) => {
-      const threadKey = scopedThreadKey(ref);
-      const next = clampCardHeight(heightPx);
-      if (state.byThreadKey[threadKey]?.heightPx === next) return state;
-      const byThreadKey = { ...state.byThreadKey, [threadKey]: { heightPx: next } };
-      persistState({ byThreadKey });
-      return { byThreadKey };
+export const useBoardCardStore = create<BoardCardStoreState>()(
+  persist(
+    (set) => ({
+      byThreadKey: {},
+      setHeight: (ref, heightPx) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const next = clampCardHeight(heightPx);
+          if (state.byThreadKey[threadKey]?.heightPx === next) return state;
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: { heightPx: next },
+            },
+          };
+        }),
+      setSize: (ref, size) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const next = size === "tall" ? CARD_TALL_HEIGHT : CARD_COMPACT_HEIGHT;
+          if (state.byThreadKey[threadKey]?.heightPx === next) return state;
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: { heightPx: next },
+            },
+          };
+        }),
+      removeThread: (ref) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          if (!(threadKey in state.byThreadKey)) return state;
+          const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
+          return { byThreadKey };
+        }),
     }),
-  setSize: (ref, size) =>
-    set((state) => {
-      const threadKey = scopedThreadKey(ref);
-      const next = size === "tall" ? CARD_TALL_HEIGHT : CARD_COMPACT_HEIGHT;
-      if (state.byThreadKey[threadKey]?.heightPx === next) return state;
-      const byThreadKey = { ...state.byThreadKey, [threadKey]: { heightPx: next } };
-      persistState({ byThreadKey });
-      return { byThreadKey };
-    }),
-}));
+    {
+      name: BOARD_CARD_STORAGE_KEY,
+      version: BOARD_CARD_STORAGE_VERSION,
+      storage: createJSONStorage(() =>
+        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+      ),
+      partialize: (state) => ({ byThreadKey: state.byThreadKey }),
+      merge: (persistedState, currentState) => ({
+        ...currentState,
+        byThreadKey: normalizePersistedByThreadKey(persistedState),
+      }),
+    },
+  ),
+);
 
 export function selectCardHeight(
   byThreadKey: Record<string, BoardCardState>,
