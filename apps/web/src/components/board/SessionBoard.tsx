@@ -64,13 +64,13 @@ import {
   groupEntriesByLane,
   isProjectFilterChecked,
   laneArchiveIntent,
-  laneColumnKeyFromSwimlaneDroppable,
+  laneColumnKeyFromSwimlaneDroppableId,
   laneIdForName,
   listProjectsWithSessions,
   nextLaneOrder,
   reorderLaneUpdates,
   shouldHideSwimlaneProjectHeader,
-  swimlaneLaneDroppableId,
+  swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
 
 interface PlacedThread {
@@ -366,7 +366,7 @@ export function SessionBoard() {
       const entry = placed.find((candidate) => candidate.key === String(active.id));
       if (!entry) return;
 
-      const laneColumnKeyFromDrop = laneColumnKeyFromSwimlaneDroppable(String(over.id));
+      const laneColumnKeyFromDrop = laneColumnKeyFromSwimlaneDroppableId(String(over.id));
       if (laneColumnKeyFromDrop === null) return;
 
       const target = boardLanes.find((column) => column.key === laneColumnKeyFromDrop);
@@ -458,7 +458,7 @@ export function SessionBoard() {
           <div className="flex min-w-max flex-col gap-4">
             {swimlanes.map((swimlane) => {
               const collapsed = collapsedProjectKeys.has(swimlane.projectKey);
-              const bySwimlaneLane = groupEntriesByLane(
+              const bySwimlaneLaneColumn = groupEntriesByLane(
                 swimlane.entries,
                 boardLanes.map((column) => column.key),
               );
@@ -494,12 +494,12 @@ export function SessionBoard() {
                         return (
                           <LaneColumn
                             key={`${swimlane.projectKey}:${column.key}`}
-                            droppableId={swimlaneLaneDroppableId(swimlane.projectKey, column.key)}
+                            droppableId={swimlaneColumnDroppableId(swimlane.projectKey, column.key)}
                             environmentId={column.environmentId}
                             lane={column.lane}
                             lanes={laneRegistries.get(column.environmentId) ?? []}
                             memberCount={laneMemberCountByKey.get(column.key) ?? 0}
-                            entries={bySwimlaneLane.get(column.key) ?? []}
+                            entries={bySwimlaneLaneColumn.get(column.key) ?? []}
                             draggingKey={draggingKey}
                             cardsVisible={laneExpanded}
                             collapsedByDefault={collapsedByDefault}

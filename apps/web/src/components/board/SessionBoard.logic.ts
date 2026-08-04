@@ -121,11 +121,11 @@ export function shouldHideSwimlaneProjectHeader(selectedProjectKeys: ReadonlySet
   return selectedProjectKeys.size === 1;
 }
 
-export function swimlaneLaneDroppableId(projectKey: string, laneColumnKey: string): string {
+export function swimlaneColumnDroppableId(projectKey: string, laneColumnKey: string): string {
   return JSON.stringify(["board-swimlane", projectKey, laneColumnKey]);
 }
 
-export function laneColumnKeyFromSwimlaneDroppable(droppableId: string): string | null {
+export function laneColumnKeyFromSwimlaneDroppableId(droppableId: string): string | null {
   try {
     const parsed: unknown = JSON.parse(droppableId);
     if (

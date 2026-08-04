@@ -7,12 +7,12 @@ import {
   groupEntriesByLane,
   isProjectFilterChecked,
   laneArchiveIntent,
-  laneColumnKeyFromSwimlaneDroppable,
+  laneColumnKeyFromSwimlaneDroppableId,
   laneIdForName,
   listProjectsWithSessions,
   nextLaneOrder,
   reorderLaneUpdates,
-  swimlaneLaneDroppableId,
+  swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
 
 type TestPlacement = {
@@ -157,10 +157,10 @@ describe("listProjectsWithSessions", () => {
   });
 });
 
-describe("swimlaneLaneDroppableId", () => {
+describe("swimlaneColumnDroppableId", () => {
   it("round-trips lane column keys for drag and drop targets", () => {
-    const droppableId = swimlaneLaneDroppableId("env:alpha", laneKeys[1]);
-    expect(laneColumnKeyFromSwimlaneDroppable(droppableId)).toBe(laneKeys[1]);
+    const droppableId = swimlaneColumnDroppableId("env:alpha", laneKeys[1]);
+    expect(laneColumnKeyFromSwimlaneDroppableId(droppableId)).toBe(laneKeys[1]);
   });
 });
 
