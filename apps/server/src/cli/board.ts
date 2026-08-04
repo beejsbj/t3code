@@ -1,7 +1,5 @@
 import {
   CommandId,
-  AuthAdministrativeScopes,
-  EnvironmentHttpApi,
   LaneId,
   type LaneDefinition,
   type OrchestrationReadModel,
@@ -10,7 +8,6 @@ import {
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -19,27 +16,25 @@ import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
-import { FetchHttpClient, HttpClient, HttpClientError } from "effect/unstable/http";
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { OrchestrationLayerLive } from "../orchestration/runtimeLayer.ts";
-import { layerConfig as SqlitePersistenceLayerLive } from "../persistence/Layers/Sqlite.ts";
-import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
-import {
-  clearPersistedServerRuntimeState,
-  readPersistedServerRuntimeState,
-} from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import {
-  ProjectCommandIdGenerationError,
-  projectCommandErrorFromLiveServerRequest,
-  type ProjectCommandError,
-} from "./project.ts";
+  OrchestrationCliRuntimeLive,
+  type OrchestrationCliCommandError,
+  dispatchLiveOrchestrationCommand,
+  fetchLiveOrchestrationSnapshot,
+  getOfflineSnapshot,
+  makeOrchestrationCliCommandId,
+  tryResolveLiveOrchestrationExecutionMode,
+  withOrchestrationCliSessionToken,
+} from "./orchestrationCliRuntime.ts";
+
+const LANE_CLI_SESSION_LABEL = "t3 lane cli";
 
 type LaneCommandExecutionMode = "live" | "offline";
 type LaneCliDispatchCommand = Extract<
@@ -49,7 +44,7 @@ type LaneCliDispatchCommand = Extract<
   }
 >;
 
-export type LaneCommandError = ProjectCommandError | LaneCommandDomainError;
+export type LaneCommandError = OrchestrationCliCommandError | LaneCommandDomainError;
 export type LaneCommandDomainError =
   | LaneNameEmptyError
   | LaneNotFoundError
@@ -116,47 +111,7 @@ export class LaneArchiveBlockedError extends Schema.TaggedErrorClass<LaneArchive
   }
 }
 
-const laneCommandUuid = Crypto.Crypto.pipe(
-  Effect.flatMap((crypto) => crypto.randomUUIDv4),
-  Effect.mapError(
-    (cause) =>
-      new ProjectCommandIdGenerationError({
-        operation: "generateProjectCommandId",
-        cause,
-      }),
-  ),
-);
-
-const LaneCliRuntimeLive = Layer.mergeAll(
-  WorkspacePaths.layer,
-  OrchestrationLayerLive.pipe(
-    Layer.provideMerge(RepositoryIdentityResolver.layer),
-    Layer.provideMerge(SqlitePersistenceLayerLive),
-  ),
-);
-
-const LANE_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
-
-const withLaneCliSessionToken = <A, E, R>(
-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-  run: (token: string) => Effect.Effect<A, E, R>,
-) =>
-  Effect.acquireUseRelease(
-    environmentAuth.issueSession({
-      scopes: AuthAdministrativeScopes,
-      label: "t3 lane cli",
-    }),
-    (issued) => run(issued.token),
-    (issued) => environmentAuth.revokeSession(issued.sessionId).pipe(Effect.ignore({ log: true })),
-  );
-
-const withLaneCliLiveServerTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(Effect.timeout(LANE_CLI_LIVE_SERVER_TIMEOUT));
-
-const makeLiveServerClient = (origin: string) =>
-  HttpApiClient.make(EnvironmentHttpApi, {
-    baseUrl: origin,
-  });
+const laneCommandUuid = makeOrchestrationCliCommandId("generateLaneCommandId");
 
 export function sortedLanes(lanes: ReadonlyArray<LaneDefinition>): ReadonlyArray<LaneDefinition> {
   return lanes.toSorted(
@@ -254,62 +209,6 @@ const validateLaneName = Effect.fn("validateLaneName")(function* (name: string) 
   return trimmed;
 });
 
-const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
-  Effect.gen(function* () {
-    const client = yield* makeLiveServerClient(origin);
-    return yield* client.orchestration.snapshot({
-      headers: { authorization: `Bearer ${bearerToken}` },
-    });
-  }).pipe(withLaneCliLiveServerTimeout, Effect.mapError(projectCommandErrorFromLiveServerRequest));
-
-const dispatchLiveOrchestrationCommand = (
-  origin: string,
-  bearerToken: string,
-  command: LaneCliDispatchCommand,
-) =>
-  Effect.gen(function* () {
-    const client = yield* makeLiveServerClient(origin);
-    yield* client.orchestration.dispatch({
-      headers: { authorization: `Bearer ${bearerToken}` },
-      payload: command,
-    } as Parameters<typeof client.orchestration.dispatch>[0]);
-  }).pipe(withLaneCliLiveServerTimeout, Effect.mapError(projectCommandErrorFromLiveServerRequest));
-
-const getOfflineSnapshot = Effect.fn("getOfflineSnapshot")(function* () {
-  const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  return yield* projectionSnapshotQuery.getSnapshot();
-});
-
-const tryResolveLiveLaneExecutionMode = Effect.fn("tryResolveLiveLaneExecutionMode")(function* (
-  environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
-  config: ServerConfig.ServerConfig["Service"],
-) {
-  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
-  if (Option.isNone(runtimeState)) {
-    return Option.none<{ readonly origin: string }>();
-  }
-
-  const attempt = withLaneCliSessionToken(environmentAuth, (token) =>
-    fetchLiveOrchestrationSnapshot(runtimeState.value.origin, token).pipe(
-      Effect.as({
-        origin: runtimeState.value.origin,
-      }),
-    ),
-  );
-
-  const attempted = yield* Effect.result(attempt);
-  if (attempted._tag === "Success") {
-    return Option.some(attempted.success);
-  }
-
-  yield* Effect.logDebug("Failed to connect to the persisted lane CLI server.", {
-    origin: runtimeState.value.origin,
-    cause: attempted.failure,
-  });
-  yield* clearPersistedServerRuntimeState(config.serverRuntimeStatePath);
-  return Option.none<{ readonly origin: string }>();
-});
-
 const runLaneCommand = Effect.fn("runLaneCommand")(function* (
   flags: CliAuthLocationFlags,
   run: (input: {
@@ -334,24 +233,30 @@ const runLaneCommand = Effect.fn("runLaneCommand")(function* (
 
   return yield* Effect.gen(function* () {
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-    const liveMode = yield* tryResolveLiveLaneExecutionMode(environmentAuth, config);
+    const liveMode = yield* tryResolveLiveOrchestrationExecutionMode(environmentAuth, config, {
+      sessionLabel: LANE_CLI_SESSION_LABEL,
+      connectFailureLogMessage: "Failed to connect to the persisted lane CLI server.",
+    });
 
     if (Option.isSome(liveMode)) {
-      return yield* withLaneCliSessionToken(environmentAuth, (token) =>
-        Effect.gen(function* () {
-          const snapshot = yield* fetchLiveOrchestrationSnapshot(liveMode.value.origin, token);
-          const output = yield* run({
-            snapshot,
-            dispatch: (command) =>
-              dispatchLiveOrchestrationCommand(liveMode.value.origin, token, command),
-            mode: "live",
-          });
-          yield* Console.log(output);
-        }),
+      return yield* withOrchestrationCliSessionToken(
+        environmentAuth,
+        LANE_CLI_SESSION_LABEL,
+        (token) =>
+          Effect.gen(function* () {
+            const snapshot = yield* fetchLiveOrchestrationSnapshot(liveMode.value.origin, token);
+            const output = yield* run({
+              snapshot,
+              dispatch: (command) =>
+                dispatchLiveOrchestrationCommand(liveMode.value.origin, token, command),
+              mode: "live",
+            });
+            yield* Console.log(output);
+          }),
       );
     }
 
-    const offlineRuntimeLayer = LaneCliRuntimeLive.pipe(
+    const offlineRuntimeLayer = OrchestrationCliRuntimeLive.pipe(
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
     );
