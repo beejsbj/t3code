@@ -1238,7 +1238,8 @@ function OpenCommandPaletteDialog(props: {
     title: "Open session board",
     icon: <LayoutGridIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
-      await navigate({ to: "/board" });
+      // The board is the home route; `/board` only exists to redirect old links.
+      await navigate({ to: "/" });
     },
   });
 

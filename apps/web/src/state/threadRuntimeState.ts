@@ -38,3 +38,64 @@ export function resolveThreadRuntimeState(thread: ThreadRuntimeStateInput): Thre
 
   return "idle";
 }
+
+export interface ThreadRuntimeStateAppearance {
+  /** Human label, matching the wording the sidebar status pills already use. */
+  readonly label: string;
+  /** Background utility for a status dot or edge accent. */
+  readonly accentClass: string;
+  /** Whether the state is in motion and should pulse. */
+  readonly pulse: boolean;
+}
+
+// One hue per runtime state, shared by every surface that shows thread status.
+// The hues are the system-wide convention already set by sidebar v1/v2 and the
+// mobile Live Activity/widgets — amber approval, indigo input, sky working,
+// violet plan-ready — so a thread reads the same color wherever it surfaces.
+// Anything new that paints thread status reads it from here rather than
+// picking its own palette.
+const THREAD_RUNTIME_STATE_APPEARANCE: Readonly<
+  Record<ThreadRuntimeState, ThreadRuntimeStateAppearance>
+> = {
+  approval: {
+    label: "Approval",
+    accentClass: "bg-amber-500 dark:bg-amber-300/90",
+    pulse: false,
+  },
+  input: {
+    label: "Input",
+    accentClass: "bg-indigo-500 dark:bg-indigo-300/90",
+    pulse: false,
+  },
+  working: {
+    label: "Working",
+    accentClass: "bg-sky-500 dark:bg-sky-300/80",
+    pulse: true,
+  },
+  connecting: {
+    label: "Connecting",
+    accentClass: "bg-sky-500 dark:bg-sky-300/80",
+    pulse: true,
+  },
+  failed: {
+    label: "Failed",
+    accentClass: "bg-red-500 dark:bg-red-300/90",
+    pulse: false,
+  },
+  "plan-ready": {
+    label: "Plan ready",
+    accentClass: "bg-violet-500 dark:bg-violet-300/90",
+    pulse: false,
+  },
+  idle: {
+    label: "Idle",
+    accentClass: "bg-muted-foreground/40",
+    pulse: false,
+  },
+};
+
+export function threadRuntimeStateAppearance(
+  state: ThreadRuntimeState,
+): ThreadRuntimeStateAppearance {
+  return THREAD_RUNTIME_STATE_APPEARANCE[state];
+}
