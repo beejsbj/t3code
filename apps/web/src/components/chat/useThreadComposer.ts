@@ -297,6 +297,9 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       phase,
       isConnecting,
       isSendBusy,
+      // Board cards mount their own timeline rather than the route's thread
+      // detail, so there is no loading gate to report here.
+      sendDisabledReason: null,
       isPreparingWorktree: false,
       environmentUnavailable: null,
       activePendingApproval: null,

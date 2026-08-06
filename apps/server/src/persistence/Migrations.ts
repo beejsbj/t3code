@@ -9,8 +9,8 @@
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
-import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -47,11 +47,12 @@ import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
-import Migration0035 from "./Migrations/035_ProjectionThreadsWorkflowLane.ts";
-import Migration0036 from "./Migrations/036_ProjectionLanesAndPlacementProvenance.ts";
-import Migration0037 from "./Migrations/037_ProjectionThreadsWorkflowLanePlacementReason.ts";
-import Migration0038 from "./Migrations/038_ProjectionPlainLanes.ts";
-import Migration0039 from "./Migrations/039_ProjectionLifecycleLanes.ts";
+import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
+import Migration0036 from "./Migrations/036_ProjectionThreadsWorkflowLane.ts";
+import Migration0037 from "./Migrations/037_ProjectionLanesAndPlacementProvenance.ts";
+import Migration0038 from "./Migrations/038_ProjectionThreadsWorkflowLanePlacementReason.ts";
+import Migration0039 from "./Migrations/039_ProjectionPlainLanes.ts";
+import Migration0040 from "./Migrations/040_ProjectionLifecycleLanes.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -98,12 +99,15 @@ export const migrationEntries = [
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
   [33, "ProjectionThreadsSettled", Migration0033],
   [34, "ProjectionThreadsSnoozed", Migration0034],
-  [35, "ProjectionThreadsWorkflowLane", Migration0035],
-  [36, "ProjectionLanesAndPlacementProvenance", Migration0036],
-  [37, "ProjectionThreadsWorkflowLanePlacementReason", Migration0037],
-  [38, "ProjectionPlainLanes", Migration0038],
-  [39, "ProjectionLifecycleLanes", Migration0039],
+  [35, "ProjectionThreadTitleRegeneration", Migration0035],
+  [36, "ProjectionThreadsWorkflowLane", Migration0036],
+  [37, "ProjectionLanesAndPlacementProvenance", Migration0037],
+  [38, "ProjectionThreadsWorkflowLanePlacementReason", Migration0038],
+  [39, "ProjectionPlainLanes", Migration0039],
+  [40, "ProjectionLifecycleLanes", Migration0040],
 ] as const;
+
+export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
 
 export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(

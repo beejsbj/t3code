@@ -7,6 +7,7 @@
  * @module ProjectionThreadRepository
  */
 import {
+  CommandId,
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
@@ -42,6 +43,8 @@ export const ProjectionThread = Schema.Struct({
   snoozedUntil: Schema.NullOr(IsoDateTime),
   snoozedAt: Schema.NullOr(IsoDateTime),
   workflowLane: Schema.NullOr(WorkflowLane),
+  titleRegenerationRequestId: Schema.optional(Schema.NullOr(CommandId)),
+  titleRegenerationStartedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
