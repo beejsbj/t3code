@@ -123,6 +123,36 @@ export function orchestrationCliCommandErrorFromLiveServerRequest(
   return new OrchestrationCliLiveServerRequestError({ operation: "callLiveServer", cause });
 }
 
+const isConnectionRefusedCause = (cause: unknown): boolean => {
+  if (cause === null || typeof cause !== "object") {
+    return false;
+  }
+  if ("code" in cause && cause.code === "ECONNREFUSED") {
+    return true;
+  }
+  if ("cause" in cause) {
+    return isConnectionRefusedCause(cause.cause);
+  }
+  return false;
+};
+
+const isPersistedServerRuntimeUnreachable = (error: unknown): boolean => {
+  if (error instanceof OrchestrationCliLiveServerDeclaredResponseError) {
+    return false;
+  }
+  if (error instanceof OrchestrationCliLiveServerUndeclaredStatusError) {
+    return false;
+  }
+  if (!(error instanceof OrchestrationCliLiveServerRequestError)) {
+    return false;
+  }
+  const cause = error.cause;
+  if (HttpClientError.isHttpClientError(cause) && cause.reason._tag === "TransportError") {
+    return isConnectionRefusedCause(cause.reason.cause);
+  }
+  return isConnectionRefusedCause(cause);
+};
+
 // `operation` is supplied by the caller so each CLI's tagged error carries a
 // truthful label (e.g. "generateLaneCommandId" vs "generateProjectCommandId").
 export const makeOrchestrationCliCommandId = (operation: string) =>
@@ -145,7 +175,7 @@ export const OrchestrationCliRuntimeLive = Layer.mergeAll(
   ),
 );
 
-const ORCHESTRATION_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(1);
+const ORCHESTRATION_CLI_LIVE_SERVER_TIMEOUT = Duration.seconds(15);
 
 export const withOrchestrationCliSessionToken = <A, E, R>(
   environmentAuth: EnvironmentAuth.EnvironmentAuth["Service"],
@@ -231,6 +261,10 @@ export const tryResolveLiveOrchestrationExecutionMode = Effect.fn(
   const attempted = yield* Effect.result(attempt);
   if (attempted._tag === "Success") {
     return Option.some(attempted.success);
+  }
+
+  if (!isPersistedServerRuntimeUnreachable(attempted.failure)) {
+    return yield* Effect.fail(attempted.failure);
   }
 
   yield* Effect.logDebug(options.connectFailureLogMessage, {

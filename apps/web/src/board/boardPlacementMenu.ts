@@ -1,6 +1,6 @@
 import type { ContextMenuItem, LaneDefinition, WorkflowLane } from "@t3tools/contracts";
 
-import { boardLaneLabel, isWorkflowLane } from "./boardLanes.ts";
+import { boardLaneLabel, isLifecycleBoardLane, isWorkflowLane } from "./boardLanes.ts";
 
 const PLACE_IN_LANE_PREFIX = "place-in-lane:";
 
@@ -11,10 +11,12 @@ export function buildBoardPlacementContextMenuItems(
     {
       id: "place-in-lane",
       label: "Place in lane…",
-      children: lanes.map((lane) => ({
-        id: `${PLACE_IN_LANE_PREFIX}${lane.id}`,
-        label: boardLaneLabel(lane.id, lanes),
-      })),
+      children: lanes
+        .filter((lane) => !isLifecycleBoardLane(lane.id))
+        .map((lane) => ({
+          id: `${PLACE_IN_LANE_PREFIX}${lane.id}`,
+          label: boardLaneLabel(lane.id, lanes),
+        })),
     },
     { id: "remove-from-board", label: "Remove from board" },
   ];
@@ -28,5 +30,7 @@ export function workflowLaneForBoardPlacementAction(
   if (action?.startsWith(PLACE_IN_LANE_PREFIX) !== true) return undefined;
 
   const lane = action.slice(PLACE_IN_LANE_PREFIX.length);
-  return isWorkflowLane(lane, lanes) ? lane : undefined;
+  if (!isWorkflowLane(lane, lanes)) return undefined;
+  if (isLifecycleBoardLane(lane)) return undefined;
+  return lane;
 }

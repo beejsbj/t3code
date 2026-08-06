@@ -200,8 +200,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           createdAt: new Date().toISOString(),
         },
       });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        console.error(squashAtomCommandFailure(result));
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          console.error(squashAtomCommandFailure(result));
+        }
         return;
       }
       useComposerDraftStore.getState().clearComposerContent(threadRef);

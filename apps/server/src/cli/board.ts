@@ -20,6 +20,7 @@ import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
+import { isLifecycleWorkflowLane } from "../orchestration/decider.ts";
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
@@ -49,7 +50,8 @@ export type LaneCommandDomainError =
   | LaneNameEmptyError
   | LaneNotFoundError
   | ThreadNotFoundError
-  | LaneArchiveBlockedError;
+  | LaneArchiveBlockedError
+  | LifecycleLaneMoveBlockedError;
 
 export class LaneNameEmptyError extends Schema.TaggedErrorClass<LaneNameEmptyError>()(
   "LaneNameEmptyError",
@@ -108,6 +110,18 @@ export class LaneArchiveBlockedError extends Schema.TaggedErrorClass<LaneArchive
   override get message(): string {
     const noun = this.sessionCount === 1 ? "session" : "sessions";
     return `Lane '${this.laneId}' still has ${this.sessionCount} ${noun}. Re-run with --force to archive anyway.`;
+  }
+}
+
+export class LifecycleLaneMoveBlockedError extends Schema.TaggedErrorClass<LifecycleLaneMoveBlockedError>()(
+  "LifecycleLaneMoveBlockedError",
+  {
+    operation: Schema.Literal("moveThread"),
+    laneId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Lane '${this.laneId}' is a lifecycle lane and cannot be used as a workflow placement target.`;
   }
 }
 
@@ -405,6 +419,12 @@ const laneMoveCommand = Command.make("move", {
       Effect.fn("laneMove")(function* ({ snapshot, dispatch }) {
         const thread = yield* resolveThread(snapshot, flags.threadId);
         const lane = yield* resolveLane(snapshot, flags.laneId);
+        if (isLifecycleWorkflowLane(lane.id)) {
+          return yield* new LifecycleLaneMoveBlockedError({
+            operation: "moveThread",
+            laneId: lane.id,
+          });
+        }
         if (thread.workflowLane === lane.id) {
           return `Thread ${thread.id} is already in lane ${lane.id}.`;
         }

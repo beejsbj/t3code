@@ -1,8 +1,10 @@
 import {
   EventId,
+  LaneId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type WorkflowLane,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -28,6 +30,13 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 // window is a failed/stale start, not pending work. Mirrors the client's
 // QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+
+export const SETTLED_WORKFLOW_LANE_ID = LaneId.make("settled");
+export const SNOOZED_WORKFLOW_LANE_ID = LaneId.make("snoozed");
+
+export function isLifecycleWorkflowLane(laneId: WorkflowLane): boolean {
+  return laneId === SETTLED_WORKFLOW_LANE_ID || laneId === SNOOZED_WORKFLOW_LANE_ID;
+}
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -766,6 +775,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.workflowLane !== null && isLifecycleWorkflowLane(command.workflowLane)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.workflowLane}' is a lifecycle lane and cannot be stored as workflowLane.`,
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
