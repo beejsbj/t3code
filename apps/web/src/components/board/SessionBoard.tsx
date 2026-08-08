@@ -17,8 +17,9 @@ import {
   type WorkflowLane,
 } from "@t3tools/contracts";
 import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FolderIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
+import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import {
   boardLaneCollapsedByDefault,
   isLifecycleBoardLane,
@@ -69,9 +70,17 @@ import {
   listProjectsWithSessions,
   nextLaneOrder,
   reorderLaneUpdates,
+  resolveBoardFocusAction,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
+
+/** Fixed so the lane header, every group row, and the drop cells stay aligned. */
+const BOARD_COLUMN_WIDTH = "380px";
+/** Group bands stick directly under the lane header row. */
+const BOARD_HEADER_HEIGHT = "3.25rem";
+/** The rule that makes a lane read as one column down the whole scroll. */
+const BOARD_COLUMN_RULE_CLASS = "border-l border-border/40 first:border-l-0";
 
 interface PlacedThread {
   readonly ref: ScopedThreadRef;
@@ -101,8 +110,13 @@ function laneColumnKey(environmentId: EnvironmentId, laneId: WorkflowLane): stri
   return JSON.stringify([environmentId, laneId]);
 }
 
-function laneColumnExpandKey(swimlaneProjectKey: string, laneColumnKeyValue: string): string {
-  return `${swimlaneProjectKey}:${laneColumnKeyValue}`;
+function findCardNode(scroller: HTMLElement | null, threadKey: string): HTMLElement | null {
+  // Matched by dataset rather than an attribute selector: thread keys are
+  // `environmentId:threadId` and are not guaranteed selector-safe.
+  for (const node of scroller?.querySelectorAll<HTMLElement>("[data-board-card-key]") ?? []) {
+    if (node.dataset.boardCardKey === threadKey) return node;
+  }
+  return null;
 }
 
 export function SessionBoard() {
@@ -322,14 +336,75 @@ export function SessionBoard() {
     });
   }, []);
 
-  const toggleLaneColumnExpanded = useCallback((expandKey: string) => {
+  const toggleLaneColumnExpanded = useCallback((laneColumnKeyValue: string) => {
     setExpandedLaneColumnKeys((current) => {
       const next = new Set(current);
-      if (next.has(expandKey)) next.delete(expandKey);
-      else next.add(expandKey);
+      if (next.has(laneColumnKeyValue)) next.delete(laneColumnKeyValue);
+      else next.add(laneColumnKeyValue);
       return next;
     });
   }, []);
+
+  // Focus requests come from the sidebar, which cannot see this viewport. The
+  // board answers them: scroll the card into view, or open it when it is
+  // already on screen (the second click on a row you just jumped to).
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const focusRequest = useBoardFocusStore((state) => state.request);
+  const setFocusedThreadKey = useBoardFocusStore((state) => state.setFocused);
+  const setExpandedThreadKey = useBoardFocusStore((state) => state.setExpanded);
+  const placedRef = useRef(placed);
+  placedRef.current = placed;
+
+  useEffect(() => {
+    if (focusRequest === null) return;
+    const entry = placedRef.current.find((candidate) => candidate.key === focusRequest.threadKey);
+    // A session that is not on the board (archived mid-click) has nothing to
+    // focus; leaving the request unanswered is better than a blind scroll.
+    if (entry === undefined) return;
+
+    const scroller = scrollerRef.current;
+    const node = findCardNode(scroller, entry.key);
+    const action = resolveBoardFocusAction({
+      card: node?.getBoundingClientRect() ?? null,
+      viewport: scroller?.getBoundingClientRect() ?? { top: 0, bottom: 0, left: 0, right: 0 },
+      forceOpen: focusRequest.open,
+    });
+
+    setFocusedThreadKey(entry.key);
+
+    // The card can be hidden rather than merely off screen — behind the project
+    // filter, a collapsed group, or a collapsed lane. Undo whichever applies
+    // either way: an opened card still has to exist behind its sheet.
+    setSelectedProjectKeys((current) =>
+      current.size === 0 || current.has(entry.projectKey) ? current : new Set(),
+    );
+    setCollapsedProjectKeys((current) => {
+      if (!current.has(entry.projectKey)) return current;
+      const next = new Set(current);
+      next.delete(entry.projectKey);
+      return next;
+    });
+    setExpandedLaneColumnKeys((current) => {
+      if (entry.laneId === null || !boardLaneCollapsedByDefault(entry.laneId)) return current;
+      if (current.has(entry.laneColumnKey)) return current;
+      return new Set(current).add(entry.laneColumnKey);
+    });
+
+    if (action === "open") {
+      setExpandedThreadKey(entry.key);
+      return;
+    }
+
+    // Scroll only once the reveal above has laid out.
+    const frame = requestAnimationFrame(() => {
+      findCardNode(scrollerRef.current, entry.key)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "center",
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusRequest, setExpandedThreadKey, setFocusedThreadKey]);
 
   const nextSnoozeWakeAtMs = useMemo(() => {
     let next = Number.NaN;
@@ -454,8 +529,44 @@ export function SessionBoard() {
         onDragEnd={handleDragEnd}
         onDragCancel={() => setDraggingKey(null)}
       >
-        <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto p-3">
-          <div className="flex min-w-max flex-col gap-4">
+        {/*
+          One board, not one per project. The lane header row and every group's
+          cells share a single column grid, so a lane reads as one continuous
+          column all the way down and project grouping is only a divider across
+          it — the Linear scroll, rather than stacked mini-boards.
+        */}
+        <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto">
+          <div
+            className="w-max min-w-full"
+            style={{ ["--board-column" as string]: BOARD_COLUMN_WIDTH }}
+          >
+            <div
+              className="sticky top-0 z-20 grid border-b border-border bg-background"
+              style={{
+                gridTemplateColumns: `repeat(${boardLanes.length}, var(--board-column))`,
+                height: BOARD_HEADER_HEIGHT,
+              }}
+            >
+              {boardLanes.map((column) => (
+                <LaneHeaderCell
+                  key={column.key}
+                  environmentId={column.environmentId}
+                  lane={column.lane}
+                  lanes={laneRegistries.get(column.environmentId) ?? []}
+                  memberCount={laneMemberCountByKey.get(column.key) ?? 0}
+                  cardsVisible={
+                    !boardLaneCollapsedByDefault(column.lane.id) ||
+                    expandedLaneColumnKeys.has(column.key)
+                  }
+                  collapsedByDefault={boardLaneCollapsedByDefault(column.lane.id)}
+                  onToggleExpanded={() => toggleLaneColumnExpanded(column.key)}
+                  onUpdate={handleUpdateLane}
+                  onReorder={handleReorderLane}
+                  onArchive={handleArchiveLane}
+                />
+              ))}
+            </div>
+
             {swimlanes.map((swimlane) => {
               const collapsed = collapsedProjectKeys.has(swimlane.projectKey);
               const bySwimlaneLaneColumn = groupEntriesByLane(
@@ -464,17 +575,20 @@ export function SessionBoard() {
               );
 
               return (
-                <section key={swimlane.projectKey} className="flex flex-col gap-2">
+                <Fragment key={swimlane.projectKey}>
                   {hideSwimlaneProjectHeader ? null : (
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-accent/40"
+                      // Opaque, not translucent: it sticks over live cards, and
+                      // a blurred strip would repaint them on every scroll tick.
+                      className="sticky z-10 flex w-full items-center gap-2 border-b border-border/50 bg-muted px-3 py-1.5 text-left hover:bg-accent"
+                      style={{ top: BOARD_HEADER_HEIGHT }}
                       onClick={() => toggleSwimlaneCollapsed(swimlane.projectKey)}
                     >
                       {collapsed ? (
-                        <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
+                        <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
                       ) : (
-                        <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
+                        <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
                       )}
                       <span className="text-xs font-medium">{swimlane.projectTitle}</span>
                       <span className="text-[11px] text-muted-foreground/70">
@@ -484,35 +598,28 @@ export function SessionBoard() {
                     </button>
                   )}
                   {collapsed && !hideSwimlaneProjectHeader ? null : (
-                    <div className="flex flex-nowrap gap-3">
-                      {boardLanes.map((column) => {
-                        const expandKey = laneColumnExpandKey(swimlane.projectKey, column.key);
-                        const collapsedByDefault = boardLaneCollapsedByDefault(column.lane.id);
-                        const laneExpanded =
-                          !collapsedByDefault || expandedLaneColumnKeys.has(expandKey);
-
-                        return (
-                          <LaneColumn
-                            key={`${swimlane.projectKey}:${column.key}`}
-                            droppableId={swimlaneColumnDroppableId(swimlane.projectKey, column.key)}
-                            environmentId={column.environmentId}
-                            lane={column.lane}
-                            lanes={laneRegistries.get(column.environmentId) ?? []}
-                            memberCount={laneMemberCountByKey.get(column.key) ?? 0}
-                            entries={bySwimlaneLaneColumn.get(column.key) ?? []}
-                            draggingKey={draggingKey}
-                            cardsVisible={laneExpanded}
-                            collapsedByDefault={collapsedByDefault}
-                            onToggleExpanded={() => toggleLaneColumnExpanded(expandKey)}
-                            onUpdate={handleUpdateLane}
-                            onReorder={handleReorderLane}
-                            onArchive={handleArchiveLane}
-                          />
-                        );
-                      })}
+                    <div
+                      className="grid"
+                      style={{
+                        gridTemplateColumns: `repeat(${boardLanes.length}, var(--board-column))`,
+                      }}
+                    >
+                      {boardLanes.map((column) => (
+                        <LaneDropCell
+                          key={`${swimlane.projectKey}:${column.key}`}
+                          droppableId={swimlaneColumnDroppableId(swimlane.projectKey, column.key)}
+                          lane={column.lane}
+                          entries={bySwimlaneLaneColumn.get(column.key) ?? []}
+                          draggingKey={draggingKey}
+                          cardsVisible={
+                            !boardLaneCollapsedByDefault(column.lane.id) ||
+                            expandedLaneColumnKeys.has(column.key)
+                          }
+                        />
+                      ))}
                     </div>
                   )}
-                </section>
+                </Fragment>
               );
             })}
           </div>
@@ -800,14 +907,16 @@ function LaneFields({
   );
 }
 
-function LaneColumn({
-  droppableId,
+/**
+ * The single header for a lane. There is one per lane for the whole board, not
+ * one per project group, so the count it shows is the lane's total and the
+ * collapse it offers applies to the column everywhere it appears.
+ */
+function LaneHeaderCell({
   environmentId,
   lane,
   lanes,
   memberCount,
-  entries,
-  draggingKey,
   cardsVisible,
   collapsedByDefault,
   onToggleExpanded,
@@ -815,13 +924,10 @@ function LaneColumn({
   onReorder,
   onArchive,
 }: {
-  readonly droppableId: string;
   readonly environmentId: EnvironmentId;
   readonly lane: LaneDefinition;
   readonly lanes: ReadonlyArray<LaneDefinition>;
   readonly memberCount: number;
-  readonly entries: ReadonlyArray<PlacedThread>;
-  readonly draggingKey: string | null;
   readonly cardsVisible: boolean;
   readonly collapsedByDefault: boolean;
   readonly onToggleExpanded: () => void;
@@ -842,56 +948,85 @@ function LaneColumn({
     memberCount: number,
   ) => Promise<boolean>;
 }) {
+  return (
+    <div
+      data-lane={lane.id}
+      className={cn(
+        "flex min-w-0 flex-col justify-center px-3 py-2",
+        BOARD_COLUMN_RULE_CLASS,
+        // Settled and Snoozed are lifecycle terminals, not workflow stages.
+        isLifecycleBoardLane(lane.id) && "bg-muted/25",
+      )}
+    >
+      <div className="flex items-center gap-2">
+        {collapsedByDefault ? (
+          <button
+            type="button"
+            className="rounded p-0.5 text-muted-foreground hover:bg-accent"
+            onClick={onToggleExpanded}
+            aria-expanded={cardsVisible}
+          >
+            {cardsVisible ? (
+              <ChevronDownIcon className="size-3.5" />
+            ) : (
+              <ChevronRightIcon className="size-3.5" />
+            )}
+            <span className="sr-only">
+              {cardsVisible ? "Collapse" : "Expand"} {lane.name}
+            </span>
+          </button>
+        ) : null}
+        <span className="truncate text-xs font-medium">{lane.name}</span>
+        <span className="ml-auto text-[11px] text-muted-foreground/70">{memberCount}</span>
+        <LaneEditorPopover
+          environmentId={environmentId}
+          lane={lane}
+          lanes={lanes}
+          memberCount={memberCount}
+          onUpdate={onUpdate}
+          onReorder={onReorder}
+          onArchive={onArchive}
+        />
+      </div>
+      <p className="truncate text-[11px] text-muted-foreground/60" title={lane.description}>
+        {lane.description}
+      </p>
+    </div>
+  );
+}
+
+/** One lane's slice of one project group: the drop target and its cards. */
+function LaneDropCell({
+  droppableId,
+  lane,
+  entries,
+  draggingKey,
+  cardsVisible,
+}: {
+  readonly droppableId: string;
+  readonly lane: LaneDefinition;
+  readonly entries: ReadonlyArray<PlacedThread>;
+  readonly draggingKey: string | null;
+  readonly cardsVisible: boolean;
+}) {
   const { isOver, setNodeRef } = useDroppable({ id: droppableId });
 
   return (
-    <section
+    // Not a bounded scroll region: this cell sits in a content-sized grid row
+    // inside the board's own scroller, so it never receives a height shorter
+    // than its content.
+    <div
       ref={setNodeRef}
       data-lane={lane.id}
       className={cn(
-        "flex min-w-[380px] max-w-[380px] shrink-0 flex-col rounded-lg border border-border/70 bg-card/20",
-        isOver && "border-primary/60 bg-accent/40",
+        "min-h-16 min-w-0 space-y-2 p-2",
+        BOARD_COLUMN_RULE_CLASS,
+        isLifecycleBoardLane(lane.id) && "bg-muted/25",
+        isOver && "bg-accent/40",
       )}
     >
-      <header className="shrink-0 border-b border-border/60 px-3 py-2">
-        <div className="flex items-center gap-2">
-          {collapsedByDefault ? (
-            <button
-              type="button"
-              className="rounded p-0.5 text-muted-foreground hover:bg-accent"
-              onClick={onToggleExpanded}
-              aria-expanded={cardsVisible}
-            >
-              {cardsVisible ? (
-                <ChevronDownIcon className="size-3.5" />
-              ) : (
-                <ChevronRightIcon className="size-3.5" />
-              )}
-              <span className="sr-only">
-                {cardsVisible ? "Collapse" : "Expand"} {lane.name}
-              </span>
-            </button>
-          ) : null}
-          <span className="text-xs font-medium">{lane.name}</span>
-          <span className="ml-auto text-[11px] text-muted-foreground/70">{entries.length}</span>
-          <LaneEditorPopover
-            environmentId={environmentId}
-            lane={lane}
-            lanes={lanes}
-            memberCount={memberCount}
-            onUpdate={onUpdate}
-            onReorder={onReorder}
-            onArchive={onArchive}
-          />
-        </div>
-        <p className="mt-0.5 text-[11px] text-muted-foreground/60">{lane.description}</p>
-      </header>
-      {cardsVisible ? (
-        // Not a bounded scroll region: this section sits in a content-sized row
-        // inside the board's own page-level scroller, so it never receives a
-        // height shorter than its content. `overflow-y-auto` here is unreachable.
-        <div className="space-y-2 p-2">
-          {entries.map((entry) => (
+      {cardsVisible
+        ? entries.map((entry) => (
             <BoardSessionCard
               key={entry.key}
               cardKey={entry.key}
@@ -902,9 +1037,8 @@ function LaneColumn({
               projectTitle={entry.projectTitle}
               isDragging={draggingKey === entry.key}
             />
-          ))}
-        </div>
-      ) : null}
-    </section>
+          ))
+        : null}
+    </div>
   );
 }

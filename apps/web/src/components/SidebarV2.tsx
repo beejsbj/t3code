@@ -27,6 +27,7 @@ import {
   FolderPlusIcon,
   GitBranchIcon,
   EllipsisIcon,
+  LayoutGridIcon,
   MessageSquareIcon,
   PlusIcon,
   SearchIcon,
@@ -48,13 +49,14 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { useParams, useRouter } from "@tanstack/react-router";
+import { useParams, useRouter, useRouterState } from "@tanstack/react-router";
 
 import {
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { requestBoardFocus, useBoardFocusStore } from "../board/boardFocusStore";
 import { isElectron } from "../env";
 import {
   resolveShortcutCommand,
@@ -413,7 +415,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
-  onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
+  // What a double click means is the parent's call: renaming everywhere except
+  // the board, where it opens the session it already put on screen.
+  onThreadDoubleClick: (threadRef: ScopedThreadRef, title: string) => void;
   onRenameTitleChange: (title: string) => void;
   onCommitRename: (threadRef: ScopedThreadRef, title: string, originalTitle: string) => void;
   onCancelRename: () => void;
@@ -435,9 +439,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     onRenameTitleChange,
     onSettle,
     onSnooze,
-    onStartRename,
     onThreadActivate,
     onThreadClick,
+    onThreadDoubleClick,
     onUnsettle,
     onUnsnooze,
     renamingTitle,
@@ -612,9 +616,9 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
       }
       if ((event.target as HTMLElement).closest("button, a, input")) return;
       event.preventDefault();
-      onStartRename(threadRef, thread.title);
+      onThreadDoubleClick(threadRef, thread.title);
     },
-    [isRenaming, onStartRename, thread.title, threadRef],
+    [isRenaming, onThreadDoubleClick, thread.title, threadRef],
   );
   const renameCommittedRef = useRef(false);
   useEffect(() => {
@@ -1276,6 +1280,11 @@ export default function SidebarV2() {
   // the command was in flight, completing it must not yank them away.
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
+  // The board lives at `/`; `/board` only redirects there.
+  const isBoardRoute = useRouterState({ select: (state) => state.location.pathname === "/" });
+  const isBoardRouteRef = useRef(isBoardRoute);
+  isBoardRouteRef.current = isBoardRoute;
+  const boardFocusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
 
   const environmentLabelById = useMemo(
     () =>
@@ -1819,6 +1828,29 @@ export default function SidebarV2() {
     [clearSelection, isMobile, router, setOpenMobile, setSelectionAnchor],
   );
 
+  // The board is home, and a card there *is* the chat — so while it is open,
+  // picking a session points the board at that card instead of routing away
+  // from it. Only the board can tell whether the card is already on screen, so
+  // this is a request: it scrolls first, and opens on the click after that.
+  const openThread = useCallback(
+    (threadRef: ScopedThreadRef, options?: { readonly open?: boolean }) => {
+      if (!isBoardRouteRef.current) {
+        navigateToThread(threadRef);
+        return;
+      }
+      if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
+        clearSelection();
+      }
+      const threadKey = scopedThreadKey(threadRef);
+      setSelectionAnchor(threadKey);
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      requestBoardFocus(threadKey, options);
+    },
+    [clearSelection, isMobile, navigateToThread, setOpenMobile, setSelectionAnchor],
+  );
+
   const clearThreadSearch = useCallback(() => {
     setThreadSearchQuery("");
     setActiveSearchResultIndex(0);
@@ -1826,9 +1858,9 @@ export default function SidebarV2() {
   const selectThreadSearchResult = useCallback(
     (thread: EnvironmentThreadShell) => {
       clearThreadSearch();
-      navigateToThread(scopeThreadRef(thread.environmentId, thread.id));
+      openThread(scopeThreadRef(thread.environmentId, thread.id));
     },
-    [clearThreadSearch, navigateToThread],
+    [clearThreadSearch, openThread],
   );
   const handleThreadSearchKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -1923,9 +1955,22 @@ export default function SidebarV2() {
       if (isTrailingDoubleClick(event.detail)) {
         return;
       }
-      navigateToThread(threadRef);
+      openThread(threadRef);
     },
-    [navigateToThread, rangeSelectTo, toggleThreadSelection],
+    [openThread, rangeSelectTo, toggleThreadSelection],
+  );
+
+  // Renaming moves to the context menu on the board: there, a double click is
+  // the shortcut past "scroll to it first" straight into the session.
+  const handleThreadDoubleClick = useCallback(
+    (threadRef: ScopedThreadRef, title: string) => {
+      if (isBoardRouteRef.current) {
+        openThread(threadRef, { open: true });
+        return;
+      }
+      startThreadRename(threadRef, title);
+    },
+    [openThread, startThreadRename],
   );
 
   // A settle per thread at a time: double clicks and repeated menu picks
@@ -2601,6 +2646,21 @@ export default function SidebarV2() {
         className="gap-0"
         fixedHeader={
           <SidebarGroup className="gap-1 p-[var(--sidebar-content-inset)]">
+            {/* The way back. Opening a session full screen leaves the board,
+              and without this there is no route home from the sidebar. */}
+            <SidebarMenuButton
+              type="button"
+              isActive={isBoardRoute}
+              aria-label="Session board"
+              className="ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
+              onClick={() => {
+                if (isMobile) setOpenMobile(false);
+                void router.navigate({ to: "/" });
+              }}
+            >
+              <LayoutGridIcon className="size-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate text-left">Board</span>
+            </SidebarMenuButton>
             <div className="flex items-center gap-1">
               <div className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
                 <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
@@ -2889,7 +2949,13 @@ export default function SidebarV2() {
                         // the wake signal must survive the trip. Still-snoozed
                         // rows resolve to null on their own.
                         wokeAt={threadWokeAt(thread, { now: snoozeNow })}
-                        isActive={routeThreadKey === threadKey}
+                        // On the board no thread owns the route, so the row
+                        // follows the card the board is pointed at instead.
+                        isActive={
+                          isBoardRoute
+                            ? boardFocusedThreadKey === threadKey
+                            : routeThreadKey === threadKey
+                        }
                         jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
                         currentEnvironmentId={primaryEnvironmentId}
                         environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
@@ -2903,8 +2969,8 @@ export default function SidebarV2() {
                         }
                         providerEntryByInstanceId={providerEntryByInstanceId}
                         onThreadClick={handleThreadClick}
-                        onThreadActivate={navigateToThread}
-                        onStartRename={startThreadRename}
+                        onThreadActivate={openThread}
+                        onThreadDoubleClick={handleThreadDoubleClick}
                         onRenameTitleChange={setRenamingTitle}
                         onCommitRename={commitThreadRename}
                         onCancelRename={cancelThreadRename}

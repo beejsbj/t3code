@@ -12,6 +12,7 @@ import {
   listProjectsWithSessions,
   nextLaneOrder,
   reorderLaneUpdates,
+  resolveBoardFocusAction,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
 
@@ -176,5 +177,57 @@ describe("laneArchiveIntent", () => {
 
   it("allows an empty lane to be archived immediately", () => {
     expect(laneArchiveIntent(LaneId.make("done"), 0)).toEqual({ kind: "archive" });
+  });
+});
+
+describe("resolveBoardFocusAction", () => {
+  const viewport = { top: 0, bottom: 800, left: 0, right: 1200 };
+
+  it("reveals a card that is not rendered at all", () => {
+    expect(resolveBoardFocusAction({ card: null, viewport, forceOpen: false })).toBe("reveal");
+  });
+
+  it("reveals a card scrolled off the bottom", () => {
+    expect(
+      resolveBoardFocusAction({
+        card: { top: 900, bottom: 1160, left: 0, right: 380 },
+        viewport,
+        forceOpen: false,
+      }),
+    ).toBe("reveal");
+  });
+
+  it("reveals a card in a column scrolled off to the right", () => {
+    expect(
+      resolveBoardFocusAction({
+        card: { top: 100, bottom: 360, left: 1180, right: 1560 },
+        viewport,
+        forceOpen: false,
+      }),
+    ).toBe("reveal");
+  });
+
+  it("opens a card that is already on screen", () => {
+    expect(
+      resolveBoardFocusAction({
+        card: { top: 100, bottom: 360, left: 20, right: 400 },
+        viewport,
+        forceOpen: false,
+      }),
+    ).toBe("open");
+  });
+
+  it("opens a card taller than the board once it fills the viewport", () => {
+    expect(
+      resolveBoardFocusAction({
+        card: { top: -100, bottom: 900, left: 20, right: 400 },
+        viewport,
+        forceOpen: false,
+      }),
+    ).toBe("open");
+  });
+
+  it("opens straight away when the request says so, wherever the card is", () => {
+    expect(resolveBoardFocusAction({ card: null, viewport, forceOpen: true })).toBe("open");
   });
 });

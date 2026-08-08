@@ -142,6 +142,51 @@ export function laneColumnKeyFromSwimlaneDroppableId(droppableId: string): strin
   return null;
 }
 
+export interface BoardRect {
+  readonly top: number;
+  readonly bottom: number;
+  readonly left: number;
+  readonly right: number;
+}
+
+/**
+ * How much of `card` the `viewport` shows, as a fraction of whichever of the
+ * two is smaller on each axis — so a card taller than the board still counts as
+ * seen once it fills the screen.
+ */
+function visibleFraction(card: BoardRect, viewport: BoardRect): number {
+  const axes = [
+    [card.top, card.bottom, viewport.top, viewport.bottom],
+    [card.left, card.right, viewport.left, viewport.right],
+  ] as const;
+  let smallest = 1;
+  for (const [cardStart, cardEnd, viewStart, viewEnd] of axes) {
+    const overlap = Math.min(cardEnd, viewEnd) - Math.max(cardStart, viewStart);
+    const reference = Math.min(cardEnd - cardStart, viewEnd - viewStart);
+    if (overlap <= 0 || reference <= 0) return 0;
+    smallest = Math.min(smallest, overlap / reference);
+  }
+  return smallest;
+}
+
+export type BoardFocusAction = "reveal" | "open";
+
+/**
+ * A focus request from the sidebar scrolls first and opens second: a click can
+ * only mean "open this session" once the card is actually on screen. `card` is
+ * null when it is not rendered at all (collapsed lane, filtered project), which
+ * always means reveal.
+ */
+export function resolveBoardFocusAction(input: {
+  readonly card: BoardRect | null;
+  readonly viewport: BoardRect;
+  readonly forceOpen: boolean;
+}): BoardFocusAction {
+  if (input.forceOpen) return "open";
+  if (input.card === null) return "reveal";
+  return visibleFraction(input.card, input.viewport) >= 0.9 ? "open" : "reveal";
+}
+
 export type LaneArchiveIntent =
   | { readonly kind: "archive" }
   | { readonly kind: "confirm"; readonly memberCount: number; readonly explanation: string };

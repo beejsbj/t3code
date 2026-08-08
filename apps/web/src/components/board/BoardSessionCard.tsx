@@ -24,6 +24,7 @@ import {
   selectCardHeight,
   useBoardCardStore,
 } from "../../board/boardCardStore.ts";
+import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { useDiffPanelStore } from "../../diffPanelStore.ts";
 import { useRightPanelStore } from "../../rightPanelStore.ts";
 import { useTheme } from "../../hooks/useTheme.ts";
@@ -79,7 +80,16 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   const setHeight = useBoardCardStore((state) => state.setHeight);
   const setSize = useBoardCardStore((state) => state.setSize);
   const heightPx = useBoardCardStore((state) => selectCardHeight(state.byThreadKey, threadRef));
-  const [expanded, setExpanded] = useState(false);
+  // Expansion and focus live on the board's shared store, not on the card: the
+  // sidebar opens and points at cards too, and there is only ever one of each.
+  const expanded = useBoardFocusStore((state) => state.expandedThreadKey === cardKey);
+  const isFocused = useBoardFocusStore((state) => state.focusedThreadKey === cardKey);
+  const setExpandedKey = useBoardFocusStore((state) => state.setExpanded);
+  const setFocusedKey = useBoardFocusStore((state) => state.setFocused);
+  const setExpanded = useCallback(
+    (open: boolean) => setExpandedKey(open ? cardKey : null),
+    [cardKey, setExpandedKey],
+  );
 
   const slotRef = useRef<HTMLDivElement | null>(null);
   const hasBeenVisible = useInViewport(slotRef, {
@@ -163,7 +173,9 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
     <div
       ref={slotRef}
       data-board-card={thread.id}
+      data-board-card-key={cardKey}
       data-lane={laneId ?? "unknown"}
+      onPointerDownCapture={() => setFocusedKey(cardKey)}
       style={
         transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined
       }
@@ -171,6 +183,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
       <div
         className={cn(
           "relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm",
+          isFocused && "border-primary/60 ring-1 ring-primary/40",
           (isDraggingSelf || props.isDragging) && "opacity-60",
         )}
         style={{ height: `${effectiveHeight}px` }}
