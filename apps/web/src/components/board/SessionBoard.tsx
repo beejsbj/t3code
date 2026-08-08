@@ -62,6 +62,7 @@ import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
 import {
+  boardLaneGridTemplateColumns,
   boardLaneHeaderDroppableId,
   boardProjectKey,
   buildProjectSwimlanes,
@@ -76,8 +77,6 @@ import {
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
 
-/** Fixed so the lane header, every group row, and the drop cells stay aligned. */
-const BOARD_COLUMN_WIDTH = "380px";
 /** Group bands stick directly under the lane header row. */
 const BOARD_HEADER_HEIGHT = "3.25rem";
 /** The rule that makes a lane read as one column down the whole scroll. */
@@ -216,6 +215,15 @@ export function SessionBoard() {
           })),
       ),
     [laneRegistries],
+  );
+
+  const boardGridTemplateColumns = useMemo(
+    () =>
+      boardLaneGridTemplateColumns(
+        boardLanes.map((column) => ({ key: column.key, laneId: column.lane.id })),
+        expandedLaneColumnKeys,
+      ),
+    [boardLanes, expandedLaneColumnKeys],
   );
 
   const laneMemberCountByKey = useMemo(() => {
@@ -521,14 +529,11 @@ export function SessionBoard() {
           it — the Linear scroll, rather than stacked mini-boards.
         */}
         <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto">
-          <div
-            className="w-max min-w-full"
-            style={{ ["--board-column" as string]: BOARD_COLUMN_WIDTH }}
-          >
+          <div className="w-max min-w-full">
             <div
               className="sticky top-0 z-20 grid border-b border-border bg-background"
               style={{
-                gridTemplateColumns: `repeat(${boardLanes.length}, var(--board-column))`,
+                gridTemplateColumns: boardGridTemplateColumns,
                 height: BOARD_HEADER_HEIGHT,
               }}
             >
@@ -587,7 +592,7 @@ export function SessionBoard() {
                     <div
                       className="grid"
                       style={{
-                        gridTemplateColumns: `repeat(${boardLanes.length}, var(--board-column))`,
+                        gridTemplateColumns: boardGridTemplateColumns,
                       }}
                     >
                       {boardLanes.map((column) => (
@@ -900,6 +905,8 @@ function LaneHeaderCell({
   ) => Promise<boolean>;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: droppableId });
+  const lifecycleLane = isLifecycleBoardLane(lane.id);
+  const snoozedLane = lane.id === SNOOZED_BOARD_LANE_ID;
 
   return (
     <div
@@ -909,15 +916,20 @@ function LaneHeaderCell({
         "flex min-w-0 flex-col justify-center px-3 py-2",
         BOARD_COLUMN_RULE_CLASS,
         // Settled and Snoozed are lifecycle terminals, not workflow stages.
-        isLifecycleBoardLane(lane.id) && "bg-muted/25",
+        lifecycleLane && "bg-muted/35",
+        snoozedLane && "bg-blue-500/5 dark:bg-blue-400/10",
+        lifecycleLane && !cardsVisible && "px-2",
         isOver && "bg-accent/40",
       )}
     >
-      <div className="flex items-center gap-2">
+      <div className={cn("flex items-center", cardsVisible ? "gap-2" : "gap-1")}>
         {collapsedByDefault ? (
           <button
             type="button"
-            className="rounded p-0.5 text-muted-foreground hover:bg-accent"
+            className={cn(
+              "rounded p-0.5 text-muted-foreground hover:bg-accent",
+              snoozedLane && "text-blue-600 dark:text-blue-400",
+            )}
             onClick={onToggleExpanded}
             aria-expanded={cardsVisible}
           >
@@ -931,8 +943,25 @@ function LaneHeaderCell({
             </span>
           </button>
         ) : null}
-        <span className="truncate text-xs font-medium">{lane.name}</span>
-        <span className="ml-auto text-[11px] text-muted-foreground/70">{memberCount}</span>
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-xs font-medium",
+            lifecycleLane && "text-muted-foreground/60",
+            snoozedLane && "text-blue-600 dark:text-blue-400",
+            !cardsVisible && "text-[11px]",
+          )}
+          title={lane.name}
+        >
+          {lane.name}
+        </span>
+        <span
+          className={cn(
+            "ml-auto text-[11px] text-muted-foreground/70",
+            snoozedLane && "text-blue-600/80 dark:text-blue-400/80",
+          )}
+        >
+          {memberCount}
+        </span>
         <LaneEditorPopover
           environmentId={environmentId}
           lane={lane}
@@ -943,9 +972,11 @@ function LaneHeaderCell({
           onArchive={onArchive}
         />
       </div>
-      <p className="truncate text-[11px] text-muted-foreground/60" title={lane.description}>
-        {lane.description}
-      </p>
+      {cardsVisible ? (
+        <p className="truncate text-[11px] text-muted-foreground/60" title={lane.description}>
+          {lane.description}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -965,6 +996,8 @@ function LaneDropCell({
   readonly cardsVisible: boolean;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: droppableId });
+  const lifecycleLane = isLifecycleBoardLane(lane.id);
+  const snoozedLane = lane.id === SNOOZED_BOARD_LANE_ID;
 
   return (
     // Not a bounded scroll region: this cell sits in a content-sized grid row
@@ -976,7 +1009,9 @@ function LaneDropCell({
       className={cn(
         "min-h-16 min-w-0 space-y-2 p-2",
         BOARD_COLUMN_RULE_CLASS,
-        isLifecycleBoardLane(lane.id) && "bg-muted/25",
+        lifecycleLane && "bg-muted/35",
+        snoozedLane && "bg-blue-500/5 dark:bg-blue-400/10",
+        lifecycleLane && !cardsVisible && "p-0",
         isOver && "bg-accent/40",
       )}
     >
