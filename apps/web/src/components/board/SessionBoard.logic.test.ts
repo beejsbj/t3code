@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyProjectFilterToggle,
   buildProjectSwimlanes,
+  boardLaneHeaderDroppableId,
   groupEntriesByLane,
   isProjectFilterChecked,
   laneArchiveIntent,
@@ -12,6 +13,7 @@ import {
   listProjectsWithSessions,
   nextLaneOrder,
   reorderLaneUpdates,
+  resolveBoardLaneDrop,
   resolveBoardFocusAction,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
@@ -162,6 +164,44 @@ describe("swimlaneColumnDroppableId", () => {
   it("round-trips lane column keys for drag and drop targets", () => {
     const droppableId = swimlaneColumnDroppableId("env:alpha", laneKeys[1]);
     expect(laneColumnKeyFromSwimlaneDroppableId(droppableId)).toBe(laneKeys[1]);
+  });
+
+  it("makes the continuous lane header a real drop target", () => {
+    const droppableId = boardLaneHeaderDroppableId(laneKeys[1]);
+    expect(laneColumnKeyFromSwimlaneDroppableId(droppableId)).toBe(laneKeys[1]);
+  });
+});
+
+describe("resolveBoardLaneDrop", () => {
+  const entries = [
+    { key: "env-a:thread-1", environmentId: "env-a" },
+    { key: "env-b:thread-2", environmentId: "env-b" },
+  ];
+  const columns = [
+    { key: laneKeys[0], environmentId: "env-a" },
+    { key: laneKeys[1], environmentId: "env-b" },
+  ];
+
+  it("resolves a same-environment drop from its active card and target id", () => {
+    expect(
+      resolveBoardLaneDrop({
+        activeId: entries[0]!.key,
+        overId: boardLaneHeaderDroppableId(columns[0]!.key),
+        entries,
+        columns,
+      }),
+    ).toEqual({ entry: entries[0], target: columns[0] });
+  });
+
+  it("rejects a visible lane owned by another environment", () => {
+    expect(
+      resolveBoardLaneDrop({
+        activeId: entries[0]!.key,
+        overId: swimlaneColumnDroppableId("project", columns[1]!.key),
+        entries,
+        columns,
+      }),
+    ).toBeNull();
   });
 });
 

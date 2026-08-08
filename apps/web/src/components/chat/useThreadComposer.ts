@@ -1,7 +1,7 @@
 import {
   type ApprovalRequestId,
-  type EnvironmentId,
   type OrchestrationThreadActivity,
+  type OrchestrationSessionStatus,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type ProviderInteractionMode,
@@ -69,6 +69,19 @@ const NOOP = () => {};
 
 export type ThreadComposerSurface = "route" | "board";
 
+export function resolveBoardComposerSubmission(input: {
+  readonly sessionStatus: OrchestrationSessionStatus | null;
+  readonly prompt: string;
+  readonly imageCount: number;
+}): { readonly text: string } | null {
+  if (input.sessionStatus === "starting" || input.sessionStatus === "running") {
+    return null;
+  }
+  const text = input.prompt.trim();
+  if (text.length === 0 && input.imageCount === 0) return null;
+  return { text };
+}
+
 export function useThreadComposerRouteState(thread: Thread | null | undefined) {
   const threadActivities = thread?.activities ?? EMPTY_ACTIVITIES;
   const pendingApprovals = useMemo(
@@ -134,16 +147,13 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     [environmentId, serverConfigs],
   );
 
-  const project = useProject(
-    thread ? scopeProjectRef(thread.environmentId, thread.projectId) : null,
-  );
-  const gitCwd =
-    thread && project
-      ? projectScriptCwd({
-          project: { cwd: project.workspaceRoot },
-          worktreePath: thread.worktreePath ?? null,
-        })
-      : null;
+  const project = useProject(scopeProjectRef(summary.environmentId, summary.projectId));
+  const gitCwd = project
+    ? projectScriptCwd({
+        project: { cwd: project.workspaceRoot },
+        worktreePath: summary.worktreePath ?? null,
+      })
+    : null;
 
   const lockedProvider = deriveLockedProvider({
     thread,
@@ -151,29 +161,27 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     threadProvider: summary.modelSelection.instanceId,
   });
 
-  const phase: SessionPhase = derivePhase(thread?.session ?? null);
+  const phase: SessionPhase = derivePhase(summary.session ?? null);
   const isConnecting = phase === "connecting";
   // Board composer has no local "sending" state of its own; always false.
   const isSendBusy: boolean = false;
-  const isWorking = phase === "running" || isConnecting || thread?.session?.status === "starting";
 
-  const runtimeMode = thread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode = thread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const runtimeMode = summary.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const interactionMode = summary.interactionMode ?? DEFAULT_INTERACTION_MODE;
 
   const onSend = useCallback(
     async (event?: { preventDefault: () => void }) => {
       event?.preventDefault();
-      if (!thread || isWorking) {
-        return;
-      }
       const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
       if (!draft) {
         return;
       }
-      const text = draft.prompt.trim();
-      if (text.length === 0 && draft.images.length === 0) {
-        return;
-      }
+      const submission = resolveBoardComposerSubmission({
+        sessionStatus: summary.session?.status ?? null,
+        prompt: draft.prompt,
+        imageCount: draft.images.length,
+      });
+      if (submission === null) return;
       const attachments = await Promise.all(
         draft.images.map(async (image) => ({
           type: "image" as const,
@@ -190,7 +198,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           message: {
             messageId: newMessageId(),
             role: "user",
-            text,
+            text: submission.text,
             attachments,
           },
           modelSelection: summary.modelSelection,
@@ -209,16 +217,15 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       useComposerDraftStore.getState().clearComposerContent(threadRef);
       composerRef.current?.resetCursorState();
     },
-    [isWorking, startThreadTurn, summary, thread, threadRef],
+    [startThreadTurn, summary, threadRef],
   );
 
   const onInterrupt = useCallback(async () => {
-    if (!thread) return;
     await interruptThreadTurn({
       environmentId,
-      input: buildThreadTurnInterruptInput(thread),
+      input: buildThreadTurnInterruptInput(summary),
     });
-  }, [environmentId, interruptThreadTurn, thread]);
+  }, [environmentId, interruptThreadTurn, summary]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -241,35 +248,32 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   );
 
   const toggleInteractionMode = useCallback(() => {
-    if (!thread) return;
     const next: ProviderInteractionMode =
       interactionMode === "plan" ? DEFAULT_INTERACTION_MODE : "plan";
     void setThreadInteractionMode({
       environmentId,
       input: { threadId: threadRef.threadId, interactionMode: next },
     });
-  }, [environmentId, interactionMode, setThreadInteractionMode, thread, threadRef]);
+  }, [environmentId, interactionMode, setThreadInteractionMode, threadRef]);
 
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
-      if (!thread) return;
       void setThreadRuntimeMode({
         environmentId,
         input: { threadId: threadRef.threadId, runtimeMode: mode },
       });
     },
-    [environmentId, setThreadRuntimeMode, thread, threadRef],
+    [environmentId, setThreadRuntimeMode, threadRef],
   );
 
   const handleInteractionModeChange = useCallback(
     (mode: ProviderInteractionMode) => {
-      if (!thread) return;
       void setThreadInteractionMode({
         environmentId,
         input: { threadId: threadRef.threadId, interactionMode: mode },
       });
     },
-    [environmentId, setThreadInteractionMode, thread, threadRef],
+    [environmentId, setThreadInteractionMode, threadRef],
   );
 
   // `ChatComposer` is wrapped in `React.memo`, and a board renders one live
@@ -287,7 +291,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       routeKind: "server",
       routeThreadRef: threadRef,
       draftId: null,
-      activeThreadId: thread?.id ?? null,
+      activeThreadId: summary.id,
       activeThreadEnvironmentId: environmentId,
       activeThread: thread ?? undefined,
       isServerThread: true,

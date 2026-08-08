@@ -125,6 +125,10 @@ export function swimlaneColumnDroppableId(projectKey: string, laneColumnKey: str
   return JSON.stringify(["board-swimlane", projectKey, laneColumnKey]);
 }
 
+export function boardLaneHeaderDroppableId(laneColumnKey: string): string {
+  return swimlaneColumnDroppableId("board-lane-header", laneColumnKey);
+}
+
 export function laneColumnKeyFromSwimlaneDroppableId(droppableId: string): string | null {
   try {
     const parsed: unknown = JSON.parse(droppableId);
@@ -140,6 +144,27 @@ export function laneColumnKeyFromSwimlaneDroppableId(droppableId: string): strin
     return null;
   }
   return null;
+}
+
+export function resolveBoardLaneDrop<
+  Entry extends { readonly key: string; readonly environmentId: string },
+  Column extends { readonly key: string; readonly environmentId: string },
+>(input: {
+  readonly activeId: string;
+  readonly overId: string;
+  readonly entries: ReadonlyArray<Entry>;
+  readonly columns: ReadonlyArray<Column>;
+}): { readonly entry: Entry; readonly target: Column } | null {
+  const entry = input.entries.find((candidate) => candidate.key === input.activeId);
+  if (entry === undefined) return null;
+
+  const laneColumnKey = laneColumnKeyFromSwimlaneDroppableId(input.overId);
+  if (laneColumnKey === null) return null;
+
+  const target = input.columns.find((column) => column.key === laneColumnKey);
+  if (target === undefined || target.environmentId !== entry.environmentId) return null;
+
+  return { entry, target };
 }
 
 export interface BoardRect {
