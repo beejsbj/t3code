@@ -87,7 +87,9 @@ describe("persistence error correlation", () => {
       );
       assert.instanceOf(createError, PersistenceErrors.PersistenceSqlError);
       assert.deepStrictEqual(createError.correlation, { sessionId });
-      assert.equal(createError.message, "SQL error in AuthSessionRepository.create:query");
+      // Prefix, not equality: the message now carries the driver's own failure
+      // text after the operation, and that text is the driver's to word.
+      assert.include(createError.message, "SQL error in AuthSessionRepository.create:query");
       assert.notInclude(createError.message, subject);
       assert.notInclude(createError.message, DateTime.formatIso(issuedAt));
 
@@ -96,7 +98,7 @@ describe("persistence error correlation", () => {
       );
       assert.instanceOf(revokeOtherError, PersistenceErrors.PersistenceSqlError);
       assert.deepStrictEqual(revokeOtherError.correlation, { currentSessionId });
-      assert.equal(
+      assert.include(
         revokeOtherError.message,
         "SQL error in AuthSessionRepository.revokeAllExcept:query",
       );
@@ -250,7 +252,7 @@ describe("persistence error correlation", () => {
       );
       assert.instanceOf(sqlFailure, PersistenceErrors.PersistenceSqlError);
       assert.deepStrictEqual(sqlFailure.correlation, { threadId });
-      assert.equal(
+      assert.include(
         sqlFailure.message,
         "SQL error in ProviderSessionRuntimeRepository.upsert:query",
       );
