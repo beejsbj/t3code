@@ -2,17 +2,15 @@ import { LaneId, type LaneDefinition } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  applyProjectFilterToggle,
   buildProjectSwimlanes,
   groupEntriesByLane,
-  isProjectFilterChecked,
   laneArchiveIntent,
   laneColumnKeyFromSwimlaneDroppableId,
   laneIdForName,
-  listProjectsWithSessions,
   nextLaneOrder,
   reorderLaneUpdates,
   resolveBoardFocusAction,
+  shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
 
@@ -86,7 +84,7 @@ describe("buildProjectSwimlanes", () => {
       placement("env:alpha", "Alpha", "lane-c", "2026-01-01T00:00:00.000Z"),
     ];
 
-    const swimlanes = buildProjectSwimlanes(entries, new Set());
+    const swimlanes = buildProjectSwimlanes(entries, null);
 
     expect(swimlanes).toHaveLength(2);
     expect(swimlanes[0]?.projectKey).toBe("env:alpha");
@@ -101,21 +99,22 @@ describe("buildProjectSwimlanes", () => {
       placement("env:beta", "Beta", "lane-b", "2026-01-02T00:00:00.000Z"),
     ];
 
-    const swimlanes = buildProjectSwimlanes(entries, new Set(["env:alpha"]));
+    const swimlanes = buildProjectSwimlanes(entries, "env:alpha");
 
     expect(swimlanes).toHaveLength(1);
     expect(swimlanes[0]?.projectKey).toBe("env:alpha");
   });
 
-  it("uses an empty selection to mean all projects", () => {
+  it("uses one nullable project scope for filtering and project headers", () => {
     const entries = [
       placement("env:alpha", "Alpha", "lane-a", "2026-01-03T00:00:00.000Z"),
       placement("env:beta", "Beta", "lane-b", "2026-01-02T00:00:00.000Z"),
     ];
 
-    expect(buildProjectSwimlanes(entries, new Set())).toHaveLength(2);
-    expect(isProjectFilterChecked(new Set(), "env:alpha")).toBe(true);
-    expect(isProjectFilterChecked(new Set(), "env:beta")).toBe(true);
+    expect(buildProjectSwimlanes(entries, null)).toHaveLength(2);
+    expect(buildProjectSwimlanes(entries, "env:alpha")).toHaveLength(1);
+    expect(shouldHideSwimlaneProjectHeader(null)).toBe(false);
+    expect(shouldHideSwimlaneProjectHeader("env:alpha")).toBe(true);
   });
 });
 
@@ -126,35 +125,9 @@ describe("groupEntriesByLane", () => {
       placement("env:beta", "Beta", "lane-a", "2026-01-02T00:00:00.000Z"),
     ];
 
-    for (const swimlane of buildProjectSwimlanes(entries, new Set())) {
+    for (const swimlane of buildProjectSwimlanes(entries, null)) {
       expect([...groupEntriesByLane(swimlane.entries, laneKeys).keys()]).toEqual([...laneKeys]);
     }
-  });
-});
-
-describe("applyProjectFilterToggle", () => {
-  it("narrows the board to the selected projects", () => {
-    const all = new Set(["env:alpha", "env:beta"]);
-    const narrowed = applyProjectFilterToggle(new Set(), "env:alpha", false, all);
-
-    expect([...narrowed]).toEqual(["env:beta"]);
-    expect(isProjectFilterChecked(narrowed, "env:alpha")).toBe(false);
-    expect(isProjectFilterChecked(narrowed, "env:beta")).toBe(true);
-  });
-});
-
-describe("listProjectsWithSessions", () => {
-  it("lists only projects that currently have sessions", () => {
-    const entries = [
-      placement("env:alpha", "Alpha", "lane-a", "2026-01-03T00:00:00.000Z"),
-      placement("env:alpha", "Alpha", "lane-b", "2026-01-02T00:00:00.000Z"),
-      placement("env:beta", "Beta", "lane-c", "2026-01-01T00:00:00.000Z"),
-    ];
-
-    expect(listProjectsWithSessions(entries)).toEqual([
-      { projectKey: "env:alpha", projectTitle: "Alpha" },
-      { projectKey: "env:beta", projectTitle: "Beta" },
-    ]);
   });
 });
 

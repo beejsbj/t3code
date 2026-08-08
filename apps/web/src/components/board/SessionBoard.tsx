@@ -16,7 +16,7 @@ import {
   type ScopedThreadRef,
   type WorkflowLane,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FolderIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
@@ -30,7 +30,11 @@ import {
 } from "../../board/boardLanes.ts";
 import { useThreadActions } from "../../hooks/useThreadActions.ts";
 import { useNowMinute } from "../../hooks/useNowMinute.ts";
+import { selectProjectGroupingSettings } from "../../logicalProject.ts";
 import { ensureLocalApi } from "../../localApi.ts";
+import { useProjectScopeStore } from "../../projectScopeStore.ts";
+import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping.ts";
+import { usePrimaryEnvironmentId } from "../../state/environments.ts";
 import {
   useLaneRegistries,
   useProjects,
@@ -45,7 +49,6 @@ import type { SidebarThreadSummary } from "../../types.ts";
 import { resolveSnoozePresets } from "../Sidebar.snooze.ts";
 import { Button } from "../ui/button.tsx";
 import { Input } from "../ui/input.tsx";
-import { Menu, MenuCheckboxItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
 import {
   Popover,
   PopoverDescription,
@@ -59,15 +62,12 @@ import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
 import {
-  applyProjectFilterToggle,
   boardProjectKey,
   buildProjectSwimlanes,
   groupEntriesByLane,
-  isProjectFilterChecked,
   laneArchiveIntent,
   laneColumnKeyFromSwimlaneDroppableId,
   laneIdForName,
-  listProjectsWithSessions,
   nextLaneOrder,
   reorderLaneUpdates,
   resolveBoardFocusAction,
@@ -122,9 +122,12 @@ function findCardNode(scroller: HTMLElement | null, threadKey: string): HTMLElem
 export function SessionBoard() {
   const threads = useThreadShells();
   const projects = useProjects();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const laneRegistries = useLaneRegistries();
   const serverConfigs = useServerConfigs();
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectScopeKey = useProjectScopeStore((state) => state.projectScopeKey);
   const nowMinute = useNowMinute();
   const changeRequestStateByKey = useThreadChangeRequestStateStore((state) => state.byThreadKey);
   const { settleThread, unsettleThread, snoozeThread, unsnoozeThread } = useThreadActions();
@@ -135,9 +138,6 @@ export function SessionBoard() {
   const updateLane = useAtomCommand(orchestrationEnvironment.updateLane);
   const archiveLane = useAtomCommand(orchestrationEnvironment.archiveLane);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
-  const [selectedProjectKeys, setSelectedProjectKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
   const [collapsedProjectKeys, setCollapsedProjectKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -182,6 +182,25 @@ export function SessionBoard() {
     }
     return map;
   }, [projects]);
+
+  const projectGroupByPhysicalKey = useMemo(() => {
+    const groups = buildSidebarProjectSnapshots({
+      projects,
+      settings: projectGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+    const map = new Map<string, { readonly projectKey: string; readonly projectTitle: string }>();
+    for (const group of groups) {
+      for (const projectRef of group.memberProjectRefs) {
+        map.set(boardProjectKey(projectRef.environmentId, projectRef.projectId), {
+          projectKey: group.projectKey,
+          projectTitle: group.displayName,
+        });
+      }
+    }
+    return map;
+  }, [primaryEnvironmentId, projectGroupingSettings, projects]);
 
   const boardLanes = useMemo<ReadonlyArray<BoardLaneColumn>>(
     () =>
@@ -275,57 +294,31 @@ export function SessionBoard() {
         const laneId = resolveThreadLane(thread, lanes);
         if (laneId === null) return null;
         const columnKey = laneColumnKey(thread.environmentId, laneId);
+        const physicalProjectKey = boardProjectKey(thread.environmentId, thread.projectId);
+        const projectGroup = projectGroupByPhysicalKey.get(physicalProjectKey);
         return {
           ref,
           key,
           thread,
           laneId,
           lanes,
-          projectKey: boardProjectKey(thread.environmentId, thread.projectId),
+          projectKey: projectGroup?.projectKey ?? physicalProjectKey,
           projectTitle:
-            projectTitleById.get(`${thread.environmentId}:${thread.projectId}`) ?? "Project",
+            projectGroup?.projectTitle ?? projectTitleById.get(physicalProjectKey) ?? "Project",
           laneColumnKey: columnKey,
           updatedAt: thread.updatedAt,
         };
       })
       .filter((entry): entry is PlacedThread => entry !== null)
       .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt));
-  }, [laneRegistries, projectTitleById, resolveThreadLane, threads]);
-
-  const projectsWithSessions = useMemo(() => listProjectsWithSessions(placed), [placed]);
-
-  const allProjectKeys = useMemo(
-    () => new Set(projectsWithSessions.map((project) => project.projectKey)),
-    [projectsWithSessions],
-  );
+  }, [laneRegistries, projectGroupByPhysicalKey, projectTitleById, resolveThreadLane, threads]);
 
   const swimlanes = useMemo(
-    () => buildProjectSwimlanes(placed, selectedProjectKeys),
-    [placed, selectedProjectKeys],
+    () => buildProjectSwimlanes(placed, projectScopeKey),
+    [placed, projectScopeKey],
   );
 
-  const hideSwimlaneProjectHeader = shouldHideSwimlaneProjectHeader(selectedProjectKeys);
-
-  const projectFilterLabel = useMemo(() => {
-    if (selectedProjectKeys.size === 0) return "All projects";
-    if (selectedProjectKeys.size === 1) {
-      const key = [...selectedProjectKeys][0];
-      return (
-        projectsWithSessions.find((project) => project.projectKey === key)?.projectTitle ??
-        "1 project"
-      );
-    }
-    return `${selectedProjectKeys.size} projects`;
-  }, [projectsWithSessions, selectedProjectKeys]);
-
-  const toggleProjectFilter = useCallback(
-    (projectKey: string, checked: boolean) => {
-      setSelectedProjectKeys((current) =>
-        applyProjectFilterToggle(current, projectKey, checked, allProjectKeys),
-      );
-    },
-    [allProjectKeys],
-  );
+  const hideSwimlaneProjectHeader = shouldHideSwimlaneProjectHeader(projectScopeKey);
 
   const toggleSwimlaneCollapsed = useCallback((projectKey: string) => {
     setCollapsedProjectKeys((current) => {
@@ -372,12 +365,9 @@ export function SessionBoard() {
 
     setFocusedThreadKey(entry.key);
 
-    // The card can be hidden rather than merely off screen — behind the project
-    // filter, a collapsed group, or a collapsed lane. Undo whichever applies
-    // either way: an opened card still has to exist behind its sheet.
-    setSelectedProjectKeys((current) =>
-      current.size === 0 || current.has(entry.projectKey) ? current : new Set(),
-    );
+    // The card can be hidden rather than merely off screen — behind a collapsed
+    // group or lane. Undo whichever applies either way: an opened card still
+    // has to exist behind its sheet.
     setCollapsedProjectKeys((current) => {
       if (!current.has(entry.projectKey)) return current;
       const next = new Set(current);
@@ -502,14 +492,6 @@ export function SessionBoard() {
           Every card is the live session itself. Drag to set its lane.
         </p>
         <div className="ml-auto flex items-center gap-2">
-          {projectsWithSessions.length > 0 ? (
-            <BoardProjectFilter
-              label={projectFilterLabel}
-              projects={projectsWithSessions}
-              selectedProjectKeys={selectedProjectKeys}
-              onToggle={toggleProjectFilter}
-            />
-          ) : null}
           {[...laneRegistries.entries()].map(([environmentId, lanes]) => (
             <NewLanePopover
               key={environmentId}
@@ -626,43 +608,6 @@ export function SessionBoard() {
         </div>
       </DndContext>
     </SidebarInset>
-  );
-}
-
-function BoardProjectFilter({
-  label,
-  projects,
-  selectedProjectKeys,
-  onToggle,
-}: {
-  readonly label: string;
-  readonly projects: ReadonlyArray<{
-    readonly projectKey: string;
-    readonly projectTitle: string;
-  }>;
-  readonly selectedProjectKeys: ReadonlySet<string>;
-  readonly onToggle: (projectKey: string, checked: boolean) => void;
-}) {
-  return (
-    <Menu>
-      <MenuTrigger render={<Button size="xs" variant="outline" className="max-w-48" />}>
-        <FolderIcon className="size-3.5 shrink-0" />
-        <span className="min-w-0 truncate">{label}</span>
-        <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
-      </MenuTrigger>
-      <MenuPopup align="end" className="w-56">
-        {projects.map((project) => (
-          <MenuCheckboxItem
-            key={project.projectKey}
-            checked={isProjectFilterChecked(selectedProjectKeys, project.projectKey)}
-            onCheckedChange={(checked) => onToggle(project.projectKey, checked === true)}
-            closeOnClick={false}
-          >
-            {project.projectTitle}
-          </MenuCheckboxItem>
-        ))}
-      </MenuPopup>
-    </Menu>
   );
 }
 
