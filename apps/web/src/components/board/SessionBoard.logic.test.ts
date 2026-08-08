@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyProjectFilterToggle,
+  boardLaneGridTemplateColumns,
   buildProjectSwimlanes,
   groupEntriesByLane,
   isProjectFilterChecked,
@@ -129,6 +130,19 @@ describe("groupEntriesByLane", () => {
     for (const swimlane of buildProjectSwimlanes(entries, new Set())) {
       expect([...groupEntriesByLane(swimlane.entries, laneKeys).keys()]).toEqual([...laneKeys]);
     }
+  });
+});
+
+describe("boardLaneGridTemplateColumns", () => {
+  it("uses narrow rails for collapsed lifecycle lanes without changing workflow lanes", () => {
+    const columns = [
+      { key: "triage", laneId: LaneId.make("triage") },
+      { key: "snoozed", laneId: LaneId.make("snoozed") },
+      { key: "settled", laneId: LaneId.make("settled") },
+    ];
+
+    expect(boardLaneGridTemplateColumns(columns, new Set())).toBe("380px 112px 112px");
+    expect(boardLaneGridTemplateColumns(columns, new Set(["snoozed"]))).toBe("380px 380px 112px");
   });
 });
 

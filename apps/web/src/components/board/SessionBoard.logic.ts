@@ -1,4 +1,26 @@
-import { LaneId, type LaneDefinition } from "@t3tools/contracts";
+import { LaneId, type LaneDefinition, type WorkflowLane } from "@t3tools/contracts";
+
+import { isLifecycleBoardLane } from "../../board/boardLanes.ts";
+
+const BOARD_WORKFLOW_COLUMN_WIDTH = "380px";
+const BOARD_LIFECYCLE_RAIL_WIDTH = "112px";
+
+/**
+ * Lifecycle lanes spend little horizontal space while parked. Expanding one
+ * restores its normal chat-card width everywhere on the continuous board.
+ */
+export function boardLaneGridTemplateColumns(
+  columns: ReadonlyArray<{ readonly key: string; readonly laneId: WorkflowLane }>,
+  expandedLaneColumnKeys: ReadonlySet<string>,
+): string {
+  return columns
+    .map(({ key, laneId }) =>
+      isLifecycleBoardLane(laneId) && !expandedLaneColumnKeys.has(key)
+        ? BOARD_LIFECYCLE_RAIL_WIDTH
+        : BOARD_WORKFLOW_COLUMN_WIDTH,
+    )
+    .join(" ");
+}
 
 export function boardProjectKey(environmentId: string, projectId: string): string {
   return `${environmentId}:${projectId}`;
