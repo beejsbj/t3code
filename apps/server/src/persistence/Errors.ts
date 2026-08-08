@@ -1,5 +1,7 @@
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
+import { isSqlError } from "effect/unstable/sql/SqlError";
 
 function summarizeSchemaIssue(issue: SchemaIssue.Issue): string {
   switch (issue._tag) {
@@ -27,6 +29,21 @@ export const PersistenceErrorCorrelation = Schema.Union([
 ]);
 export type PersistenceErrorCorrelation = typeof PersistenceErrorCorrelation.Type;
 
+function sqlDriverFailureDetail(cause: unknown): string | undefined {
+  if (!isSqlError(cause)) {
+    return undefined;
+  }
+
+  const driverCause = cause.reason.cause;
+  if (typeof driverCause === "string") {
+    return driverCause;
+  }
+  if (Predicate.hasProperty(driverCause, "message") && typeof driverCause.message === "string") {
+    return driverCause.message;
+  }
+  return cause.reason.message;
+}
+
 export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlError>()(
   "PersistenceSqlError",
   {
@@ -37,9 +54,10 @@ export class PersistenceSqlError extends Schema.TaggedErrorClass<PersistenceSqlE
   },
 ) {
   override get message(): string {
-    return this.detail === undefined
+    const detail = this.detail ?? sqlDriverFailureDetail(this.cause);
+    return detail === undefined
       ? `SQL error in ${this.operation}`
-      : `SQL error in ${this.operation}: ${this.detail}`;
+      : `SQL error in ${this.operation}: ${detail}`;
   }
 }
 
@@ -77,7 +95,6 @@ export function toPersistenceSqlError(operation: string) {
   return (cause: unknown): PersistenceSqlError =>
     new PersistenceSqlError({
       operation,
-      detail: `Failed to execute ${operation}`,
       cause,
     });
 }
