@@ -60,16 +60,17 @@ import { useClientSettings } from "~/hooks/useSettings";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
 import {
   applyProjectFilterToggle,
+  boardLaneHeaderDroppableId,
   boardProjectKey,
   buildProjectSwimlanes,
   groupEntriesByLane,
   isProjectFilterChecked,
   laneArchiveIntent,
-  laneColumnKeyFromSwimlaneDroppableId,
   laneIdForName,
   listProjectsWithSessions,
   nextLaneOrder,
   reorderLaneUpdates,
+  resolveBoardLaneDrop,
   resolveBoardFocusAction,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
@@ -84,6 +85,7 @@ const BOARD_COLUMN_RULE_CLASS = "border-l border-border/40 first:border-l-0";
 
 interface PlacedThread {
   readonly ref: ScopedThreadRef;
+  readonly environmentId: EnvironmentId;
   readonly key: string;
   readonly thread: SidebarThreadSummary;
   readonly laneId: WorkflowLane | null;
@@ -277,6 +279,7 @@ export function SessionBoard() {
         const columnKey = laneColumnKey(thread.environmentId, laneId);
         return {
           ref,
+          environmentId: thread.environmentId,
           key,
           thread,
           laneId,
@@ -438,14 +441,14 @@ export function SessionBoard() {
       const { active, over } = event;
       if (!over) return;
 
-      const entry = placed.find((candidate) => candidate.key === String(active.id));
-      if (!entry) return;
-
-      const laneColumnKeyFromDrop = laneColumnKeyFromSwimlaneDroppableId(String(over.id));
-      if (laneColumnKeyFromDrop === null) return;
-
-      const target = boardLanes.find((column) => column.key === laneColumnKeyFromDrop);
-      if (!target || target.environmentId !== entry.ref.environmentId) return;
+      const drop = resolveBoardLaneDrop({
+        activeId: String(active.id),
+        overId: String(over.id),
+        entries: placed,
+        columns: boardLanes,
+      });
+      if (drop === null) return;
+      const { entry, target } = drop;
       const targetLaneId = target.lane.id;
       const sourceLaneId = entry.laneId;
 
@@ -550,6 +553,7 @@ export function SessionBoard() {
               {boardLanes.map((column) => (
                 <LaneHeaderCell
                   key={column.key}
+                  droppableId={boardLaneHeaderDroppableId(column.key)}
                   environmentId={column.environmentId}
                   lane={column.lane}
                   lanes={laneRegistries.get(column.environmentId) ?? []}
@@ -913,6 +917,7 @@ function LaneFields({
  * collapse it offers applies to the column everywhere it appears.
  */
 function LaneHeaderCell({
+  droppableId,
   environmentId,
   lane,
   lanes,
@@ -924,6 +929,7 @@ function LaneHeaderCell({
   onReorder,
   onArchive,
 }: {
+  readonly droppableId: string;
   readonly environmentId: EnvironmentId;
   readonly lane: LaneDefinition;
   readonly lanes: ReadonlyArray<LaneDefinition>;
@@ -948,14 +954,18 @@ function LaneHeaderCell({
     memberCount: number,
   ) => Promise<boolean>;
 }) {
+  const { isOver, setNodeRef } = useDroppable({ id: droppableId });
+
   return (
     <div
+      ref={setNodeRef}
       data-lane={lane.id}
       className={cn(
         "flex min-w-0 flex-col justify-center px-3 py-2",
         BOARD_COLUMN_RULE_CLASS,
         // Settled and Snoozed are lifecycle terminals, not workflow stages.
         isLifecycleBoardLane(lane.id) && "bg-muted/25",
+        isOver && "bg-accent/40",
       )}
     >
       <div className="flex items-center gap-2">
