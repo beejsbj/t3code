@@ -18,11 +18,6 @@ export interface ProjectSwimlane<T extends BoardThreadPlacement> {
   readonly entries: ReadonlyArray<T>;
 }
 
-export interface ProjectWithSessions {
-  readonly projectKey: string;
-  readonly projectTitle: string;
-}
-
 export function groupEntriesByLane<T extends BoardThreadPlacement>(
   entries: ReadonlyArray<T>,
   laneColumnKeys: ReadonlyArray<string>,
@@ -37,12 +32,12 @@ export function groupEntriesByLane<T extends BoardThreadPlacement>(
 
 export function buildProjectSwimlanes<T extends BoardThreadPlacement>(
   entries: ReadonlyArray<T>,
-  selectedProjectKeys: ReadonlySet<string>,
+  projectScopeKey: string | null,
 ): ReadonlyArray<ProjectSwimlane<T>> {
   const filtered =
-    selectedProjectKeys.size === 0
+    projectScopeKey === null
       ? entries
-      : entries.filter((entry) => selectedProjectKeys.has(entry.projectKey));
+      : entries.filter((entry) => entry.projectKey === projectScopeKey);
 
   const byProject = new Map<string, Array<T>>();
   for (const entry of filtered) {
@@ -75,50 +70,8 @@ export function buildProjectSwimlanes<T extends BoardThreadPlacement>(
   });
 }
 
-export function listProjectsWithSessions<T extends BoardThreadPlacement>(
-  entries: ReadonlyArray<T>,
-): ReadonlyArray<ProjectWithSessions> {
-  const byKey = new Map<string, string>();
-  for (const entry of entries) {
-    if (!byKey.has(entry.projectKey)) {
-      byKey.set(entry.projectKey, entry.projectTitle);
-    }
-  }
-  return [...byKey.entries()]
-    .map(([projectKey, projectTitle]) => ({ projectKey, projectTitle }))
-    .toSorted((left, right) => left.projectTitle.localeCompare(right.projectTitle));
-}
-
-export function isProjectFilterChecked(
-  selectedProjectKeys: ReadonlySet<string>,
-  projectKey: string,
-): boolean {
-  return selectedProjectKeys.size === 0 || selectedProjectKeys.has(projectKey);
-}
-
-export function applyProjectFilterToggle(
-  selectedProjectKeys: ReadonlySet<string>,
-  projectKey: string,
-  checked: boolean,
-  allProjectKeys: ReadonlySet<string>,
-): ReadonlySet<string> {
-  const effectiveSelected =
-    selectedProjectKeys.size === 0 ? new Set(allProjectKeys) : new Set(selectedProjectKeys);
-
-  if (checked) {
-    effectiveSelected.add(projectKey);
-  } else {
-    effectiveSelected.delete(projectKey);
-  }
-
-  if (effectiveSelected.size === 0 || effectiveSelected.size === allProjectKeys.size) {
-    return new Set();
-  }
-  return effectiveSelected;
-}
-
-export function shouldHideSwimlaneProjectHeader(selectedProjectKeys: ReadonlySet<string>): boolean {
-  return selectedProjectKeys.size === 1;
+export function shouldHideSwimlaneProjectHeader(projectScopeKey: string | null): boolean {
+  return projectScopeKey !== null;
 }
 
 export function swimlaneColumnDroppableId(projectKey: string, laneColumnKey: string): string {
