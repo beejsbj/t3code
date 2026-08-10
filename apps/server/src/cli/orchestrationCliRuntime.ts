@@ -88,6 +88,16 @@ export type OrchestrationCliLiveServerError =
   | OrchestrationCliLiveServerUndeclaredStatusError
   | OrchestrationCliLiveServerRequestError;
 
+const isOrchestrationCliLiveServerDeclaredResponseError = Schema.is(
+  Schema.toEncoded(OrchestrationCliLiveServerDeclaredResponseError),
+);
+const isOrchestrationCliLiveServerUndeclaredStatusError = Schema.is(
+  Schema.toEncoded(OrchestrationCliLiveServerUndeclaredStatusError),
+);
+const isOrchestrationCliLiveServerRequestError = Schema.is(
+  Schema.toEncoded(OrchestrationCliLiveServerRequestError),
+);
+
 // The transport-level errors every orchestration CLI command can fail with,
 // regardless of the domain (project, lane, ...) it belongs to. Each CLI
 // module unions this with its own domain errors as a peer, not a parent.
@@ -136,14 +146,14 @@ const isConnectionRefusedCause = (cause: unknown): boolean => {
   return false;
 };
 
-const isPersistedServerRuntimeUnreachable = (error: unknown): boolean => {
-  if (error instanceof OrchestrationCliLiveServerDeclaredResponseError) {
+export const isPersistedServerRuntimeUnreachable = (error: unknown): boolean => {
+  if (isOrchestrationCliLiveServerDeclaredResponseError(error)) {
     return false;
   }
-  if (error instanceof OrchestrationCliLiveServerUndeclaredStatusError) {
+  if (isOrchestrationCliLiveServerUndeclaredStatusError(error)) {
     return false;
   }
-  if (!(error instanceof OrchestrationCliLiveServerRequestError)) {
+  if (!isOrchestrationCliLiveServerRequestError(error)) {
     return false;
   }
   const cause = error.cause;
@@ -264,7 +274,7 @@ export const tryResolveLiveOrchestrationExecutionMode = Effect.fn(
   }
 
   if (!isPersistedServerRuntimeUnreachable(attempted.failure)) {
-    return yield* Effect.fail(attempted.failure);
+    return yield* attempted.failure;
   }
 
   yield* Effect.logDebug(options.connectFailureLogMessage, {

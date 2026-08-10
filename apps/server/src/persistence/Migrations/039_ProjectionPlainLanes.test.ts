@@ -9,9 +9,38 @@ import { ProjectionThreadRepositoryLive } from "../Layers/ProjectionThreads.ts";
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 import { ProjectionThreadRepository } from "../Services/ProjectionThreads.ts";
+import Migration039 from "./039_ProjectionPlainLanes.ts";
 
 const sqliteLayer = NodeSqliteClient.layerMemory();
 const layer = it.layer(ProjectionThreadRepositoryLive.pipe(Layer.provideMerge(sqliteLayer)));
+const retryLayer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
+
+retryLayer("039_ProjectionPlainLanes retry", (it) => {
+  it.effect("discards stale lane and thread staging tables", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 38 });
+
+      yield* sql`CREATE TABLE projection_lanes_plain (stale TEXT)`;
+      yield* sql`CREATE TABLE projection_threads_plain (stale TEXT)`;
+
+      yield* Migration039;
+
+      const lanes = yield* sql<{ readonly laneId: string }>`
+        SELECT lane_id AS "laneId" FROM projection_lanes ORDER BY lane_id
+      `;
+      assert.isTrue(lanes.some((lane) => lane.laneId === "triage"));
+
+      const stagingTables = yield* sql<{ readonly name: string }>`
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN ('projection_lanes_plain', 'projection_threads_plain')
+      `;
+      assert.deepEqual(stagingTables, []);
+    }),
+  );
+});
 
 layer("039_ProjectionPlainLanes", (it) => {
   it.effect("keeps the projection thread schema aligned with repository writes", () =>

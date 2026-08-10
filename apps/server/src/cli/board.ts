@@ -48,6 +48,9 @@ type LaneCliDispatchCommand = Extract<
 export type LaneCommandError = OrchestrationCliCommandError | LaneCommandDomainError;
 export type LaneCommandDomainError =
   | LaneNameEmptyError
+  | LaneNameInvalidCharactersError
+  | LaneNameDuplicateError
+  | LaneOrderInvalidError
   | LaneNotFoundError
   | ThreadNotFoundError
   | LaneArchiveBlockedError
@@ -62,6 +65,43 @@ export class LaneNameEmptyError extends Schema.TaggedErrorClass<LaneNameEmptyErr
 ) {
   override get message(): string {
     return "Lane name cannot be empty.";
+  }
+}
+
+export class LaneNameInvalidCharactersError extends Schema.TaggedErrorClass<LaneNameInvalidCharactersError>()(
+  "LaneNameInvalidCharactersError",
+  {
+    operation: Schema.Literal("validateLaneName"),
+    name: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Lane name cannot contain tabs or newlines.";
+  }
+}
+
+export class LaneNameDuplicateError extends Schema.TaggedErrorClass<LaneNameDuplicateError>()(
+  "LaneNameDuplicateError",
+  {
+    operation: Schema.Literal("validateUniqueLaneName"),
+    name: Schema.String,
+    existingLaneId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Lane '${this.existingLaneId}' already uses the display name '${this.name}'.`;
+  }
+}
+
+export class LaneOrderInvalidError extends Schema.TaggedErrorClass<LaneOrderInvalidError>()(
+  "LaneOrderInvalidError",
+  {
+    operation: Schema.Literal("validateLaneOrder"),
+    order: Schema.Number,
+  },
+) {
+  override get message(): string {
+    return `Lane order must be finite; received ${this.order}.`;
   }
 }
 
@@ -87,15 +127,15 @@ export class ThreadNotFoundError extends Schema.TaggedErrorClass<ThreadNotFoundE
   {
     operation: Schema.Literal("resolveThread"),
     threadId: Schema.String,
-    validLaneIds: Schema.Array(Schema.String),
+    validThreadIds: Schema.Array(Schema.String),
   },
 ) {
   override get message(): string {
     const listed =
-      this.validLaneIds.length === 0
+      this.validThreadIds.length === 0
         ? "(none)"
-        : this.validLaneIds.map((id) => `'${id}'`).join(", ");
-    return `Thread '${this.threadId}' was not found. Valid lane ids: ${listed}.`;
+        : this.validThreadIds.map((id) => `'${id}'`).join(", ");
+    return `Thread '${this.threadId}' was not found. Valid thread ids: ${listed}.`;
   }
 }
 
@@ -109,7 +149,7 @@ export class LaneArchiveBlockedError extends Schema.TaggedErrorClass<LaneArchive
 ) {
   override get message(): string {
     const noun = this.sessionCount === 1 ? "session" : "sessions";
-    return `Lane '${this.laneId}' still has ${this.sessionCount} ${noun}. Re-run with --force to archive anyway.`;
+    return `Lane '${this.laneId}' still has ${this.sessionCount} assigned ${noun} and cannot be archived.`;
   }
 }
 
@@ -137,8 +177,16 @@ export function validLaneIds(snapshot: OrchestrationReadModel): ReadonlyArray<st
   return sortedLanes(snapshot.lanes).map((lane) => lane.id);
 }
 
+export function validThreadIds(snapshot: OrchestrationReadModel): ReadonlyArray<string> {
+  return snapshot.threads
+    .filter((thread) => thread.deletedAt === null)
+    .map((thread) => thread.id)
+    .toSorted((left, right) => left.localeCompare(right));
+}
+
 export function nextLaneOrder(lanes: ReadonlyArray<LaneDefinition>): number {
-  return lanes.length === 0 ? 0 : Math.max(...lanes.map((lane) => lane.order)) + 1;
+  const finiteOrders = lanes.map((lane) => lane.order).filter(Number.isFinite);
+  return Math.max(-1, ...finiteOrders) + 1;
 }
 
 export function laneIdForName(
@@ -175,7 +223,17 @@ export function formatLaneList(snapshot: OrchestrationReadModel): string {
   const lines: Array<string> = [];
   for (const lane of sortedLanes(snapshot.lanes)) {
     const sessions = countSessionsInLane(snapshot, lane.id);
-    lines.push(`${lane.id}\t${lane.name}\t${lane.order}\t${sessions}`);
+    const laneId = lane.id
+      .replaceAll("\\", "\\\\")
+      .replaceAll("\t", "\\t")
+      .replaceAll("\r", "\\r")
+      .replaceAll("\n", "\\n");
+    const laneName = lane.name
+      .replaceAll("\\", "\\\\")
+      .replaceAll("\t", "\\t")
+      .replaceAll("\r", "\\r")
+      .replaceAll("\n", "\\n");
+    lines.push(`${laneId}\t${laneName}\t${lane.order}\t${sessions}`);
   }
   return lines.join("\n");
 }
@@ -206,13 +264,13 @@ const resolveThread = Effect.fn("resolveThread")(function* (
     return yield* new ThreadNotFoundError({
       operation: "resolveThread",
       threadId: trimmed,
-      validLaneIds: [...validLaneIds(snapshot)],
+      validThreadIds: [...validThreadIds(snapshot)],
     });
   }
   return thread;
 });
 
-const validateLaneName = Effect.fn("validateLaneName")(function* (name: string) {
+export const validateLaneName = Effect.fn("validateLaneName")(function* (name: string) {
   const trimmed = name.trim();
   if (trimmed.length === 0) {
     return yield* new LaneNameEmptyError({
@@ -220,7 +278,41 @@ const validateLaneName = Effect.fn("validateLaneName")(function* (name: string) 
       name,
     });
   }
+  if (/[\t\r\n]/.test(trimmed)) {
+    return yield* new LaneNameInvalidCharactersError({
+      operation: "validateLaneName",
+      name,
+    });
+  }
   return trimmed;
+});
+
+export const validateUniqueLaneName = Effect.fn("validateUniqueLaneName")(function* (
+  lanes: ReadonlyArray<LaneDefinition>,
+  name: string,
+  excludedLaneId?: LaneDefinition["id"],
+) {
+  const normalizedName = name.trim().toLocaleLowerCase();
+  const duplicate = lanes.find(
+    (lane) => lane.id !== excludedLaneId && lane.name.trim().toLocaleLowerCase() === normalizedName,
+  );
+  if (duplicate !== undefined) {
+    return yield* new LaneNameDuplicateError({
+      operation: "validateUniqueLaneName",
+      name,
+      existingLaneId: duplicate.id,
+    });
+  }
+});
+
+export const validateLaneOrder = Effect.fn("validateLaneOrder")(function* (order: number) {
+  if (!Number.isFinite(order)) {
+    return yield* new LaneOrderInvalidError({
+      operation: "validateLaneOrder",
+      order,
+    });
+  }
+  return order;
 });
 
 const runLaneCommand = Effect.fn("runLaneCommand")(function* (
@@ -303,9 +395,7 @@ const laneListCommand = Command.make("list", {
   Command.withHandler((flags) =>
     runLaneCommand(
       flags,
-      Effect.fn("laneList")(function* ({ snapshot }) {
-        return formatLaneList(snapshot);
-      }),
+      Effect.fn("laneList")(({ snapshot }) => Effect.succeed(formatLaneList(snapshot))),
     ),
   ),
 );
@@ -328,8 +418,11 @@ const laneCreateCommand = Command.make("create", {
       flags,
       Effect.fn("laneCreate")(function* ({ snapshot, dispatch }) {
         const laneName = yield* validateLaneName(flags.name);
+        yield* validateUniqueLaneName(snapshot.lanes, laneName);
         const description = Option.getOrElse(flags.description, () => "—").trim() || "—";
-        const order = Option.getOrElse(flags.order, () => nextLaneOrder(snapshot.lanes));
+        const order = yield* validateLaneOrder(
+          Option.getOrElse(flags.order, () => nextLaneOrder(snapshot.lanes)),
+        );
         const lane: LaneDefinition = {
           id: laneIdForName(laneName, snapshot.lanes),
           name: laneName,
@@ -359,6 +452,7 @@ const laneRenameCommand = Command.make("rename", {
       Effect.fn("laneRename")(function* ({ snapshot, dispatch }) {
         const lane = yield* resolveLane(snapshot, flags.laneId);
         const laneName = yield* validateLaneName(flags.name);
+        yield* validateUniqueLaneName(snapshot.lanes, laneName, lane.id);
         if (laneName === lane.name) {
           return `Lane ${lane.id} is already named ${laneName}.`;
         }
@@ -377,10 +471,6 @@ const laneRenameCommand = Command.make("rename", {
 const laneArchiveCommand = Command.make("archive", {
   ...projectLocationFlags,
   laneId: Argument.string("lane-id").pipe(Argument.withDescription("Lane id to archive.")),
-  force: Flag.boolean("force").pipe(
-    Flag.withDescription("Archive even when sessions are still assigned to this lane."),
-    Flag.withDefault(false),
-  ),
 }).pipe(
   Command.withDescription("Archive a workflow lane."),
   Command.withHandler((flags) =>
@@ -389,7 +479,7 @@ const laneArchiveCommand = Command.make("archive", {
       Effect.fn("laneArchive")(function* ({ snapshot, dispatch }) {
         const lane = yield* resolveLane(snapshot, flags.laneId);
         const sessionCount = countSessionsInLane(snapshot, lane.id);
-        if (sessionCount > 0 && !flags.force) {
+        if (sessionCount > 0) {
           return yield* new LaneArchiveBlockedError({
             operation: "archiveLane",
             laneId: lane.id,

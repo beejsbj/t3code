@@ -1098,7 +1098,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          listLaneRows(undefined),
+          listLaneRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getSnapshot:listLanes:query",
+                "ProjectionSnapshotQuery.getSnapshot:listLanes:decodeRows",
+              ),
+            ),
+          ),
           listThreadRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1392,7 +1399,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          listLaneRows(undefined),
+          listLaneRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getCommandReadModel:listLanes:query",
+                "ProjectionSnapshotQuery.getCommandReadModel:listLanes:decodeRows",
+              ),
+            ),
+          ),
           listThreadRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1601,7 +1615,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          listLaneRows(undefined),
+          listLaneRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getShellSnapshot:listLanes:query",
+                "ProjectionSnapshotQuery.getShellSnapshot:listLanes:decodeRows",
+              ),
+            ),
+          ),
           listActiveThreadRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -1743,7 +1764,14 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               ),
             ),
           ),
-          listLaneRows(undefined),
+          listLaneRows(undefined).pipe(
+            Effect.mapError(
+              toPersistenceSqlOrDecodeError(
+                "ProjectionSnapshotQuery.getArchivedShellSnapshot:listLanes:query",
+                "ProjectionSnapshotQuery.getArchivedShellSnapshot:listLanes:decodeRows",
+              ),
+            ),
+          ),
           listArchivedThreadRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(

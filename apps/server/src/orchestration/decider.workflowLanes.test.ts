@@ -141,4 +141,43 @@ it.layer(NodeServices.layer)("workflow lane decider", (it) => {
       expect(model.lanes).toEqual([]);
     }),
   );
+
+  it.effect("rejects archiving a lane with assigned non-deleted threads", () =>
+    Effect.gen(function* () {
+      const lane = {
+        id: LaneId.make("ready"),
+        name: "Ready",
+        description: "Ready to work",
+        order: 1,
+      };
+      const command = {
+        type: "lane.archive" as const,
+        commandId: CommandId.make("cmd-lane-archive-assigned"),
+        laneId: lane.id,
+      };
+      const assignedThread = thread(lane.id);
+      const error = yield* decideOrchestrationCommand({
+        command,
+        readModel: {
+          ...readModel(assignedThread),
+          lanes: [lane],
+        },
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain("1 assigned thread");
+
+      const archived = expectEvent(
+        yield* decideOrchestrationCommand({
+          command,
+          readModel: {
+            ...readModel({ ...assignedThread, deletedAt: NOW }),
+            lanes: [lane],
+          },
+        }),
+        "lane.archived",
+      );
+      expect(archived.payload.laneId).toBe(lane.id);
+    }),
+  );
 });

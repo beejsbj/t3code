@@ -8,6 +8,7 @@ export default Effect.gen(function* () {
     PRAGMA table_info(projection_lanes)
   `;
   if (laneColumns.some((column) => column.name === "interrupt")) {
+    yield* sql`DROP TABLE IF EXISTS projection_lanes_plain`;
     yield* sql`
       CREATE TABLE projection_lanes_plain (
         lane_id TEXT PRIMARY KEY,
@@ -48,6 +49,7 @@ export default Effect.gen(function* () {
       column.name === "workflow_lane_placed_by" || column.name === "workflow_lane_placement_reason",
   );
   if (hasPlacementProvenance) {
+    yield* sql`DROP TABLE IF EXISTS projection_threads_plain`;
     yield* sql`
       CREATE TABLE projection_threads_plain (
         thread_id TEXT PRIMARY KEY,

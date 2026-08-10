@@ -413,6 +413,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Lane '${command.laneId}' does not exist.`,
         });
       }
+      const assignedThreadCount = readModel.threads.filter(
+        (thread) => thread.deletedAt === null && thread.workflowLane === command.laneId,
+      ).length;
+      if (assignedThreadCount > 0) {
+        const noun = assignedThreadCount === 1 ? "thread" : "threads";
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.laneId}' has ${assignedThreadCount} assigned ${noun} and cannot be archived.`,
+        });
+      }
       const occurredAt = yield* nowIso;
       return {
         ...(yield* withEventBase({
