@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
+import { ProviderInstanceId } from "@t3tools/contracts";
 
 import {
+  resolveBoardComposerModelSelection,
   resolveBoardComposerSubmission,
   useThreadComposerRouteState,
 } from "./useThreadComposer.ts";
@@ -40,5 +42,37 @@ describe("resolveBoardComposerSubmission", () => {
         imageCount: 0,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveBoardComposerModelSelection", () => {
+  const fallback = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-5.4",
+  };
+
+  it("uses the active provider's draft selection", () => {
+    const selected = {
+      instanceId: ProviderInstanceId.make("claude"),
+      model: "claude-opus-5",
+    };
+    expect(
+      resolveBoardComposerModelSelection(
+        {
+          activeProvider: selected.instanceId,
+          modelSelectionByProvider: { [selected.instanceId]: selected },
+        },
+        fallback,
+      ),
+    ).toEqual(selected);
+  });
+
+  it("falls back to the thread selection when the draft has no active model", () => {
+    expect(
+      resolveBoardComposerModelSelection(
+        { activeProvider: null, modelSelectionByProvider: {} },
+        fallback,
+      ),
+    ).toEqual(fallback);
   });
 });

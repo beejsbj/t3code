@@ -1835,7 +1835,7 @@ export default function SidebarV2() {
   // from it. Only the board can tell whether the card is already on screen, so
   // this is a request: it scrolls first, and opens on the click after that.
   const openThread = useCallback(
-    (threadRef: ScopedThreadRef, options?: { readonly open?: boolean }) => {
+    (threadRef: ScopedThreadRef) => {
       if (!isBoardRouteRef.current) {
         navigateToThread(threadRef);
         return;
@@ -1848,7 +1848,7 @@ export default function SidebarV2() {
       if (isMobile) {
         setOpenMobile(false);
       }
-      requestBoardFocus(threadKey, options);
+      requestBoardFocus(threadKey);
     },
     [clearSelection, isMobile, navigateToThread, setOpenMobile, setSelectionAnchor],
   );
@@ -1962,12 +1962,12 @@ export default function SidebarV2() {
     [openThread, rangeSelectTo, toggleThreadSelection],
   );
 
-  // Renaming moves to the context menu on the board: there, a double click is
-  // the shortcut past "scroll to it first" straight into the session.
+  // Renaming moves to the context menu on the board. A double click remains a
+  // normal second focus request there, so it cannot bypass composer focus.
   const handleThreadDoubleClick = useCallback(
     (threadRef: ScopedThreadRef, title: string) => {
       if (isBoardRouteRef.current) {
-        openThread(threadRef, { open: true });
+        openThread(threadRef);
         return;
       }
       startThreadRename(threadRef, title);

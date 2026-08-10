@@ -31,32 +31,32 @@ export function deriveRevertTurnCountByUserMessageId(
   inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number>>,
 ): Map<MessageId, number> {
   const byUserMessageId = new Map<MessageId, number>();
-  for (let index = 0; index < timelineEntries.length; index += 1) {
-    const entry = timelineEntries[index];
-    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+  let userMessageId: MessageId | null = null;
+
+  for (const entry of timelineEntries) {
+    if (entry.kind !== "message") {
       continue;
     }
 
-    for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
-      const nextEntry = timelineEntries[nextIndex];
-      if (!nextEntry || nextEntry.kind !== "message") {
-        continue;
-      }
-      if (nextEntry.message.role === "user") {
-        break;
-      }
-      const summary = turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
-      if (!summary) {
-        continue;
-      }
-      const turnCount =
-        summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-      if (typeof turnCount !== "number") {
-        break;
-      }
-      byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
-      break;
+    if (entry.message.role === "user") {
+      userMessageId = entry.message.id;
+      continue;
     }
+    if (userMessageId === null) {
+      continue;
+    }
+
+    const summary = turnDiffSummaryByAssistantMessageId.get(entry.message.id);
+    if (!summary) {
+      continue;
+    }
+
+    const turnCount =
+      summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+    if (typeof turnCount === "number") {
+      byUserMessageId.set(userMessageId, Math.max(0, turnCount - 1));
+    }
+    userMessageId = null;
   }
 
   return byUserMessageId;
@@ -80,10 +80,10 @@ export type UseThreadTimelineInput = {
 };
 
 export function useThreadTimeline(input: UseThreadTimelineInput) {
-  const settings = useClientSettings();
+  const timestampFormatFromSettings = useClientSettings((settings) => settings.timestampFormat);
   const { resolvedTheme: themeFromHook } = useTheme();
   const resolvedTheme = input.resolvedTheme ?? themeFromHook;
-  const timestampFormat = input.timestampFormat ?? settings.timestampFormat;
+  const timestampFormat = input.timestampFormat ?? timestampFormatFromSettings;
 
   const thread = input.thread;
   const threadRef = input.threadRef;

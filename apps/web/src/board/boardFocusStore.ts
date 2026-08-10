@@ -8,45 +8,80 @@ import { create } from "zustand";
  * there is nowhere to navigate to when the card already *is* the chat.
  *
  * The sidebar cannot see the board's viewport, so it only ever *requests*
- * focus. The board decides what a request means (scroll the card into view, or
- * open it if it is already on screen) because it is the only surface that knows
- * where its cards are. Deliberately not persisted: focus is about this glance
- * at this screen.
+ * focus. A card acknowledges a request only after its composer owns DOM focus;
+ * the board may open it on a later request. Deliberately not persisted: focus
+ * is about this glance at this screen.
  */
 
 export interface BoardFocusRequest {
   readonly threadKey: string;
-  /** Always open the card, skipping the scroll-first step (double click). */
-  readonly open: boolean;
   /** Bumped per request so clicking the same row twice re-runs the effect. */
   readonly nonce: number;
 }
 
+export interface BoardFocusAcknowledgement {
+  readonly threadKey: string;
+  readonly requestNonce: number;
+}
+
 interface BoardFocusStoreState {
   readonly request: BoardFocusRequest | null;
+  readonly acknowledgedFocus: BoardFocusAcknowledgement | null;
   readonly focusedThreadKey: string | null;
   readonly expandedThreadKey: string | null;
-  readonly requestFocus: (threadKey: string, options?: { readonly open?: boolean }) => void;
+  readonly requestFocus: (threadKey: string) => void;
+  readonly acknowledgeFocus: (threadKey: string, requestNonce: number) => void;
+  readonly clearRequest: (threadKey: string, requestNonce: number) => void;
   readonly setFocused: (threadKey: string | null) => void;
   readonly setExpanded: (threadKey: string | null) => void;
 }
 
 export const useBoardFocusStore = create<BoardFocusStoreState>()((set) => ({
   request: null,
+  acknowledgedFocus: null,
   focusedThreadKey: null,
   expandedThreadKey: null,
-  requestFocus: (threadKey, options) =>
+  requestFocus: (threadKey) =>
     set((state) => ({
       request: {
         threadKey,
-        open: options?.open === true,
-        nonce: (state.request?.nonce ?? 0) + 1,
+        nonce: Math.max(state.request?.nonce ?? 0, state.acknowledgedFocus?.requestNonce ?? 0) + 1,
       },
+      acknowledgedFocus:
+        state.acknowledgedFocus?.threadKey === threadKey ? state.acknowledgedFocus : null,
     })),
-  setFocused: (threadKey) =>
+  acknowledgeFocus: (threadKey, requestNonce) =>
+    set((state) => {
+      if (state.request?.threadKey !== threadKey || state.request.nonce !== requestNonce) {
+        return state;
+      }
+      if (
+        state.acknowledgedFocus?.threadKey === threadKey &&
+        state.acknowledgedFocus.requestNonce === requestNonce
+      ) {
+        return state;
+      }
+      return {
+        request: null,
+        acknowledgedFocus: { threadKey, requestNonce },
+        focusedThreadKey: threadKey,
+      };
+    }),
+  clearRequest: (threadKey, requestNonce) =>
     set((state) =>
-      state.focusedThreadKey === threadKey ? state : { focusedThreadKey: threadKey },
+      state.request?.threadKey === threadKey && state.request.nonce === requestNonce
+        ? { request: null }
+        : state,
     ),
+  setFocused: (threadKey) =>
+    set((state) => {
+      const acknowledgedFocus =
+        state.acknowledgedFocus?.threadKey === threadKey ? state.acknowledgedFocus : null;
+      if (state.focusedThreadKey === threadKey && state.acknowledgedFocus === acknowledgedFocus) {
+        return state;
+      }
+      return { focusedThreadKey: threadKey, acknowledgedFocus };
+    }),
   setExpanded: (threadKey) =>
     set((state) =>
       state.expandedThreadKey === threadKey ? state : { expandedThreadKey: threadKey },
@@ -54,6 +89,6 @@ export const useBoardFocusStore = create<BoardFocusStoreState>()((set) => ({
 }));
 
 /** Points the board at a session from outside it (the sidebar, today). */
-export function requestBoardFocus(threadKey: string, options?: { readonly open?: boolean }): void {
-  useBoardFocusStore.getState().requestFocus(threadKey, options);
+export function requestBoardFocus(threadKey: string): void {
+  useBoardFocusStore.getState().requestFocus(threadKey);
 }

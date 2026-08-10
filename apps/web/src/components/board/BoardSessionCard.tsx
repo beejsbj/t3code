@@ -12,7 +12,15 @@ import type {
   WorkflowLane,
 } from "@t3tools/contracts";
 import { ChevronsDownUpIcon, GripVerticalIcon, Maximize2Icon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -20,6 +28,8 @@ import {
 
 import {
   cardSizeForHeight,
+  CARD_MAX_HEIGHT,
+  CARD_MIN_HEIGHT,
   clampCardHeight,
   selectCardHeight,
   useBoardCardStore,
@@ -58,6 +68,7 @@ import { ExpandedImageDialog } from "../chat/ExpandedImageDialog.tsx";
 import { type ExpandedImagePreview } from "../chat/ExpandedImagePreview.tsx";
 
 const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+const NOOP = () => {};
 
 export interface BoardSessionCardProps {
   readonly cardKey: string;
@@ -69,7 +80,7 @@ export interface BoardSessionCardProps {
   readonly isDragging: boolean;
 }
 
-export function BoardSessionCard(props: BoardSessionCardProps) {
+export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessionCardProps) {
   const { cardKey, threadRef, thread, laneId, lanes, projectTitle } = props;
 
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
@@ -84,6 +95,9 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   // sidebar opens and points at cards too, and there is only ever one of each.
   const expanded = useBoardFocusStore((state) => state.expandedThreadKey === cardKey);
   const isFocused = useBoardFocusStore((state) => state.focusedThreadKey === cardKey);
+  const focusRequestNonce = useBoardFocusStore((state) =>
+    state.request?.threadKey === cardKey ? state.request.nonce : null,
+  );
   const setExpandedKey = useBoardFocusStore((state) => state.setExpanded);
   const setFocusedKey = useBoardFocusStore((state) => state.setFocused);
   const setExpanded = useCallback(
@@ -92,8 +106,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
   );
 
   const slotRef = useRef<HTMLDivElement | null>(null);
-  const hasBeenVisible = useInViewport(slotRef, {
-    once: true,
+  const isNearViewport = useInViewport(slotRef, {
     rootMargin: "300px",
   });
 
@@ -112,23 +125,46 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
 
   const [draggingHeight, setDraggingHeight] = useState<number | null>(null);
   const teardownResizeRef = useRef<(() => void) | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
 
-  useEffect(() => () => teardownResizeRef.current?.(), []);
+  useEffect(
+    () => () => {
+      teardownResizeRef.current?.();
+      if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
+    },
+    [],
+  );
 
   const handleResizePointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
+    (event: React.PointerEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
       const startY = event.clientY;
       const startHeight = heightPx;
       let latest = startHeight;
+      const pointerId = event.pointerId;
+      try {
+        event.currentTarget.setPointerCapture(pointerId);
+      } catch {
+        // Window listeners below keep resizing functional without pointer capture.
+      }
 
       const onMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
         latest = clampCardHeight(startHeight + (moveEvent.clientY - startY));
-        setDraggingHeight(latest);
+        if (resizeFrameRef.current !== null) return;
+        resizeFrameRef.current = window.requestAnimationFrame(() => {
+          resizeFrameRef.current = null;
+          setDraggingHeight(latest);
+        });
       };
-      const finish = () => {
+      const finish = (finishEvent: PointerEvent) => {
+        if (finishEvent.pointerId !== pointerId) return;
         teardownResizeRef.current?.();
+        if (resizeFrameRef.current !== null) {
+          window.cancelAnimationFrame(resizeFrameRef.current);
+          resizeFrameRef.current = null;
+        }
         setDraggingHeight(null);
         setHeight(threadRef, latest);
       };
@@ -143,6 +179,27 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", finish);
       window.addEventListener("pointercancel", finish);
+    },
+    [heightPx, setHeight, threadRef],
+  );
+
+  const handleResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      const step = event.shiftKey ? 50 : 10;
+      const next =
+        event.key === "ArrowUp"
+          ? heightPx - step
+          : event.key === "ArrowDown"
+            ? heightPx + step
+            : event.key === "Home"
+              ? CARD_MIN_HEIGHT
+              : event.key === "End"
+                ? CARD_MAX_HEIGHT
+                : null;
+      if (next === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setHeight(threadRef, next);
     },
     [heightPx, setHeight, threadRef],
   );
@@ -204,7 +261,7 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
             {...listeners}
             {...attributes}
             aria-label={`Drag ${thread.title}`}
-            className="mt-0.5 cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 hover:bg-accent hover:text-muted-foreground active:cursor-grabbing"
+            className="mt-0.5 cursor-grab touch-none rounded p-0.5 text-muted-foreground/50 hover:bg-accent hover:text-muted-foreground active:cursor-grabbing pointer-coarse:p-1.5"
           >
             <GripVerticalIcon className="size-3.5" />
           </button>
@@ -239,21 +296,32 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
           </Button>
         </header>
 
-        {hasBeenVisible ? (
-          <BoardCardChatSurface threadRef={threadRef} thread={thread} />
+        {(isNearViewport || isFocused) && !expanded ? (
+          <BoardCardChatSurface
+            cardKey={cardKey}
+            cardElementRef={slotRef}
+            threadRef={threadRef}
+            thread={thread}
+            focusRequestNonce={focusRequestNonce}
+          />
         ) : (
           <div className="flex flex-1 items-center justify-center text-[10px] text-muted-foreground/50">
             Scroll into view to connect
           </div>
         )}
 
-        <div
+        <button
+          type="button"
           onPointerDown={handleResizePointerDown}
+          onKeyDown={handleResizeKeyDown}
           role="separator"
           aria-orientation="horizontal"
-          aria-label={`Resize ${thread.title} card`}
+          aria-label={`Resize ${thread.title} card. Use arrow keys to resize.`}
+          aria-valuemin={CARD_MIN_HEIGHT}
+          aria-valuemax={CARD_MAX_HEIGHT}
+          aria-valuenow={effectiveHeight}
           data-testid={`board-card-resize-${thread.id}`}
-          className="h-2 shrink-0 cursor-ns-resize border-t border-border/40 bg-transparent hover:bg-accent"
+          className="h-2 shrink-0 cursor-ns-resize touch-none border-0 border-t border-border/40 bg-transparent p-0 hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:h-6"
         />
       </div>
 
@@ -265,14 +333,20 @@ export function BoardSessionCard(props: BoardSessionCardProps) {
       />
     </div>
   );
-}
+});
 
-function BoardCardChatSurface({
+const BoardCardChatSurface = memo(function BoardCardChatSurface({
+  cardKey,
+  cardElementRef,
   threadRef,
   thread,
+  focusRequestNonce,
 }: {
+  readonly cardKey: string;
+  readonly cardElementRef: React.RefObject<HTMLDivElement | null>;
   readonly threadRef: ScopedThreadRef;
   readonly thread: SidebarThreadSummary;
+  readonly focusRequestNonce: number | null;
 }) {
   const fullThread = useThread(threadRef);
   const serverConfigs = useServerConfigs();
@@ -368,19 +442,33 @@ function BoardCardChatSurface({
     setExpandedImage(preview);
   }, []);
 
-  const { chatComposerProps } = useBoardThreadComposer({
+  const { chatComposerProps, composerRef } = useBoardThreadComposer({
     threadRef,
     thread: fullThread,
     summary: thread,
     resolvedTheme,
     onExpandImage: onExpandTimelineImage,
   });
+  const acknowledgeFocus = useBoardFocusStore((state) => state.acknowledgeFocus);
+
+  useEffect(() => {
+    if (focusRequestNonce === null) return;
+    const frame = window.requestAnimationFrame(() => {
+      composerRef.current?.focusAtEnd();
+      const activeElement = document.activeElement;
+      if (activeElement !== null && cardElementRef.current?.contains(activeElement)) {
+        acknowledgeFocus(cardKey, focusRequestNonce);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [acknowledgeFocus, cardElementRef, cardKey, composerRef, focusRequestNonce]);
 
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col">
         <MessagesTimeline
           density="compact"
+          viewportClassName="pointer-coarse:overflow-y-hidden pointer-coarse:overscroll-y-auto pointer-coarse:touch-pan-y"
           isWorking={isWorking}
           activeTurnInProgress={activeTurnInProgress}
           activeTurnStartedAt={activeTurnStartedAt}
@@ -402,11 +490,11 @@ function BoardCardChatSurface({
           workspaceRoot={workspaceRoot}
           skills={skills}
           anchorMessageId={null}
-          onAnchorReady={() => {}}
-          onAnchorSizeChanged={() => {}}
+          onAnchorReady={NOOP}
+          onAnchorSizeChanged={NOOP}
           contentInsetEndAdjustment={0}
-          onIsAtEndChange={() => {}}
-          onManualNavigation={() => {}}
+          onIsAtEndChange={NOOP}
+          onManualNavigation={NOOP}
           hideEmptyPlaceholder={false}
           topFadeEnabled={false}
         />
@@ -427,7 +515,7 @@ function BoardCardChatSurface({
       </div>
     </>
   );
-}
+});
 
 function providerSkills(
   providerStatuses: ReadonlyArray<ServerProvider>,

@@ -144,6 +144,9 @@ describe("boardLaneGridTemplateColumns", () => {
 
     expect(boardLaneGridTemplateColumns(columns, new Set())).toBe("380px 112px 112px");
     expect(boardLaneGridTemplateColumns(columns, new Set(["snoozed"]))).toBe("380px 380px 112px");
+    expect(boardLaneGridTemplateColumns(columns, new Set(["snoozed"]), { triage: 460 })).toBe(
+      "460px 380px 112px",
+    );
   });
 });
 
@@ -211,7 +214,14 @@ describe("resolveBoardFocusAction", () => {
   const viewport = { top: 0, bottom: 800, left: 0, right: 1200 };
 
   it("reveals a card that is not rendered at all", () => {
-    expect(resolveBoardFocusAction({ card: null, viewport, forceOpen: false })).toBe("reveal");
+    expect(
+      resolveBoardFocusAction({
+        card: null,
+        viewport,
+        requestNonce: 1,
+        acknowledgedRequestNonce: null,
+      }),
+    ).toBe("reveal");
   });
 
   it("reveals a card scrolled off the bottom", () => {
@@ -219,7 +229,8 @@ describe("resolveBoardFocusAction", () => {
       resolveBoardFocusAction({
         card: { top: 900, bottom: 1160, left: 0, right: 380 },
         viewport,
-        forceOpen: false,
+        requestNonce: 2,
+        acknowledgedRequestNonce: 1,
       }),
     ).toBe("reveal");
   });
@@ -229,32 +240,64 @@ describe("resolveBoardFocusAction", () => {
       resolveBoardFocusAction({
         card: { top: 100, bottom: 360, left: 1180, right: 1560 },
         viewport,
-        forceOpen: false,
+        requestNonce: 2,
+        acknowledgedRequestNonce: 1,
       }),
     ).toBe("reveal");
   });
 
-  it("opens a card that is already on screen", () => {
+  it("reveals and focuses on the first request even when the card is visible", () => {
     expect(
       resolveBoardFocusAction({
         card: { top: 100, bottom: 360, left: 20, right: 400 },
         viewport,
-        forceOpen: false,
+        requestNonce: 1,
+        acknowledgedRequestNonce: null,
       }),
-    ).toBe("open");
+    ).toBe("reveal");
   });
 
-  it("opens a card taller than the board once it fills the viewport", () => {
+  it("opens on a subsequent request after focus was acknowledged", () => {
     expect(
       resolveBoardFocusAction({
-        card: { top: -100, bottom: 900, left: 20, right: 400 },
+        card: { top: 100, bottom: 360, left: 20, right: 400 },
         viewport,
-        forceOpen: false,
+        requestNonce: 2,
+        acknowledgedRequestNonce: 1,
       }),
     ).toBe("open");
   });
 
-  it("opens straight away when the request says so, wherever the card is", () => {
-    expect(resolveBoardFocusAction({ card: null, viewport, forceOpen: true })).toBe("open");
+  it("does not open when the current request has not been acknowledged", () => {
+    expect(
+      resolveBoardFocusAction({
+        card: { top: 100, bottom: 360, left: 20, right: 400 },
+        viewport,
+        requestNonce: 2,
+        acknowledgedRequestNonce: null,
+      }),
+    ).toBe("reveal");
+  });
+
+  it("does not treat acknowledgement of the same request as permission to open", () => {
+    expect(
+      resolveBoardFocusAction({
+        card: { top: 100, bottom: 360, left: 20, right: 400 },
+        viewport,
+        requestNonce: 2,
+        acknowledgedRequestNonce: 2,
+      }),
+    ).toBe("reveal");
+  });
+
+  it("does not give a double-click request an acknowledgement bypass", () => {
+    expect(
+      resolveBoardFocusAction({
+        card: { top: 100, bottom: 360, left: 20, right: 400 },
+        viewport,
+        requestNonce: 2,
+        acknowledgedRequestNonce: null,
+      }),
+    ).toBe("reveal");
   });
 });

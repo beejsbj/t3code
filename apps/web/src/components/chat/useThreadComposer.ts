@@ -1,5 +1,6 @@
 import {
   type ApprovalRequestId,
+  type ModelSelection,
   type OrchestrationThreadActivity,
   type OrchestrationSessionStatus,
   type ProviderApprovalDecision,
@@ -41,13 +42,17 @@ import {
 import {
   deriveLockedProvider,
   buildThreadTurnInterruptInput,
+  getStartedThreadModelChangeBlockReason,
   readFileAsDataUrl,
+  resolveThreadMetadataUpdateForNextTurn,
 } from "../ChatView.logic.ts";
 import { useComposerDraftStore, type ComposerImageAttachment } from "../../composerDraftStore.ts";
+import { resolveAppModelSelectionForInstance } from "../../modelSelection.ts";
 import type { TerminalContextDraft } from "../../lib/terminalContext.ts";
 import type { ElementContextDraft } from "../../lib/elementContext.ts";
 import type { ChatComposerProps } from "./ChatComposer.tsx";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview.tsx";
+import { toastManager } from "../ui/toast.tsx";
 
 // Hoisted so `thread?.activities ?? []` doesn't allocate a fresh array (and
 // bust the memos keyed on it) on every render when a thread has no activities.
@@ -80,6 +85,16 @@ export function resolveBoardComposerSubmission(input: {
   const text = input.prompt.trim();
   if (text.length === 0 && input.imageCount === 0) return null;
   return { text };
+}
+
+export function resolveBoardComposerModelSelection(
+  draft: {
+    readonly activeProvider: ProviderInstanceId | null;
+    readonly modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  },
+  fallback: ModelSelection,
+): ModelSelection {
+  return (draft.activeProvider && draft.modelSelectionByProvider[draft.activeProvider]) || fallback;
 }
 
 export function useThreadComposerRouteState(thread: Thread | null | undefined) {
@@ -127,6 +142,9 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   // a future in-place write leak across every card on the board.
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
+  const focusComposer = useCallback(() => {
+    composerRef.current?.focusAtEnd();
+  }, []);
 
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
@@ -136,6 +154,9 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     reportFailure: false,
   });
   const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
+  });
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
@@ -182,6 +203,20 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         imageCount: draft.images.length,
       });
       if (submission === null) return;
+      const requestedModelSelection = resolveBoardComposerModelSelection(
+        draft,
+        summary.modelSelection,
+      );
+      const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
+        providers: providerStatuses,
+        hasStartedSession: summary.session !== null,
+        currentModelSelection: summary.modelSelection,
+        currentProviderInstanceId: summary.session?.providerInstanceId ?? null,
+        nextModelSelection: requestedModelSelection,
+      });
+      const modelSelection = modelChangeBlockReason
+        ? summary.modelSelection
+        : requestedModelSelection;
       const attachments = await Promise.all(
         draft.images.map(async (image) => ({
           type: "image" as const,
@@ -191,6 +226,26 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           dataUrl: await readFileAsDataUrl(image.file),
         })),
       );
+      const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: summary.modelSelection,
+        nextModelSelection: modelSelection,
+        currentBranch: summary.branch,
+      });
+      if (metadataUpdate !== null) {
+        const metadataResult = await updateThreadMetadata({
+          environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            ...metadataUpdate,
+          },
+        });
+        if (metadataResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(metadataResult)) {
+            console.error(squashAtomCommandFailure(metadataResult));
+          }
+          return;
+        }
+      }
       const result = await startThreadTurn({
         environmentId: threadRef.environmentId,
         input: {
@@ -201,7 +256,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             text: submission.text,
             attachments,
           },
-          modelSelection: summary.modelSelection,
+          modelSelection,
           titleSeed: summary.title,
           runtimeMode: summary.runtimeMode,
           interactionMode: summary.interactionMode,
@@ -217,7 +272,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       useComposerDraftStore.getState().clearComposerContent(threadRef);
       composerRef.current?.resetCursorState();
     },
-    [startThreadTurn, summary, threadRef],
+    [environmentId, providerStatuses, startThreadTurn, summary, threadRef, updateThreadMetadata],
   );
 
   const onInterrupt = useCallback(async () => {
@@ -237,14 +292,85 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     [environmentId, respondToThreadApproval, threadRef],
   );
 
-  const onProviderModelSelect = useCallback((_instanceId: ProviderInstanceId, _model: string) => {
-    // Model changes on started sessions are blocked in the full route; board
-    // cards keep the session model until opened in ChatView.
-  }, []);
+  const setComposerDraftModelSelection = useComposerDraftStore((state) => state.setModelSelection);
+  const onProviderModelSelect = useCallback(
+    (instanceId: ProviderInstanceId, model: string) => {
+      const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
+      const resolvedDriverKind = entry?.driver ?? null;
+      if (
+        lockedProvider !== null &&
+        resolvedDriverKind !== null &&
+        resolvedDriverKind !== lockedProvider
+      ) {
+        focusComposer();
+        return;
+      }
+      if (lockedProvider !== null && summary.session?.providerInstanceId) {
+        const currentEntry = providerStatuses.find(
+          (snapshot) => snapshot.instanceId === summary.session?.providerInstanceId,
+        );
+        if (
+          currentEntry?.continuation?.groupKey &&
+          entry?.continuation?.groupKey &&
+          currentEntry.continuation.groupKey !== entry.continuation.groupKey
+        ) {
+          focusComposer();
+          return;
+        }
+      }
+      const resolvedModel = resolveAppModelSelectionForInstance(
+        instanceId,
+        settings,
+        providerStatuses,
+        model,
+      );
+      if (!resolvedModel) {
+        focusComposer();
+        return;
+      }
+      const nextModelSelection: ModelSelection = { instanceId, model: resolvedModel };
+      const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
+        providers: providerStatuses,
+        hasStartedSession: summary.session !== null,
+        currentModelSelection: summary.modelSelection,
+        currentProviderInstanceId: summary.session?.providerInstanceId ?? null,
+        nextModelSelection,
+      });
+      if (modelChangeBlockReason) {
+        toastManager.add({
+          type: "warning",
+          title: modelChangeBlockReason.title,
+          description: modelChangeBlockReason.description,
+        });
+        focusComposer();
+        return;
+      }
+      setComposerDraftModelSelection(threadRef, nextModelSelection);
+      focusComposer();
+    },
+    [
+      focusComposer,
+      lockedProvider,
+      providerStatuses,
+      setComposerDraftModelSelection,
+      settings,
+      summary,
+      threadRef,
+    ],
+  );
 
   const getModelDisabledReason = useCallback(
-    (_instanceId: ProviderInstanceId, _model: string) => null,
-    [],
+    (instanceId: ProviderInstanceId, model: string) => {
+      const reason = getStartedThreadModelChangeBlockReason({
+        providers: providerStatuses,
+        hasStartedSession: summary.session !== null,
+        currentModelSelection: summary.modelSelection,
+        currentProviderInstanceId: summary.session?.providerInstanceId ?? null,
+        nextModelSelection: { instanceId, model },
+      });
+      return reason ? `${reason.description} Start a new thread to use this model.` : null;
+    },
+    [providerStatuses, summary],
   );
 
   const toggleInteractionMode = useCallback(() => {
@@ -351,8 +477,8 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       handleRuntimeModeChange,
       handleInteractionModeChange,
       togglePlanSidebar: NOOP,
-      focusComposer: NOOP,
-      scheduleComposerFocus: NOOP,
+      focusComposer,
+      scheduleComposerFocus: focusComposer,
       setThreadError: NOOP,
       onExpandImage,
       density: "compact",
@@ -387,6 +513,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       toggleInteractionMode,
       handleRuntimeModeChange,
       handleInteractionModeChange,
+      focusComposer,
       onExpandImage,
     ],
   );

@@ -16,10 +16,27 @@ import {
   type ScopedThreadRef,
   type WorkflowLane,
 } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, PlusIcon } from "lucide-react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
+import {
+  clampBoardLaneWidth,
+  BOARD_LANE_MAX_WIDTH,
+  BOARD_LANE_MIN_WIDTH,
+  selectBoardLaneWidth,
+  useBoardLaneStore,
+} from "../../board/boardLaneStore.ts";
 import {
   boardLaneCollapsedByDefault,
   isLifecycleBoardLane,
@@ -34,7 +51,7 @@ import { selectProjectGroupingSettings } from "../../logicalProject.ts";
 import { ensureLocalApi } from "../../localApi.ts";
 import { useProjectScopeStore } from "../../projectScopeStore.ts";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping.ts";
-import { usePrimaryEnvironmentId } from "../../state/environments.ts";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments.ts";
 import {
   useLaneRegistries,
   useProjects,
@@ -57,9 +74,12 @@ import {
   PopoverTrigger,
 } from "../ui/popover.tsx";
 import { SidebarInset } from "../ui/sidebar.tsx";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select.tsx";
+import { Switch } from "../ui/switch.tsx";
 import { Textarea } from "../ui/textarea.tsx";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
+import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
 import {
   boardLaneGridTemplateColumns,
@@ -124,6 +144,7 @@ export function SessionBoard() {
   const threads = useThreadShells();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const { environments } = useEnvironments();
   const laneRegistries = useLaneRegistries();
   const serverConfigs = useServerConfigs();
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
@@ -145,6 +166,16 @@ export function SessionBoard() {
   const [expandedLaneColumnKeys, setExpandedLaneColumnKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const groupByProject = useBoardLaneStore((state) => state.groupByProject);
+  const setGroupByProject = useBoardLaneStore((state) => state.setGroupByProject);
+  const selectedEnvironmentId = useBoardLaneStore((state) => state.selectedEnvironmentId);
+  const setSelectedEnvironmentId = useBoardLaneStore((state) => state.setSelectedEnvironmentId);
+  const laneWidthsByKey = useBoardLaneStore((state) => state.byLaneColumnKey);
+  const setLaneWidth = useBoardLaneStore((state) => state.setWidth);
+  const [draggingLaneWidth, setDraggingLaneWidth] = useState<{
+    readonly key: string;
+    readonly widthPx: number;
+  } | null>(null);
   const [snoozeWakeTick, setSnoozeWakeTick] = useState(0);
 
   const snoozeNow = useMemo(() => new Date().toISOString(), [nowMinute, snoozeWakeTick]);
@@ -203,33 +234,58 @@ export function SessionBoard() {
     return map;
   }, [primaryEnvironmentId, projectGroupingSettings, projects]);
 
-  const boardLanes = useMemo<ReadonlyArray<BoardLaneColumn>>(
+  const availableEnvironmentIds = useMemo(() => [...laneRegistries.keys()], [laneRegistries]);
+  const activeEnvironmentId =
+    selectedEnvironmentId !== null && laneRegistries.has(selectedEnvironmentId)
+      ? selectedEnvironmentId
+      : primaryEnvironmentId !== null && laneRegistries.has(primaryEnvironmentId)
+        ? primaryEnvironmentId
+        : (availableEnvironmentIds[0] ?? null);
+
+  useEffect(() => {
+    if (activeEnvironmentId !== selectedEnvironmentId) {
+      setSelectedEnvironmentId(activeEnvironmentId);
+    }
+  }, [activeEnvironmentId, selectedEnvironmentId, setSelectedEnvironmentId]);
+
+  const environmentLabelById = useMemo(
     () =>
-      [...laneRegistries.entries()].flatMap(([environmentId, lanes]) =>
-        lanes
-          .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id))
-          .map((lane) => ({
-            key: laneColumnKey(environmentId, lane.id),
-            environmentId,
-            lane,
-          })),
-      ),
-    [laneRegistries],
+      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
+    [environments],
   );
 
-  const boardGridTemplateColumns = useMemo(
-    () =>
-      boardLaneGridTemplateColumns(
-        boardLanes.map((column) => ({ key: column.key, laneId: column.lane.id })),
-        expandedLaneColumnKeys,
+  const boardLanes = useMemo<ReadonlyArray<BoardLaneColumn>>(() => {
+    if (activeEnvironmentId === null) return [];
+    return (laneRegistries.get(activeEnvironmentId) ?? [])
+      .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+      .map((lane) => ({
+        key: laneColumnKey(activeEnvironmentId, lane.id),
+        environmentId: activeEnvironmentId,
+        lane,
+      }));
+  }, [activeEnvironmentId, laneRegistries]);
+
+  const boardGridTemplateColumns = useMemo(() => {
+    const widths =
+      draggingLaneWidth === null
+        ? laneWidthsByKey
+        : {
+            ...laneWidthsByKey,
+            [draggingLaneWidth.key]: { widthPx: draggingLaneWidth.widthPx },
+          };
+    return boardLaneGridTemplateColumns(
+      boardLanes.map((column) => ({ key: column.key, laneId: column.lane.id })),
+      expandedLaneColumnKeys,
+      Object.fromEntries(
+        Object.entries(widths).map(([key, value]) => [key, value.widthPx] as const),
       ),
-    [boardLanes, expandedLaneColumnKeys],
-  );
+    );
+  }, [boardLanes, draggingLaneWidth, expandedLaneColumnKeys, laneWidthsByKey]);
 
   const laneMemberCountByKey = useMemo(() => {
     const counts = new Map<string, number>();
     for (const thread of threads) {
-      if (thread.archivedAt !== null) continue;
+      if (thread.archivedAt !== null || thread.environmentId !== activeEnvironmentId) continue;
       const lanes = laneRegistries.get(thread.environmentId) ?? [];
       const laneId = resolveThreadLane(thread, lanes);
       if (laneId === null) continue;
@@ -237,7 +293,7 @@ export function SessionBoard() {
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return counts;
-  }, [laneRegistries, resolveThreadLane, threads]);
+  }, [activeEnvironmentId, laneRegistries, resolveThreadLane, threads]);
 
   const handleCreateLane = useCallback(
     async (
@@ -324,12 +380,29 @@ export function SessionBoard() {
       .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt));
   }, [laneRegistries, projectGroupByPhysicalKey, projectTitleById, resolveThreadLane, threads]);
 
-  const swimlanes = useMemo(
-    () => buildProjectSwimlanes(placed, projectScopeKey),
-    [placed, projectScopeKey],
+  const environmentPlaced = useMemo(
+    () => placed.filter((entry) => entry.environmentId === activeEnvironmentId),
+    [activeEnvironmentId, placed],
   );
 
-  const hideSwimlaneProjectHeader = shouldHideSwimlaneProjectHeader(projectScopeKey);
+  const swimlanes = useMemo(() => {
+    if (groupByProject) return buildProjectSwimlanes(environmentPlaced, projectScopeKey);
+    const scopedEntries =
+      projectScopeKey === null
+        ? environmentPlaced
+        : environmentPlaced.filter((entry) => entry.projectKey === projectScopeKey);
+    return buildProjectSwimlanes(
+      scopedEntries.map((entry) => ({
+        ...entry,
+        projectKey: "__board__",
+        projectTitle: "All sessions",
+      })),
+      null,
+    );
+  }, [environmentPlaced, groupByProject, projectScopeKey]);
+
+  const hideSwimlaneProjectHeader =
+    !groupByProject || shouldHideSwimlaneProjectHeader(projectScopeKey);
 
   const toggleSwimlaneCollapsed = useCallback((projectKey: string) => {
     setCollapsedProjectKeys((current) => {
@@ -349,11 +422,95 @@ export function SessionBoard() {
     });
   }, []);
 
+  const laneResizeTeardownRef = useRef<(() => void) | null>(null);
+  const laneResizeFrameRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      laneResizeTeardownRef.current?.();
+      if (laneResizeFrameRef.current !== null) {
+        window.cancelAnimationFrame(laneResizeFrameRef.current);
+      }
+    },
+    [],
+  );
+
+  const handleLaneResizePointerDown = useCallback(
+    (laneColumnKeyValue: string, widthPx: number, event: ReactPointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      laneResizeTeardownRef.current?.();
+
+      const startX = event.clientX;
+      const startWidth = widthPx;
+      let latest = startWidth;
+      const pointerId = event.pointerId;
+      try {
+        event.currentTarget.setPointerCapture(pointerId);
+      } catch {
+        // Window listeners below keep resizing functional without pointer capture.
+      }
+
+      const onMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        latest = clampBoardLaneWidth(startWidth + moveEvent.clientX - startX);
+        if (laneResizeFrameRef.current !== null) return;
+        laneResizeFrameRef.current = window.requestAnimationFrame(() => {
+          laneResizeFrameRef.current = null;
+          setDraggingLaneWidth({ key: laneColumnKeyValue, widthPx: latest });
+        });
+      };
+      const finish = (finishEvent: PointerEvent) => {
+        if (finishEvent.pointerId !== pointerId) return;
+        laneResizeTeardownRef.current?.();
+        if (laneResizeFrameRef.current !== null) {
+          window.cancelAnimationFrame(laneResizeFrameRef.current);
+          laneResizeFrameRef.current = null;
+        }
+        setDraggingLaneWidth(null);
+        setLaneWidth(laneColumnKeyValue, latest);
+      };
+      const teardown = () => {
+        laneResizeTeardownRef.current = null;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", finish);
+      };
+
+      laneResizeTeardownRef.current = teardown;
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", finish);
+      window.addEventListener("pointercancel", finish);
+    },
+    [setLaneWidth],
+  );
+
+  const handleLaneResizeKeyDown = useCallback(
+    (laneColumnKeyValue: string, widthPx: number, event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      const step = event.shiftKey ? 50 : 10;
+      const next =
+        event.key === "ArrowLeft"
+          ? widthPx - step
+          : event.key === "ArrowRight"
+            ? widthPx + step
+            : event.key === "Home"
+              ? BOARD_LANE_MIN_WIDTH
+              : event.key === "End"
+                ? BOARD_LANE_MAX_WIDTH
+                : null;
+      if (next === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setLaneWidth(laneColumnKeyValue, next);
+    },
+    [setLaneWidth],
+  );
+
   // Focus requests come from the sidebar, which cannot see this viewport. The
-  // board answers them: scroll the card into view, or open it when it is
-  // already on screen (the second click on a row you just jumped to).
+  // board reveals first and opens only when a later request follows a focus
+  // acknowledgement from the card's composer.
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const focusRequest = useBoardFocusStore((state) => state.request);
+  const clearFocusRequest = useBoardFocusStore((state) => state.clearRequest);
   const setFocusedThreadKey = useBoardFocusStore((state) => state.setFocused);
   const setExpandedThreadKey = useBoardFocusStore((state) => state.setExpanded);
   const placedRef = useRef(placed);
@@ -366,12 +523,20 @@ export function SessionBoard() {
     // focus; leaving the request unanswered is better than a blind scroll.
     if (entry === undefined) return;
 
+    if (entry.environmentId !== activeEnvironmentId) {
+      setSelectedEnvironmentId(entry.environmentId);
+      return;
+    }
+
     const scroller = scrollerRef.current;
     const node = findCardNode(scroller, entry.key);
+    const acknowledgedFocus = useBoardFocusStore.getState().acknowledgedFocus;
     const action = resolveBoardFocusAction({
       card: node?.getBoundingClientRect() ?? null,
       viewport: scroller?.getBoundingClientRect() ?? { top: 0, bottom: 0, left: 0, right: 0 },
-      forceOpen: focusRequest.open,
+      requestNonce: focusRequest.nonce,
+      acknowledgedRequestNonce:
+        acknowledgedFocus?.threadKey === entry.key ? acknowledgedFocus.requestNonce : null,
     });
 
     setFocusedThreadKey(entry.key);
@@ -392,6 +557,7 @@ export function SessionBoard() {
     });
 
     if (action === "open") {
+      clearFocusRequest(entry.key, focusRequest.nonce);
       setExpandedThreadKey(entry.key);
       return;
     }
@@ -405,7 +571,14 @@ export function SessionBoard() {
       });
     });
     return () => cancelAnimationFrame(frame);
-  }, [focusRequest, setExpandedThreadKey, setFocusedThreadKey]);
+  }, [
+    activeEnvironmentId,
+    clearFocusRequest,
+    focusRequest,
+    setExpandedThreadKey,
+    setFocusedThreadKey,
+    setSelectedEnvironmentId,
+  ]);
 
   const nextSnoozeWakeAtMs = useMemo(() => {
     let next = Number.NaN;
@@ -497,21 +670,58 @@ export function SessionBoard() {
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <header className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-2.5">
-        <h1 className="text-sm font-medium">Session board</h1>
+      <header
+        className={cn(
+          "flex min-h-12 shrink-0 items-center gap-2 border-b border-border py-2 pl-[calc(env(safe-area-inset-left)+0.5rem)] pr-[calc(env(safe-area-inset-right)+0.5rem)] transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:gap-3 sm:px-4 sm:py-2.5",
+          COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+        )}
+      >
+        <h1 className="shrink-0 text-sm font-medium">
+          <span className="sm:hidden">Board</span>
+          <span className="hidden sm:inline">Session board</span>
+        </h1>
         <p className="hidden text-xs text-muted-foreground/70 sm:block">
           Every card is the live session itself. Drag to set its lane.
         </p>
-        <div className="ml-auto flex items-center gap-2">
-          {[...laneRegistries.entries()].map(([environmentId, lanes]) => (
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          {availableEnvironmentIds.length > 1 && activeEnvironmentId !== null ? (
+            <Select
+              value={activeEnvironmentId}
+              onValueChange={(value) => setSelectedEnvironmentId(value as EnvironmentId)}
+            >
+              <SelectTrigger
+                size="xs"
+                aria-label="Board environment"
+                className="w-24 min-w-0 max-w-24 sm:w-40 sm:max-w-40"
+              >
+                <SelectValue>
+                  {environmentLabelById.get(activeEnvironmentId) ?? activeEnvironmentId}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end">
+                {availableEnvironmentIds.map((environmentId) => (
+                  <SelectItem key={environmentId} value={environmentId}>
+                    {environmentLabelById.get(environmentId) ?? environmentId}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          ) : null}
+          <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+            <span className="hidden sm:inline">Group projects</span>
+            <Switch
+              checked={groupByProject}
+              onCheckedChange={setGroupByProject}
+              aria-label="Group board by project"
+            />
+          </label>
+          {activeEnvironmentId === null ? null : (
             <NewLanePopover
-              key={environmentId}
-              environmentId={environmentId}
-              lanes={lanes}
-              showEnvironment={laneRegistries.size > 1}
+              environmentId={activeEnvironmentId}
+              lanes={laneRegistries.get(activeEnvironmentId) ?? []}
               onCreate={handleCreateLane}
             />
-          ))}
+          )}
         </div>
       </header>
 
@@ -549,8 +759,27 @@ export function SessionBoard() {
                     !boardLaneCollapsedByDefault(column.lane.id) ||
                     expandedLaneColumnKeys.has(column.key)
                   }
+                  widthPx={
+                    draggingLaneWidth?.key === column.key
+                      ? draggingLaneWidth.widthPx
+                      : selectBoardLaneWidth(laneWidthsByKey, column.key)
+                  }
                   collapsedByDefault={boardLaneCollapsedByDefault(column.lane.id)}
                   onToggleExpanded={() => toggleLaneColumnExpanded(column.key)}
+                  onResizePointerDown={(event) =>
+                    handleLaneResizePointerDown(
+                      column.key,
+                      selectBoardLaneWidth(laneWidthsByKey, column.key),
+                      event,
+                    )
+                  }
+                  onResizeKeyDown={(event) =>
+                    handleLaneResizeKeyDown(
+                      column.key,
+                      selectBoardLaneWidth(laneWidthsByKey, column.key),
+                      event,
+                    )
+                  }
                   onUpdate={handleUpdateLane}
                   onReorder={handleReorderLane}
                   onArchive={handleArchiveLane}
@@ -623,12 +852,10 @@ export function SessionBoard() {
 function NewLanePopover({
   environmentId,
   lanes,
-  showEnvironment,
   onCreate,
 }: {
   readonly environmentId: EnvironmentId;
   readonly lanes: ReadonlyArray<LaneDefinition>;
-  readonly showEnvironment: boolean;
   readonly onCreate: (
     environmentId: EnvironmentId,
     lanes: ReadonlyArray<LaneDefinition>,
@@ -662,8 +889,13 @@ function NewLanePopover({
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger render={<Button size="xs" variant="outline" />}>
-        New lane{showEnvironment ? ` · ${environmentId}` : ""}
+      <PopoverTrigger
+        render={
+          <Button size="xs" variant="outline" aria-label="Create lane" className="shrink-0" />
+        }
+      >
+        <PlusIcon className="size-3.5" />
+        <span className="hidden sm:inline">New lane</span>
       </PopoverTrigger>
       <PopoverPopup align="end" className="w-80">
         <form className="space-y-3" onSubmit={(event) => void handleSubmit(event)}>
@@ -873,8 +1105,11 @@ function LaneHeaderCell({
   lanes,
   memberCount,
   cardsVisible,
+  widthPx,
   collapsedByDefault,
   onToggleExpanded,
+  onResizePointerDown,
+  onResizeKeyDown,
   onUpdate,
   onReorder,
   onArchive,
@@ -885,8 +1120,11 @@ function LaneHeaderCell({
   readonly lanes: ReadonlyArray<LaneDefinition>;
   readonly memberCount: number;
   readonly cardsVisible: boolean;
+  readonly widthPx: number;
   readonly collapsedByDefault: boolean;
   readonly onToggleExpanded: () => void;
+  readonly onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  readonly onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   readonly onUpdate: (
     environmentId: EnvironmentId,
     laneId: LaneDefinition["id"],
@@ -913,7 +1151,7 @@ function LaneHeaderCell({
       ref={setNodeRef}
       data-lane={lane.id}
       className={cn(
-        "flex min-w-0 flex-col justify-center px-3 py-2",
+        "relative flex min-w-0 flex-col justify-center px-3 py-2",
         BOARD_COLUMN_RULE_CLASS,
         // Settled and Snoozed are lifecycle terminals, not workflow stages.
         lifecycleLane && "bg-muted/35",
@@ -976,6 +1214,23 @@ function LaneHeaderCell({
         <p className="truncate text-[11px] text-muted-foreground/60" title={lane.description}>
           {lane.description}
         </p>
+      ) : null}
+      {cardsVisible ? (
+        <button
+          type="button"
+          onPointerDown={onResizePointerDown}
+          onKeyDown={onResizeKeyDown}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={`Resize ${lane.name} lane. Use arrow keys to resize.`}
+          aria-valuemin={BOARD_LANE_MIN_WIDTH}
+          aria-valuemax={BOARD_LANE_MAX_WIDTH}
+          aria-valuenow={widthPx}
+          title={`Lane width: ${widthPx}px`}
+          className="group absolute inset-y-0 right-0 z-10 w-2 translate-x-1/2 cursor-ew-resize touch-none select-none border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:w-6"
+        >
+          <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-border group-active:bg-primary/60" />
+        </button>
       ) : null}
     </div>
   );

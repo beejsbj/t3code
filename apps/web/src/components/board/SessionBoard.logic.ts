@@ -2,8 +2,8 @@ import { LaneId, type LaneDefinition, type WorkflowLane } from "@t3tools/contrac
 
 import { isLifecycleBoardLane } from "../../board/boardLanes.ts";
 
-const BOARD_WORKFLOW_COLUMN_WIDTH = "380px";
-const BOARD_LIFECYCLE_RAIL_WIDTH = "112px";
+export const BOARD_WORKFLOW_COLUMN_WIDTH = 380;
+export const BOARD_LIFECYCLE_RAIL_WIDTH = 112;
 
 /**
  * Lifecycle lanes spend little horizontal space while parked. Expanding one
@@ -12,12 +12,13 @@ const BOARD_LIFECYCLE_RAIL_WIDTH = "112px";
 export function boardLaneGridTemplateColumns(
   columns: ReadonlyArray<{ readonly key: string; readonly laneId: WorkflowLane }>,
   expandedLaneColumnKeys: ReadonlySet<string>,
+  laneWidthsByKey: Readonly<Record<string, number>> = {},
 ): string {
   return columns
     .map(({ key, laneId }) =>
       isLifecycleBoardLane(laneId) && !expandedLaneColumnKeys.has(key)
-        ? BOARD_LIFECYCLE_RAIL_WIDTH
-        : BOARD_WORKFLOW_COLUMN_WIDTH,
+        ? `${BOARD_LIFECYCLE_RAIL_WIDTH}px`
+        : `${laneWidthsByKey[key] ?? BOARD_WORKFLOW_COLUMN_WIDTH}px`,
     )
     .join(" ");
 }
@@ -172,19 +173,23 @@ function visibleFraction(card: BoardRect, viewport: BoardRect): number {
 export type BoardFocusAction = "reveal" | "open";
 
 /**
- * A focus request from the sidebar scrolls first and opens second: a click can
- * only mean "open this session" once the card is actually on screen. `card` is
- * null when it is not rendered at all (collapsed lane, filtered project), which
- * always means reveal.
+ * A focus request from the sidebar scrolls and focuses first, then opens only
+ * after a later request observes a successful acknowledgement from the card.
+ * `card` is null when it is not rendered at all (collapsed lane, filtered
+ * project), which always means reveal.
  */
 export function resolveBoardFocusAction(input: {
   readonly card: BoardRect | null;
   readonly viewport: BoardRect;
-  readonly forceOpen: boolean;
+  readonly requestNonce: number;
+  readonly acknowledgedRequestNonce: number | null;
 }): BoardFocusAction {
-  if (input.forceOpen) return "open";
   if (input.card === null) return "reveal";
-  return visibleFraction(input.card, input.viewport) >= 0.9 ? "open" : "reveal";
+  const focusWasAcknowledgedForPriorRequest =
+    input.acknowledgedRequestNonce !== null && input.acknowledgedRequestNonce < input.requestNonce;
+  return focusWasAcknowledgedForPriorRequest && visibleFraction(input.card, input.viewport) >= 0.9
+    ? "open"
+    : "reveal";
 }
 
 export type LaneArchiveIntent =
