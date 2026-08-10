@@ -110,6 +110,7 @@ import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import { OrchestrationListenerCallbackError } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ProjectionLaneRepository } from "./persistence/Services/ProjectionLanes.ts";
 import { SqlitePersistenceMemory } from "./persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "./persistence/Errors.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
@@ -214,6 +215,7 @@ const makeDefaultOrchestrationReadModel = () => {
         deletedAt: null,
       },
     ],
+    lanes: [],
     threads: [
       {
         id: defaultThreadId,
@@ -764,13 +766,21 @@ const buildAppUnderTest = (options?: {
         ),
       ),
       Layer.provide(
-        Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
-          readEvents: () => Stream.empty,
-          dispatch: () => Effect.succeed({ sequence: 0 }),
-          streamDomainEvents: Stream.empty,
-          latestSequence: Effect.succeed(0),
-          ...options?.layers?.orchestrationEngine,
-        }),
+        Layer.mergeAll(
+          Layer.mock(OrchestrationEngine.OrchestrationEngineService)({
+            readEvents: () => Stream.empty,
+            dispatch: () => Effect.succeed({ sequence: 0 }),
+            streamDomainEvents: Stream.empty,
+            latestSequence: Effect.succeed(0),
+            ...options?.layers?.orchestrationEngine,
+          }),
+          // The MCP layer renders `set_board_lane`'s description from the live
+          // lane registry as it is built, so the router seam needs a registry.
+          // Merged rather than piped: this chain is at its 20-argument cap.
+          Layer.mock(ProjectionLaneRepository)({
+            listAll: () => Effect.succeed([]),
+          }),
+        ),
       ),
       Layer.provide(
         Layer.mock(ProjectionSnapshotQuery.ProjectionSnapshotQuery)({
@@ -780,6 +790,7 @@ const buildAppUnderTest = (options?: {
             Effect.succeed({
               snapshotSequence: 0,
               projects: [],
+              lanes: [],
               threads: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
@@ -787,6 +798,7 @@ const buildAppUnderTest = (options?: {
             Effect.succeed({
               snapshotSequence: 0,
               projects: [],
+              lanes: [],
               threads: [],
               updatedAt: "1970-01-01T00:00:00.000Z",
             }),
@@ -5832,6 +5844,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             deletedAt: null,
           },
         ],
+        lanes: [],
         threads: [
           {
             id: ThreadId.make("thread-1"),
@@ -6062,6 +6075,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 return {
                   snapshotSequence: 1,
                   projects: [],
+                  lanes: [],
                   threads: [makeDefaultOrchestrationThreadShell()],
                   updatedAt: "2026-01-01T00:00:00.000Z",
                 };
@@ -6320,6 +6334,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.succeed({
                 snapshotSequence: 100_000,
                 projects: [],
+                lanes: [],
                 threads: [makeDefaultOrchestrationThreadShell({ id: snapshotThreadId })],
                 updatedAt: now,
               }),
@@ -6367,6 +6382,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.succeed({
                 snapshotSequence: 5,
                 projects: [],
+                lanes: [],
                 threads: [],
                 updatedAt: "2026-01-01T00:00:00.000Z",
               }),

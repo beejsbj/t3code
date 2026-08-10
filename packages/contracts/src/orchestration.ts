@@ -355,6 +355,40 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+/**
+ * Where a session sits in the human workflow, as declared by the person
+ * running the board. This is deliberately the *only* board field that is
+ * session-owned rather than derived: everything else a lane board needs
+ * (working / blocked-on-human / plan-ready / settled) is already expressible
+ * from `session.status`, `hasPendingApprovals`, `hasPendingUserInput`,
+ * `hasActionableProposedPlan` and the settled/archived overlay.
+ *
+ * Two distinctions genuinely cannot be derived, which is what justifies the
+ * field: "still being shaped" vs "groomed and ready to pick up" look
+ * identical to the runtime (both are an idle session with no pending work),
+ * and a drag gesture is an explicit human statement of intent that no
+ * runtime signal can stand in for.
+ *
+ * `null` means the session has not been placed on the board yet — it lives
+ * in the inbox/source queue.
+ */
+export const LaneId = TrimmedNonEmptyString.pipe(Schema.brand("LaneId"));
+export type LaneId = typeof LaneId.Type;
+
+export const WorkflowLane = LaneId;
+export type WorkflowLane = typeof WorkflowLane.Type;
+
+export const LaneDefinition = Schema.Struct({
+  id: LaneId,
+  name: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  order: Schema.Number,
+});
+export type LaneDefinition = typeof LaneDefinition.Type;
+
+export const WorkflowLanePlacedBy = Schema.Literals(["user", "agent"]);
+export type WorkflowLanePlacedBy = typeof WorkflowLanePlacedBy.Type;
+
 export const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
   startedAt: IsoDateTime,
@@ -395,6 +429,11 @@ export const OrchestrationThread = Schema.Struct({
   // servers never need each other's threads to agree on the merged list.
   // Optional so payloads from pre-reorder servers still decode.
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  // Optional so payloads from pre-board servers still decode.
+  workflowLane: Schema.optional(Schema.NullOr(WorkflowLane)),
+  workflowLanePlacedBy: Schema.optional(Schema.NullOr(WorkflowLanePlacedBy)),
+  workflowLanePlacedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  workflowLanePlacementReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -411,6 +450,7 @@ export type OrchestrationThread = typeof OrchestrationThread.Type;
 export const OrchestrationReadModel = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProject),
+  lanes: Schema.Array(LaneDefinition).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   threads: Schema.Array(OrchestrationThread),
   updatedAt: IsoDateTime,
 });
@@ -454,6 +494,10 @@ export const OrchestrationThreadShell = Schema.Struct({
   snoozedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  workflowLane: Schema.optional(Schema.NullOr(WorkflowLane)),
+  workflowLanePlacedBy: Schema.optional(Schema.NullOr(WorkflowLanePlacedBy)),
+  workflowLanePlacedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  workflowLanePlacementReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
@@ -486,6 +530,7 @@ export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 export const OrchestrationShellSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
+  lanes: Schema.Array(LaneDefinition).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   threads: Schema.Array(OrchestrationThreadShell),
   updatedAt: IsoDateTime,
 });
@@ -511,6 +556,16 @@ export const OrchestrationShellStreamEvent = Schema.Union([
     kind: Schema.Literal("thread-removed"),
     sequence: NonNegativeInt,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("lane-upserted"),
+    sequence: NonNegativeInt,
+    lane: LaneDefinition,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("lane-removed"),
+    sequence: NonNegativeInt,
+    laneId: LaneId,
   }),
 ]);
 export type OrchestrationShellStreamEvent = typeof OrchestrationShellStreamEvent.Type;
@@ -774,6 +829,39 @@ const ThreadRuntimeModeSetCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadWorkflowLaneSetCommand = Schema.Struct({
+  type: Schema.Literal("thread.workflow-lane.set"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  // `null` returns the session to the inbox/source queue.
+  workflowLane: Schema.NullOr(WorkflowLane),
+  // A free-text note from whoever filed the session, rendered on the card. It
+  // carries no authority — provenance is stamped server-side at the dispatch
+  // seam — so unlike `placedBy` it is safe to accept from the caller.
+  placementReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+});
+
+const LaneCreateCommand = Schema.Struct({
+  type: Schema.Literal("lane.create"),
+  commandId: CommandId,
+  lane: LaneDefinition,
+});
+
+const LaneUpdateCommand = Schema.Struct({
+  type: Schema.Literal("lane.update"),
+  commandId: CommandId,
+  laneId: LaneId,
+  name: Schema.optional(TrimmedNonEmptyString),
+  description: Schema.optional(TrimmedNonEmptyString),
+  order: Schema.optional(Schema.Number),
+});
+
+const LaneArchiveCommand = Schema.Struct({
+  type: Schema.Literal("lane.archive"),
+  commandId: CommandId,
+  laneId: LaneId,
+});
+
 const ThreadInteractionModeSetCommand = Schema.Struct({
   type: Schema.Literal("thread.interaction-mode.set"),
   commandId: CommandId,
@@ -899,6 +987,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  LaneCreateCommand,
+  LaneUpdateCommand,
+  LaneArchiveCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -913,6 +1004,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadWorkflowLaneSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -927,6 +1019,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  LaneCreateCommand,
+  LaneUpdateCommand,
+  LaneArchiveCommand,
   ThreadCreateCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
@@ -941,6 +1036,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
   ThreadInteractionModeSetCommand,
+  ThreadWorkflowLaneSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
   ThreadApprovalRespondCommand,
@@ -1045,6 +1141,9 @@ export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
   "project.deleted",
+  "lane.created",
+  "lane.updated",
+  "lane.archived",
   "thread.created",
   "thread.deleted",
   "thread.archived",
@@ -1059,6 +1158,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.meta-updated",
   "thread.runtime-mode-set",
   "thread.interaction-mode-set",
+  "thread.workflow-lane-set",
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-interrupt-requested",
@@ -1074,7 +1174,7 @@ export const OrchestrationEventType = Schema.Literals([
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
-export const OrchestrationAggregateKind = Schema.Literals(["project", "thread"]);
+export const OrchestrationAggregateKind = Schema.Literals(["project", "thread", "lane"]);
 export type OrchestrationAggregateKind = typeof OrchestrationAggregateKind.Type;
 export const OrchestrationActorKind = Schema.Literals(["client", "server", "provider"]);
 
@@ -1106,6 +1206,22 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
 export const ProjectDeletedPayload = Schema.Struct({
   projectId: ProjectId,
   deletedAt: IsoDateTime,
+});
+
+export const LaneCreatedPayload = Schema.Struct({
+  lane: LaneDefinition,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+
+export const LaneUpdatedPayload = Schema.Struct({
+  lane: LaneDefinition,
+  updatedAt: IsoDateTime,
+});
+
+export const LaneArchivedPayload = Schema.Struct({
+  laneId: LaneId,
+  archivedAt: IsoDateTime,
 });
 
 export const ThreadCreatedPayload = Schema.Struct({
@@ -1207,6 +1323,16 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
 export const ThreadRuntimeModeSetPayload = Schema.Struct({
   threadId: ThreadId,
   runtimeMode: RuntimeMode,
+  updatedAt: IsoDateTime,
+});
+
+export const ThreadWorkflowLaneSetPayload = Schema.Struct({
+  threadId: ThreadId,
+  workflowLane: Schema.NullOr(WorkflowLane),
+  placedBy: Schema.optional(WorkflowLanePlacedBy).pipe(
+    Schema.withDecodingDefault(Effect.succeed("user" as const)),
+  ),
+  placementReason: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: IsoDateTime,
 });
 
@@ -1318,7 +1444,7 @@ const EventBaseFields = {
   sequence: NonNegativeInt,
   eventId: EventId,
   aggregateKind: OrchestrationAggregateKind,
-  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  aggregateId: Schema.Union([ProjectId, ThreadId, LaneId]),
   occurredAt: IsoDateTime,
   commandId: Schema.NullOr(CommandId),
   causationEventId: Schema.NullOr(EventId),
@@ -1341,6 +1467,21 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("project.deleted"),
     payload: ProjectDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.created"),
+    payload: LaneCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.updated"),
+    payload: LaneUpdatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("lane.archived"),
+    payload: LaneArchivedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -1411,6 +1552,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.interaction-mode-set"),
     payload: ThreadInteractionModeSetPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.workflow-lane-set"),
+    payload: ThreadWorkflowLaneSetPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

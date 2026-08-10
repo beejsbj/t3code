@@ -14,6 +14,9 @@ import * as Effect from "effect/Effect";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 
+const decideUserOrchestrationCommand = (input: Parameters<typeof decideOrchestrationCommand>[0]) =>
+  decideOrchestrationCommand(input);
+
 const NOW = "2026-01-01T00:00:00.000Z";
 // The decider's clock is the Effect test clock, pinned to the epoch, so
 // "future" wake times are relative to 1970-01-01T00:00:00.000Z.
@@ -31,6 +34,7 @@ function makeReadModel(input: {
   return {
     snapshotSequence: 0,
     projects: [],
+    lanes: [],
     threads: [
       {
         id: ThreadId.make("thread-1"),
@@ -64,7 +68,7 @@ function makeReadModel(input: {
 it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
   it.effect("snoozes a thread to a future wake time", () =>
     Effect.gen(function* () {
-      const event = yield* decideOrchestrationCommand({
+      const event = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.snooze",
           commandId: CommandId.make("cmd-snooze"),
@@ -85,7 +89,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
 
   it.effect("rejects a wake time that is not in the future", () =>
     Effect.gen(function* () {
-      const error = yield* decideOrchestrationCommand({
+      const error = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.snooze",
           commandId: CommandId.make("cmd-snooze-past"),
@@ -102,7 +106,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
     Effect.gen(function* () {
       // IsoDateTime is structurally a string, so garbage can reach the
       // decider; a NaN wake time must never persist as snooze state.
-      const error = yield* decideOrchestrationCommand({
+      const error = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.snooze",
           commandId: CommandId.make("cmd-snooze-garbage"),
@@ -126,7 +130,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
         turnId: null,
         createdAt: NOW,
       } as OrchestrationThread["activities"][number];
-      const error = yield* decideOrchestrationCommand({
+      const error = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.snooze",
           commandId: CommandId.make("cmd-snooze-blocked"),
@@ -141,7 +145,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
 
   it.effect("re-emits idempotently for a duplicate snooze to the same wake time", () =>
     Effect.gen(function* () {
-      const reEmit = yield* decideOrchestrationCommand({
+      const reEmit = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.snooze",
           commandId: CommandId.make("cmd-snooze-again"),
@@ -162,7 +166,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
 
   it.effect("re-snoozing to a DIFFERENT wake time stamps fresh", () =>
     Effect.gen(function* () {
-      const event = yield* decideOrchestrationCommand({
+      const event = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.snooze",
           commandId: CommandId.make("cmd-snooze-extend"),
@@ -181,7 +185,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
 
   it.effect("unsnoozes with reason user and re-emits idempotently when awake", () =>
     Effect.gen(function* () {
-      const event = yield* decideOrchestrationCommand({
+      const event = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.unsnooze",
           commandId: CommandId.make("cmd-unsnooze"),
@@ -197,7 +201,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
         expect(events[0].payload.updatedAt).not.toBe(NOW);
       }
 
-      const awake = yield* decideOrchestrationCommand({
+      const awake = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.unsnooze",
           commandId: CommandId.make("cmd-unsnooze-awake"),
@@ -228,7 +232,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
         createdAt: "1969-12-31T23:59:30.000Z",
         updatedAt: "1969-12-31T23:59:30.000Z",
       } as OrchestrationThread["messages"][number];
-      const error = yield* decideOrchestrationCommand({
+      const error = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.snooze",
           commandId: CommandId.make("cmd-snooze-queued"),
@@ -243,7 +247,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
 
   it.effect("rejects snoozing an archived thread", () =>
     Effect.gen(function* () {
-      const error = yield* decideOrchestrationCommand({
+      const error = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.snooze",
           commandId: CommandId.make("cmd-snooze-archived"),
@@ -258,7 +262,7 @@ it.layer(NodeServices.layer)("snoozed thread decider", (it) => {
 
   it.effect("a user message spends the snooze return ticket (activity wake)", () =>
     Effect.gen(function* () {
-      const result = yield* decideOrchestrationCommand({
+      const result = yield* decideUserOrchestrationCommand({
         command: {
           type: "thread.turn.start",
           commandId: CommandId.make("cmd-turn-start"),

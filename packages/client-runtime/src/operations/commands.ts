@@ -31,6 +31,9 @@ type CommandInput<T extends CommandType> = Omit<
 export type CreateProjectInput = CommandInput<"project.create">;
 export type UpdateProjectInput = CommandInput<"project.meta.update">;
 export type DeleteProjectInput = CommandInput<"project.delete">;
+export type CreateLaneInput = CommandInput<"lane.create">;
+export type UpdateLaneInput = CommandInput<"lane.update">;
+export type ArchiveLaneInput = CommandInput<"lane.archive">;
 export type CreateThreadInput = CommandInput<"thread.create">;
 export type DeleteThreadInput = CommandInput<"thread.delete">;
 export type ArchiveThreadInput = CommandInput<"thread.archive">;
@@ -44,6 +47,7 @@ export type UnpinThreadInput = CommandInput<"thread.unpin">;
 export type ReorderPinnedThreadInput = CommandInput<"thread.pin.reorder">;
 export type UpdateThreadMetadataInput = CommandInput<"thread.meta.update">;
 export type SetThreadRuntimeModeInput = CommandInput<"thread.runtime-mode.set">;
+export type SetThreadWorkflowLaneInput = CommandInput<"thread.workflow-lane.set">;
 export type SetThreadInteractionModeInput = CommandInput<"thread.interaction-mode.set">;
 export type StartThreadTurnInput = CommandInput<"thread.turn.start">;
 export type InterruptThreadTurnInput = CommandInput<"thread.turn.interrupt">;
@@ -114,6 +118,36 @@ export const deleteProject: (input: DeleteProjectInput) => CommandEffect = Effec
   return yield* dispatch({
     ...input,
     type: "project.delete",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const createLane: (input: CreateLaneInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.createLane",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "lane.create",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const updateLane: (input: UpdateLaneInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.updateLane",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "lane.update",
+    commandId: yield* commandId(input),
+  });
+});
+
+export const archiveLane: (input: ArchiveLaneInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.archiveLane",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "lane.archive",
     commandId: yield* commandId(input),
   });
 });
@@ -251,6 +285,16 @@ export const setThreadRuntimeMode: (input: SetThreadRuntimeModeInput) => Command
     createdAt: metadata.createdAt,
   });
 });
+
+export const setThreadWorkflowLane: (input: SetThreadWorkflowLaneInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.setThreadWorkflowLane")(function* (input) {
+    return yield* dispatch({
+      type: "thread.workflow-lane.set",
+      commandId: yield* commandId(input),
+      threadId: input.threadId,
+      workflowLane: input.workflowLane,
+    });
+  });
 
 export const setThreadInteractionMode: (input: SetThreadInteractionModeInput) => CommandEffect =
   Effect.fn("EnvironmentCommands.setThreadInteractionMode")(function* (input) {

@@ -56,6 +56,7 @@ function makeSnapshot(
     snapshot: {
       snapshotSequence: 1,
       projects,
+      lanes: [],
       threads,
       updatedAt: "2026-06-04T00:00:00.000Z",
     },

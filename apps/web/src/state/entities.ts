@@ -13,6 +13,7 @@ import type {
   OrchestrationProposedPlan,
   OrchestrationSession,
   OrchestrationThreadActivity,
+  LaneDefinition,
   ScopedProjectRef,
   ScopedThreadRef,
   ServerConfig,
@@ -23,7 +24,7 @@ import { useMemo } from "react";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
-import { allEnvironmentShellsBootstrappedAtom } from "./shell";
+import { allEnvironmentShellsBootstrappedAtom, environmentLaneRegistriesAtom } from "./shell";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
 
 const EMPTY_PROJECT_REFS: ReadonlyArray<ScopedProjectRef> = Object.freeze([]);
@@ -118,6 +119,16 @@ export function useServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
 
 export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
+}
+
+export function useLaneRegistries(): ReadonlyMap<EnvironmentId, ReadonlyArray<LaneDefinition>> {
+  return useAtomValue(environmentLaneRegistriesAtom);
+}
+
+export function readEnvironmentLaneRegistry(
+  environmentId: EnvironmentId,
+): ReadonlyArray<LaneDefinition> {
+  return appAtomRegistry.get(environmentLaneRegistriesAtom).get(environmentId) ?? [];
 }
 
 export function useAllEnvironmentShellsBootstrapped(): boolean {

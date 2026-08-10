@@ -154,6 +154,7 @@ function makeService(input: {
             Effect.succeed({
               snapshotSequence: 1,
               projects: input.projects,
+              lanes: [],
               threads: [],
               updatedAt: "2026-07-01T00:00:00Z",
             }),

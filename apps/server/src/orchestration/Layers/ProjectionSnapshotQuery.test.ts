@@ -28,15 +28,50 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
-const projectionSnapshotLayer = it.layer(
-  OrchestrationProjectionSnapshotQueryLive.pipe(
-    Layer.provide(ThreadBackgroundLiveness.layer),
-    Layer.provide(ThreadPlanProgress.layer),
-    Layer.provideMerge(RepositoryIdentityResolver.layer),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(NodeServices.layer),
-  ),
+const projectionSnapshotTestLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+  Layer.provide(ThreadBackgroundLiveness.layer),
+  Layer.provide(ThreadPlanProgress.layer),
+  Layer.provideMerge(RepositoryIdentityResolver.layer),
+  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(NodeServices.layer),
 );
+const projectionSnapshotLayer = it.layer(projectionSnapshotTestLayer);
+const projectionSnapshotErrorLayer = it.layer(projectionSnapshotTestLayer);
+
+projectionSnapshotErrorLayer("ProjectionSnapshotQuery lane errors", (it) => {
+  it.effect("maps lane query failures to persistence errors for every snapshot shape", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`ALTER TABLE projection_lanes RENAME TO projection_lanes_saved`;
+
+      const snapshotError = yield* snapshotQuery.getSnapshot().pipe(Effect.flip);
+      assert.equal(snapshotError._tag, "PersistenceSqlError");
+      assert.equal(snapshotError.operation, "ProjectionSnapshotQuery.getSnapshot:listLanes:query");
+
+      const commandError = yield* snapshotQuery.getCommandReadModel().pipe(Effect.flip);
+      assert.equal(commandError._tag, "PersistenceSqlError");
+      assert.equal(
+        commandError.operation,
+        "ProjectionSnapshotQuery.getCommandReadModel:listLanes:query",
+      );
+
+      const shellError = yield* snapshotQuery.getShellSnapshot().pipe(Effect.flip);
+      assert.equal(shellError._tag, "PersistenceSqlError");
+      assert.equal(
+        shellError.operation,
+        "ProjectionSnapshotQuery.getShellSnapshot:listLanes:query",
+      );
+
+      const archivedError = yield* snapshotQuery.getArchivedShellSnapshot().pipe(Effect.flip);
+      assert.equal(archivedError._tag, "PersistenceSqlError");
+      assert.equal(
+        archivedError.operation,
+        "ProjectionSnapshotQuery.getArchivedShellSnapshot:listLanes:query",
+      );
+    }),
+  );
+});
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
@@ -325,6 +360,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           snoozedAt: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
+          workflowLane: null,
           titleRegeneration: null,
           deletedAt: null,
           messages: [
@@ -444,6 +480,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           snoozedAt: null,
           pinnedAt: "2026-02-24T00:00:01.000Z",
           pinOrderKey: "gm",
+          workflowLane: null,
           titleRegeneration: null,
           session: {
             threadId: ThreadId.make("thread-1"),

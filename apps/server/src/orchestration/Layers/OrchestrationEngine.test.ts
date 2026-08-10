@@ -2,6 +2,7 @@ import {
   CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  LaneId,
   MessageId,
   ProjectId,
   ThreadId,
@@ -133,6 +134,7 @@ describe("OrchestrationEngine", () => {
           deletedAt: null,
         },
       ],
+      lanes: [],
       threads: [
         {
           id: ThreadId.make("thread-bootstrap"),
@@ -186,6 +188,7 @@ describe("OrchestrationEngine", () => {
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],
+              lanes: [],
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
@@ -193,6 +196,7 @@ describe("OrchestrationEngine", () => {
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
               projects: [],
+              lanes: [],
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
@@ -299,6 +303,59 @@ describe("OrchestrationEngine", () => {
     const readModelA = await system.readModel();
     const readModelB = await system.readModel();
     expect(readModelB).toEqual(readModelA);
+    await system.dispose();
+  });
+
+  it("persists server-derived user provenance over a caller-asserted agent value", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-provenance-project-create"),
+        projectId: asProjectId("project-provenance"),
+        title: "Provenance",
+        workspaceRoot: "/tmp/project-provenance",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-provenance-thread-create"),
+        threadId: ThreadId.make("thread-provenance"),
+        projectId: asProjectId("project-provenance"),
+        title: "Provenance",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const callerAssertedCommand = {
+      type: "thread.workflow-lane.set" as const,
+      commandId: CommandId.make("cmd-caller-asserted-provenance"),
+      threadId: ThreadId.make("thread-provenance"),
+      workflowLane: LaneId.make("ready"),
+      placedBy: "agent" as const,
+    };
+    await system.run(engine.dispatch(callerAssertedCommand));
+
+    const events = await system.run(Stream.runCollect(engine.readEvents(0)));
+    const persisted = Array.from(events).find((event) => event.type === "thread.workflow-lane-set");
+    expect(persisted?.type).toBe("thread.workflow-lane-set");
+    if (persisted?.type !== "thread.workflow-lane-set") {
+      throw new Error("Expected a persisted workflow lane event");
+    }
+    expect(persisted.payload.workflowLane).toBe("ready");
     await system.dispose();
   });
 

@@ -22,6 +22,7 @@ import {
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
+  ThreadWorkflowLaneSetPayload,
   ThreadSettledPayload,
   ThreadPinnedPayload,
   ThreadPinReorderedPayload,
@@ -189,6 +190,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
+    lanes: [],
     threads: [],
     updatedAt: nowIso,
   };
@@ -278,6 +280,29 @@ export function projectEvent(
         })),
       );
 
+    case "lane.created":
+      return Effect.succeed({
+        ...nextBase,
+        lanes: [
+          ...nextBase.lanes.filter((lane) => lane.id !== event.payload.lane.id),
+          event.payload.lane,
+        ].toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id)),
+      });
+
+    case "lane.updated":
+      return Effect.succeed({
+        ...nextBase,
+        lanes: nextBase.lanes
+          .map((lane) => (lane.id === event.payload.lane.id ? event.payload.lane : lane))
+          .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id)),
+      });
+
+    case "lane.archived":
+      return Effect.succeed({
+        ...nextBase,
+        lanes: nextBase.lanes.filter((lane) => lane.id !== event.payload.laneId),
+      });
+
     case "thread.created":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -305,6 +330,7 @@ export function projectEvent(
             settledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
+            workflowLane: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -467,6 +493,22 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             runtimeMode: payload.runtimeMode,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.workflow-lane-set":
+      return decodeForEvent(
+        ThreadWorkflowLaneSetPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            workflowLane: payload.workflowLane,
             updatedAt: payload.updatedAt,
           }),
         })),

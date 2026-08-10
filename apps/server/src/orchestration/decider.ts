@@ -1,8 +1,10 @@
 import {
   EventId,
+  LaneId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type WorkflowLane,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
@@ -28,6 +30,13 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 // window is a failed/stale start, not pending work. Mirrors the client's
 // QUEUED_TURN_START_GRACE_MS in client-runtime threadSettled.ts.
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+
+export const SETTLED_WORKFLOW_LANE_ID = LaneId.make("settled");
+export const SNOOZED_WORKFLOW_LANE_ID = LaneId.make("snoozed");
+
+export function isLifecycleWorkflowLane(laneId: WorkflowLane): boolean {
+  return laneId === SETTLED_WORKFLOW_LANE_ID || laneId === SNOOZED_WORKFLOW_LANE_ID;
+}
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -346,6 +355,89 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           projectId: command.projectId,
           deletedAt: occurredAt,
         },
+      };
+    }
+
+    case "lane.create": {
+      if (readModel.lanes.some((lane) => lane.id === command.lane.id)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.lane.id}' already exists.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.lane.id,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.created",
+        payload: {
+          lane: command.lane,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "lane.update": {
+      const lane = readModel.lanes.find((lane) => lane.id === command.laneId);
+      if (lane === undefined) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.laneId}' does not exist.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.updated",
+        payload: {
+          lane: {
+            ...lane,
+            ...(command.name !== undefined ? { name: command.name } : {}),
+            ...(command.description !== undefined ? { description: command.description } : {}),
+            ...(command.order !== undefined ? { order: command.order } : {}),
+          },
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "lane.archive": {
+      if (!readModel.lanes.some((lane) => lane.id === command.laneId)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.laneId}' does not exist.`,
+        });
+      }
+      const assignedThreadCount = readModel.threads.filter(
+        (thread) => thread.deletedAt === null && thread.workflowLane === command.laneId,
+      ).length;
+      if (assignedThreadCount > 0) {
+        const noun = assignedThreadCount === 1 ? "thread" : "threads";
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.laneId}' has ${assignedThreadCount} assigned ${noun} and cannot be archived.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "lane",
+          aggregateId: command.laneId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "lane.archived",
+        payload: { laneId: command.laneId, archivedAt: occurredAt },
       };
     }
 
@@ -883,6 +975,35 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           runtimeMode: command.runtimeMode,
+          updatedAt: occurredAt,
+        },
+      };
+    }
+
+    case "thread.workflow-lane.set": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (command.workflowLane !== null && isLifecycleWorkflowLane(command.workflowLane)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Lane '${command.workflowLane}' is a lifecycle lane and cannot be stored as workflowLane.`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.workflow-lane-set",
+        payload: {
+          threadId: command.threadId,
+          workflowLane: command.workflowLane,
           updatedAt: occurredAt,
         },
       };

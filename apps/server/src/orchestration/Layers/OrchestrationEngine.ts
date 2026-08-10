@@ -1,4 +1,5 @@
 import type {
+  LaneId,
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
@@ -57,8 +58,8 @@ interface CommandEnvelope {
 }
 
 function commandToAggregateRef(command: OrchestrationCommand): {
-  readonly aggregateKind: "project" | "thread";
-  readonly aggregateId: ProjectId | ThreadId;
+  readonly aggregateKind: "lane" | "project" | "thread";
+  readonly aggregateId: LaneId | ProjectId | ThreadId;
 } {
   switch (command.type) {
     case "project.create":
@@ -67,6 +68,17 @@ function commandToAggregateRef(command: OrchestrationCommand): {
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
+      };
+    case "lane.create":
+      return {
+        aggregateKind: "lane",
+        aggregateId: command.lane.id,
+      };
+    case "lane.update":
+    case "lane.archive":
+      return {
+        aggregateKind: "lane",
+        aggregateId: command.laneId,
       };
     default:
       return {
