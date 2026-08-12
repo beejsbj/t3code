@@ -329,6 +329,33 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Worked for 8.0s");
   });
 
+  it("renders the same user message in default and compact density", () => {
+    const timelineEntries = [buildUserTimelineEntry("Hello from the board")];
+
+    const defaultMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
+    const compactMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} density="compact" />,
+    );
+
+    expect(defaultMarkup).toContain("Hello from the board");
+    expect(compactMarkup).toContain("Hello from the board");
+    expect(compactMarkup).toContain('class="h-1"');
+  });
+
+  it("forwards viewport behavior classes to the list", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Hello")]}
+        viewportClassName="pointer-coarse:overflow-y-hidden"
+      />,
+    );
+
+    expect(markup).toContain("pointer-coarse:overflow-y-hidden");
+  });
+
   it("keeps assistant changed-files headers sticky below the thread header", () => {
     const assistantMessageId = MessageId.make("message-assistant-with-files");
     const turnId = TurnId.make("turn-with-files");

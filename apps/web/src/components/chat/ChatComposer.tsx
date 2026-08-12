@@ -1292,6 +1292,7 @@ export interface ChatComposerProps {
   setThreadError: (threadId: ThreadId | null, error: string | null) => void;
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
+  density?: "default" | "compact";
 }
 
 // --------------------------------------------------------------------------
@@ -1382,7 +1383,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setThreadError,
     onExpandImage,
     onFileOpen,
+    density = "default",
   } = props;
+  const isEmbeddedCompact = density === "compact";
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
@@ -1784,8 +1787,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
-  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(isEmbeddedCompact);
+  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] =
+    useState(isEmbeddedCompact);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [isComposerScrollCollapsed, setIsComposerScrollCollapsed] = useState(false);
@@ -4712,8 +4716,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (isInsideRestingComposerControlScope(event.target)) return;
         composerMentionDragHandlers.onDrop(event);
       }}
-      className="mx-auto w-full min-w-0 max-w-3xl"
+      className={cn(
+        "mx-auto w-full min-w-0",
+        isEmbeddedCompact ? "max-w-full" : "max-w-3xl",
+      )}
       data-chat-composer-form="true"
+      data-chat-composer-density={density}
     >
       {composerControlsInStrip && restingControlsHost
         ? createPortal(
@@ -4898,7 +4906,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
-          className={composerProviderState.composerFrameClassName}
+          className={cn(
+            isEmbeddedCompact
+              ? "rounded-md border border-border/70 after:hidden"
+              : composerProviderState.composerFrameClassName,
+          )}
         >
           <div
             ref={composerSurfaceRef}
