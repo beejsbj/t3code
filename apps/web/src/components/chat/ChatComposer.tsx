@@ -718,6 +718,7 @@ export interface ChatComposerProps {
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   openingVideoAttachmentId: string | null;
+  density?: "default" | "compact";
 }
 
 // --------------------------------------------------------------------------
@@ -799,7 +800,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
     openingVideoAttachmentId,
+    density = "default",
   } = props;
+  const isEmbeddedCompact = density === "compact";
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
@@ -1196,8 +1199,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
-  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(isEmbeddedCompact);
+  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] =
+    useState(isEmbeddedCompact);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
@@ -3427,8 +3431,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onDragOverCapture={composerMentionDragHandlers.onDragOver}
       onDragLeaveCapture={onComposerMentionDragLeaveCapture}
       onDropCapture={composerMentionDragHandlers.onDrop}
-      className={cn("mx-auto w-full min-w-0 max-w-3xl", hasShoulderTab && "pt-7")}
+      className={cn(
+        "mx-auto w-full min-w-0",
+        isEmbeddedCompact ? "max-w-full" : "max-w-3xl",
+        hasShoulderTab && "pt-7",
+      )}
       data-chat-composer-form="true"
+      data-chat-composer-density={density}
     >
       {showComposerTopDrawer && (!isTasksDrawerOpen || hasBlockingComposerTopDrawer) ? (
         <div
@@ -3577,8 +3586,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         <div
           data-chat-composer-main-surface="true"
           className={cn(
-            "group relative z-10 rounded-[22px] p-px transition-colors duration-200",
-            composerProviderState.composerFrameClassName,
+            "group relative z-10 p-px transition-colors duration-200",
+            isEmbeddedCompact ? "rounded-md border border-border/70" : "rounded-[22px]",
+            !isEmbeddedCompact && composerProviderState.composerFrameClassName,
           )}
         >
           <div

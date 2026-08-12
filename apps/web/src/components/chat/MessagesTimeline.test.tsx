@@ -331,6 +331,21 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("px-1 text-sm leading-relaxed text-muted-foreground");
   });
 
+  it("renders the same user message in default and compact density", () => {
+    const timelineEntries = [buildUserTimelineEntry("Hello from the board")];
+
+    const defaultMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />,
+    );
+    const compactMarkup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} density="compact" />,
+    );
+
+    expect(defaultMarkup).toContain("Hello from the board");
+    expect(compactMarkup).toContain("Hello from the board");
+    expect(compactMarkup).toContain('class="h-1"');
+  });
+
   it("uses the larger leading inset only when the top fade is enabled", () => {
     const timelineEntries = [buildUserTimelineEntry("Hello")];
 
@@ -345,6 +360,18 @@ describe("MessagesTimeline", () => {
     expect(compactMarkup).not.toContain("topbar-scroll-fade");
     expect(fadedMarkup).toContain('class="h-[var(--workspace-titlebar-scroll-fade-height)]"');
     expect(fadedMarkup).toContain("topbar-scroll-fade");
+  });
+
+  it("forwards viewport behavior classes to the list", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[buildUserTimelineEntry("Hello")]}
+        viewportClassName="pointer-coarse:overflow-y-hidden"
+      />,
+    );
+
+    expect(markup).toContain("pointer-coarse:overflow-y-hidden");
   });
 
   it("keeps assistant changed-files headers sticky below the thread header", () => {

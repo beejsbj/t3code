@@ -206,6 +206,8 @@ function TimelineLoadEarlierHeader({
   );
 }
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const TIMELINE_LIST_COMPACT_HEADER = <div className="h-1" />;
+const TIMELINE_LIST_COMPACT_FOOTER = <div className="h-1" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   animated: false,
@@ -254,13 +256,17 @@ interface MessagesTimelineProps {
    * maintainScrollAtEnd would otherwise re-pin regardless of ChatView's
    * scroll-mode refs whenever the user drifts near the bottom.
    */
-  liveFollowEnabled: boolean;
+  liveFollowEnabled?: boolean;
   onIsAtEndChange: (isAtEnd: boolean) => void;
   onManualNavigation: () => void;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
+  density?: "default" | "compact";
+  viewportClassName?: string;
+  /** Kept for embedded-card callers using the previous anchoring contract. */
+  onAnchorSizeChanged?: (messageId: MessageId, size: number) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -295,13 +301,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   anchorMessageId,
   onAnchorReady,
   contentInsetEndAdjustment,
-  liveFollowEnabled,
+  liveFollowEnabled = true,
   onIsAtEndChange,
   onManualNavigation,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  density = "default",
+  viewportClassName,
 }: MessagesTimelineProps) {
+  const isCompact = density === "compact";
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -585,11 +594,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // from TimelineRowCtx, which propagates through LegendList's memo.
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-clip" data-timeline-root="true">
+      <div
+        className={cn(
+          "mx-auto w-full min-w-0 overflow-x-clip",
+          isCompact ? "max-w-full" : "max-w-3xl",
+        )}
+        data-timeline-root="true"
+      >
         <TimelineRowContent row={item} />
       </div>
     ),
-    [],
+    [isCompact],
   );
 
   if (rows.length === 0 && !isWorking) {
@@ -598,7 +613,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-placeholder text-sm">Send a message to start the conversation.</p>
+        <p
+          className={cn(
+            isCompact ? "text-[10px] text-muted-foreground/30" : "text-placeholder text-sm",
+          )}
+        >
+          Send a message to start the conversation.
+        </p>
       </div>
     );
   }
@@ -625,11 +646,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             maintainVisibleContentPosition={maintainVisibleContentPosition}
             onScroll={handleScroll}
             className={cn(
-              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain px-3 [overflow-anchor:none] sm:px-5",
+              "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
+              isCompact ? "px-1.5" : "px-3 sm:px-5",
               topFadeEnabled && "topbar-scroll-fade",
+              viewportClassName,
             )}
             ListHeaderComponent={
-              loadEarlier !== null ? (
+              isCompact ? (
+                TIMELINE_LIST_COMPACT_HEADER
+              ) : loadEarlier !== null ? (
                 <TimelineLoadEarlierHeader
                   loading={loadEarlier.loading}
                   onLoadEarlier={loadEarlier.onLoadEarlier}
@@ -641,22 +666,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 TIMELINE_LIST_HEADER
               )
             }
-            ListFooterComponent={TIMELINE_LIST_FOOTER}
+            ListFooterComponent={isCompact ? TIMELINE_LIST_COMPACT_FOOTER : TIMELINE_LIST_FOOTER}
           />
-          <TimelineMinimap
-            items={minimapItems}
-            hasPersistentGutter={minimapHasPersistentGutter}
-            hitStripWidth={minimapHitStripWidth}
-            stripMap={minimapStripMap}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
-          />
+          {!isCompact ? (
+            <TimelineMinimap
+              items={minimapItems}
+              hasPersistentGutter={minimapHasPersistentGutter}
+              hitStripWidth={minimapHitStripWidth}
+              stripMap={minimapStripMap}
+              onSelect={(item) => {
+                onManualNavigation();
+                void listRef.current?.scrollToIndex({
+                  index: item.rowIndex,
+                  animated: true,
+                  viewOffset: 24,
+                });
+              }}
+            />
+          ) : null}
         </div>
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
