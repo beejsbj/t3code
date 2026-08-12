@@ -52,18 +52,6 @@ export const DEFAULT_BOARD_LANES: ReadonlyArray<BoardLane> = Object.freeze([
     description: "Finished work you want to keep visible on this board",
     order: 2,
   },
-  {
-    id: "settled",
-    name: "Settled",
-    description: "Sessions you want to keep parked as settled on this board",
-    order: 3,
-  },
-  {
-    id: "snoozed",
-    name: "Snoozed",
-    description: "Sessions you want to revisit later on this board",
-    order: 4,
-  },
 ]);
 
 export interface BoardLaneState {

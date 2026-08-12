@@ -1,6 +1,49 @@
+import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import type { OrchestrationThreadShell } from "@t3tools/contracts";
+
 import type { BoardLane, BoardLaneId } from "../../board/boardLaneStore.ts";
 
 export const BOARD_WORKFLOW_COLUMN_WIDTH = 380;
+
+export type BoardThreadVisibility = "visible" | "archived" | "snoozed" | "settled";
+
+/**
+ * The board is an active-work surface. Lifecycle state stays server-backed,
+ * while local lane placement survives invisibility so a woken or re-engaged
+ * thread returns to the same spatial slot.
+ */
+export function resolveBoardThreadVisibility(
+  thread: OrchestrationThreadShell,
+  options: {
+    readonly now: string;
+    readonly autoSettleAfterDays: number | null;
+    readonly supportsSettlement: boolean;
+    readonly supportsSnooze: boolean;
+  },
+): BoardThreadVisibility {
+  if (thread.archivedAt !== null) return "archived";
+
+  // Snooze temporarily outranks pinning, matching the sidebar lifecycle.
+  if (options.supportsSnooze && effectiveSnoozed(thread, { now: options.now })) {
+    return "snoozed";
+  }
+
+  // Pinning protects a thread from automatic settlement. Explicit settle
+  // clears pinning server-side, so a conflict here can only be stale/raced.
+  if (thread.pinnedAt != null) return "visible";
+
+  if (
+    options.supportsSettlement &&
+    effectiveSettled(thread, {
+      now: options.now,
+      autoSettleAfterDays: options.autoSettleAfterDays,
+    })
+  ) {
+    return "settled";
+  }
+
+  return "visible";
+}
 
 /** Every local lane keeps its chosen width for the whole composed board. */
 export function boardLaneGridTemplateColumns(

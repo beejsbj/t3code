@@ -43,8 +43,9 @@ import { ensureLocalApi } from "../../localApi.ts";
 import { useProjectScopeStore } from "../../projectScopeStore.ts";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping.ts";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments.ts";
-import { useProjects, useThreadShells } from "../../state/entities.ts";
+import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
+import { useNowMinute } from "../../hooks/useNowMinute.ts";
 import { Button } from "../ui/button.tsx";
 import { Input } from "../ui/input.tsx";
 import {
@@ -73,6 +74,7 @@ import {
   reorderLaneUpdates,
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
+  resolveBoardThreadVisibility,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
@@ -119,9 +121,13 @@ function findCardNode(scroller: HTMLElement | null, threadKey: string): HTMLElem
 export function SessionBoard() {
   const threads = useThreadShells();
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const nowMinute = useNowMinute();
+  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   const projectScopeKey = useProjectScopeStore((state) => state.projectScopeKey);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [collapsedProjectKeys, setCollapsedProjectKeys] = useState<ReadonlySet<string>>(
@@ -243,47 +249,84 @@ export function SessionBoard() {
     [archiveLane],
   );
 
-  const placed = useMemo<ReadonlyArray<PlacedThread>>(() => {
-    return threads
-      .filter((thread) => thread.archivedAt === null)
-      .map<PlacedThread | null>((thread) => {
-        const ref = scopeThreadRef(thread.environmentId, thread.id);
-        const key = scopedThreadKey(ref);
-        const laneId = resolveBoardLane(selectBoardPlacement(placementByThreadKey, ref), lanes);
-        if (laneId === null) return null;
-        const columnKey = laneColumnKey(laneId);
-        const physicalProjectKey = boardProjectKey(thread.environmentId, thread.projectId);
-        const projectGroup = projectGroupByPhysicalKey.get(physicalProjectKey);
-        return {
-          ref,
-          environmentId: thread.environmentId,
-          key,
-          thread,
-          laneId,
-          environmentLabel:
-            environmentById.get(thread.environmentId)?.label ?? thread.environmentId,
-          environmentConnection: environmentById.get(thread.environmentId)?.connection ?? {
-            phase: "available",
-            error: null,
-            traceId: null,
-          },
-          projectKey: projectGroup?.projectKey ?? physicalProjectKey,
-          projectTitle:
-            projectGroup?.projectTitle ?? projectTitleById.get(physicalProjectKey) ?? "Project",
-          laneColumnKey: columnKey,
-          updatedAt: thread.updatedAt,
-        };
-      })
-      .filter((entry): entry is PlacedThread => entry !== null)
-      .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt));
+  const { placed, nextSnoozeWakeAtMs } = useMemo<{
+    readonly placed: ReadonlyArray<PlacedThread>;
+    readonly nextSnoozeWakeAtMs: number | null;
+  }>(() => {
+    // Inactivity settlement is minute-granular. Snoozes get an exact wake
+    // timer below, whose tick asks this memo for a fresh wall clock.
+    void nowMinute;
+    void snoozeWakeTick;
+    const now = new Date().toISOString();
+    let nextWakeAtMs = Number.POSITIVE_INFINITY;
+    const visibleThreads = threads.filter((thread) => {
+      const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
+      const visibility = resolveBoardThreadVisibility(thread, {
+        now,
+        autoSettleAfterDays,
+        supportsSettlement: capabilities?.threadSettlement === true,
+        supportsSnooze: capabilities?.threadSnooze === true,
+      });
+      if (visibility === "snoozed" && thread.snoozedUntil != null) {
+        const wakeAtMs = Date.parse(thread.snoozedUntil);
+        if (!Number.isNaN(wakeAtMs)) nextWakeAtMs = Math.min(nextWakeAtMs, wakeAtMs);
+      }
+      return visibility === "visible";
+    });
+
+    return {
+      placed: visibleThreads
+        .map<PlacedThread | null>((thread) => {
+          const ref = scopeThreadRef(thread.environmentId, thread.id);
+          const key = scopedThreadKey(ref);
+          const laneId = resolveBoardLane(selectBoardPlacement(placementByThreadKey, ref), lanes);
+          if (laneId === null) return null;
+          const columnKey = laneColumnKey(laneId);
+          const physicalProjectKey = boardProjectKey(thread.environmentId, thread.projectId);
+          const projectGroup = projectGroupByPhysicalKey.get(physicalProjectKey);
+          return {
+            ref,
+            environmentId: thread.environmentId,
+            key,
+            thread,
+            laneId,
+            environmentLabel:
+              environmentById.get(thread.environmentId)?.label ?? thread.environmentId,
+            environmentConnection: environmentById.get(thread.environmentId)?.connection ?? {
+              phase: "available",
+              error: null,
+              traceId: null,
+            },
+            projectKey: projectGroup?.projectKey ?? physicalProjectKey,
+            projectTitle:
+              projectGroup?.projectTitle ?? projectTitleById.get(physicalProjectKey) ?? "Project",
+            laneColumnKey: columnKey,
+            updatedAt: thread.updatedAt,
+          };
+        })
+        .filter((entry): entry is PlacedThread => entry !== null)
+        .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt)),
+      nextSnoozeWakeAtMs: Number.isFinite(nextWakeAtMs) ? nextWakeAtMs : null,
+    };
   }, [
+    autoSettleAfterDays,
     environmentById,
     lanes,
+    nowMinute,
     placementByThreadKey,
     projectGroupByPhysicalKey,
     projectTitleById,
+    serverConfigs,
+    snoozeWakeTick,
     threads,
   ]);
+
+  useEffect(() => {
+    if (nextSnoozeWakeAtMs === null) return;
+    const delayMs = Math.min(Math.max(0, nextSnoozeWakeAtMs - Date.now()) + 50, 2_147_483_647);
+    const id = window.setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
+    return () => window.clearTimeout(id);
+  }, [nextSnoozeWakeAtMs]);
 
   const laneMemberCountByKey = useMemo(() => {
     const counts = new Map<string, number>();

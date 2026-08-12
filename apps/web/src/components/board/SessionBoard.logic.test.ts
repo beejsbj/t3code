@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { BoardLane } from "../../board/boardLaneStore.ts";
+import {
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  TurnId,
+  type OrchestrationThreadShell,
+} from "@t3tools/contracts";
 
+import type { BoardLane } from "../../board/boardLaneStore.ts";
 import {
   boardLaneGridTemplateColumns,
   buildProjectSwimlanes,
@@ -13,9 +20,143 @@ import {
   reorderLaneUpdates,
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
+  resolveBoardThreadVisibility,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
+
+const NOW = "2026-08-12T16:00:00.000Z";
+
+function threadShell(overrides: Partial<OrchestrationThreadShell> = {}): OrchestrationThreadShell {
+  return {
+    id: ThreadId.make("thread-1"),
+    projectId: ProjectId.make("project-1"),
+    title: "Thread",
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    latestTurn: {
+      turnId: TurnId.make("turn-1"),
+      state: "completed",
+      requestedAt: "2026-08-12T15:00:00.000Z",
+      startedAt: "2026-08-12T15:00:01.000Z",
+      completedAt: "2026-08-12T15:01:00.000Z",
+      assistantMessageId: null,
+    },
+    createdAt: "2026-08-12T14:00:00.000Z",
+    updatedAt: "2026-08-12T15:01:00.000Z",
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    session: null,
+    latestUserMessageAt: "2026-08-12T15:00:00.000Z",
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    ...overrides,
+  };
+}
+
+const lifecycleOptions = {
+  now: NOW,
+  autoSettleAfterDays: 3,
+  supportsSettlement: true,
+  supportsSnooze: true,
+} as const;
+
+describe("resolveBoardThreadVisibility", () => {
+  it("hides archived, snoozed, and settled threads", () => {
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({ archivedAt: "2026-08-12T15:30:00.000Z" }),
+        lifecycleOptions,
+      ),
+    ).toBe("archived");
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({
+          snoozedAt: "2026-08-12T15:30:00.000Z",
+          snoozedUntil: "2026-08-12T17:00:00.000Z",
+        }),
+        lifecycleOptions,
+      ),
+    ).toBe("snoozed");
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({
+          settledOverride: "settled",
+          settledAt: "2026-08-12T15:30:00.000Z",
+        }),
+        lifecycleOptions,
+      ),
+    ).toBe("settled");
+  });
+
+  it("returns a thread when its lifecycle blocker makes it active again", () => {
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({
+          snoozedAt: "2026-08-12T15:30:00.000Z",
+          snoozedUntil: "2026-08-12T17:00:00.000Z",
+          hasPendingUserInput: true,
+        }),
+        lifecycleOptions,
+      ),
+    ).toBe("visible");
+    expect(
+      resolveBoardThreadVisibility(
+        threadShell({
+          settledOverride: "settled",
+          settledAt: "2026-08-12T15:30:00.000Z",
+          session: {
+            threadId: ThreadId.make("thread-1"),
+            status: "running",
+            providerName: "Codex",
+            runtimeMode: "full-access",
+            activeTurnId: TurnId.make("turn-2"),
+            lastError: null,
+            updatedAt: "2026-08-12T15:45:00.000Z",
+          },
+        }),
+        lifecycleOptions,
+      ),
+    ).toBe("visible");
+  });
+
+  it("does not hide lifecycle states a connected server cannot manage", () => {
+    const thread = threadShell({
+      settledOverride: "settled",
+      settledAt: "2026-08-12T15:30:00.000Z",
+      snoozedAt: "2026-08-12T15:30:00.000Z",
+      snoozedUntil: "2026-08-12T17:00:00.000Z",
+    });
+    expect(
+      resolveBoardThreadVisibility(thread, {
+        ...lifecycleOptions,
+        supportsSettlement: false,
+        supportsSnooze: false,
+      }),
+    ).toBe("visible");
+  });
+
+  it("keeps pinned threads visible instead of auto-settling them for inactivity", () => {
+    const stalePinned = threadShell({
+      pinnedAt: "2026-08-01T00:00:00.000Z",
+      latestUserMessageAt: "2026-08-01T00:00:00.000Z",
+      latestTurn: null,
+    });
+    expect(resolveBoardThreadVisibility(stalePinned, lifecycleOptions)).toBe("visible");
+    expect(resolveBoardThreadVisibility({ ...stalePinned, pinnedAt: null }, lifecycleOptions)).toBe(
+      "settled",
+    );
+  });
+});
 
 type TestPlacement = {
   readonly projectKey: string;

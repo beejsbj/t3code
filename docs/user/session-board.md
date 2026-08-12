@@ -12,6 +12,10 @@ task or summary of a session.
 Drag a card between lanes to place it. Use a session's context menu to choose a lane or remove it
 from the board. New and previously unplaced sessions appear in the leftmost lane.
 
+The board shows active work. Snoozed and settled sessions leave the board automatically without
+losing their lane placement. They return to the same lane when they wake or become active again.
+Archived sessions remain hidden.
+
 You can create, rename, describe, reorder, and archive lanes. Drag a lane's right edge to change its
 width, and drag the bottom of a card to change that card's height.
 
