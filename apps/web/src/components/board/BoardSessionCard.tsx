@@ -94,6 +94,7 @@ import { toastManager } from "../ui/toast.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import {
   boardCardVisitTimestamp,
+  resolveBoardTimelineFollowCancellation,
   shouldShowBoardStatusIcon,
   type BoardCardVisualState,
 } from "./BoardSessionCard.logic.ts";
@@ -671,6 +672,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
   const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const activeTimelineAnchorRef = useRef<MessageId | null>(null);
+  const timelineFollowCancellationRef = useRef({ cancelled: false, leftEndBand: false });
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
@@ -700,7 +702,9 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     resolvedTheme,
     onExpandImage: onExpandTimelineImage,
   });
-  activeTimelineAnchorRef.current = timelineAnchorMessageId;
+  activeTimelineAnchorRef.current = timelineFollowCancellationRef.current.cancelled
+    ? null
+    : timelineAnchorMessageId;
 
   const pendingApprovals = useMemo(() => derivePendingApprovals(activities), [activities]);
   const pendingUserInputs = useMemo(() => derivePendingUserInputs(activities), [activities]);
@@ -800,16 +804,18 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
 
   useEffect(() => {
     if (timelineAnchorMessageId === null) return;
+    timelineFollowCancellationRef.current = { cancelled: false, leftEndBand: false };
+    activeTimelineAnchorRef.current = timelineAnchorMessageId;
     positionedTimelineAnchorRef.current = null;
     setTimelineLiveFollowEnabled(true);
   }, [timelineAnchorMessageId]);
 
   const cancelTimelineFollow = useCallback(() => {
+    timelineFollowCancellationRef.current = { cancelled: true, leftEndBand: false };
     activeTimelineAnchorRef.current = null;
     positionedTimelineAnchorRef.current = null;
     setTimelineLiveFollowEnabled(false);
-    clearTimelineAnchor();
-  }, [clearTimelineAnchor]);
+  }, []);
 
   const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
     if (
@@ -847,9 +853,27 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     return lastRowTop + Math.max(1, lastRowHeight) > (state.scrollLength ?? 0);
   }, []);
 
-  const onTimelineIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (isAtEnd) setTimelineLiveFollowEnabled(true);
-  }, []);
+  const updateTimelineFollowForEndState = useCallback(
+    (isAtEnd: boolean, explicitReturn = false) => {
+      const wasCancelled = timelineFollowCancellationRef.current.cancelled;
+      const next = resolveBoardTimelineFollowCancellation({
+        state: timelineFollowCancellationRef.current,
+        isAtEnd,
+        explicitReturn,
+      });
+      timelineFollowCancellationRef.current = next;
+      if (!next.cancelled && isAtEnd) {
+        setTimelineLiveFollowEnabled(true);
+        if (wasCancelled) clearTimelineAnchor();
+      }
+    },
+    [clearTimelineAnchor],
+  );
+
+  const onTimelineIsAtEndChange = useCallback(
+    (isAtEnd: boolean) => updateTimelineFollowForEndState(isAtEnd),
+    [updateTimelineFollowForEndState],
+  );
 
   useEffect(() => {
     let frame: number | null = null;
@@ -865,7 +889,14 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
         const viewportIsAwayFromEnd = () =>
           resolveTimelineIsAtEnd(legendListRef.current?.getState(), 0) === false;
         const handleWheel = (event: WheelEvent) => {
-          if (event.deltaY < 0 && timelineContentOverflowsViewport()) cancelTimelineFollow();
+          if (event.deltaY < 0 && timelineContentOverflowsViewport()) {
+            cancelTimelineFollow();
+          } else if (event.deltaY > 0 && timelineFollowCancellationRef.current.cancelled) {
+            requestAnimationFrame(() => {
+              if (viewportIsAwayFromEnd()) return;
+              updateTimelineFollowForEndState(true, true);
+            });
+          }
         };
         const handleTouchMove = () => {
           if (viewportIsAwayFromEnd()) cancelTimelineFollow();
@@ -902,7 +933,12 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
       if (frame !== null) cancelAnimationFrame(frame);
       removeListeners?.();
     };
-  }, [cancelTimelineFollow, threadRef, timelineContentOverflowsViewport]);
+  }, [
+    cancelTimelineFollow,
+    threadRef,
+    timelineContentOverflowsViewport,
+    updateTimelineFollowForEndState,
+  ]);
   const acknowledgeFocus = useBoardFocusStore((state) => state.acknowledgeFocus);
 
   useEffect(() => {

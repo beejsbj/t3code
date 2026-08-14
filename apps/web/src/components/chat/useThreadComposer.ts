@@ -6,6 +6,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type ProviderInteractionMode,
+  type PreviewAnnotationPayload,
   type RuntimeMode,
   type ScopedThreadRef,
   type ServerProvider,
@@ -51,6 +52,7 @@ import {
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   resolveThreadMetadataUpdateForNextTurn,
+  deriveComposerSendState,
 } from "../ChatView.logic.ts";
 import {
   useComposerDraftStore,
@@ -59,8 +61,19 @@ import {
 } from "../../composerDraftStore.ts";
 import { useAssetUrls } from "../../assets/assetUrls.ts";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection.ts";
-import type { TerminalContextDraft } from "../../lib/terminalContext.ts";
-import type { ElementContextDraft } from "../../lib/elementContext.ts";
+import {
+  appendTerminalContextsToPrompt,
+  type TerminalContextDraft,
+} from "../../lib/terminalContext.ts";
+import {
+  appendElementContextsToPrompt,
+  type ElementContextDraft,
+} from "../../lib/elementContext.ts";
+import { appendPreviewAnnotationPrompt } from "../../lib/previewAnnotation.ts";
+import {
+  appendReviewCommentsToPrompt,
+  type ReviewCommentContext,
+} from "../../reviewCommentContext.ts";
 import type { ChatComposerProps } from "./ChatComposer.tsx";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview.tsx";
 import { toastManager } from "../ui/toast.tsx";
@@ -95,10 +108,45 @@ export function resolveBoardComposerSubmission(input: {
   return { text };
 }
 
+export function buildBoardComposerMessageText(input: {
+  readonly prompt: string;
+  readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  readonly elementContexts: ReadonlyArray<ElementContextDraft>;
+  readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+  readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
+}): string {
+  const withTerminalContexts = appendTerminalContextsToPrompt(input.prompt, input.terminalContexts);
+  const withElementContexts = appendElementContextsToPrompt(
+    withTerminalContexts,
+    input.elementContexts,
+  );
+  const withPreviewAnnotations = input.previewAnnotations.reduce(
+    (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
+    withElementContexts,
+  );
+  return appendReviewCommentsToPrompt(withPreviewAnnotations, input.reviewComments);
+}
+
 export function boardComposerDraftCanBeRestored(
-  draft: Pick<ComposerThreadDraftState, "prompt" | "images"> | null,
+  draft:
+    | (Pick<ComposerThreadDraftState, "prompt" | "images"> &
+        Partial<
+          Pick<
+            ComposerThreadDraftState,
+            "terminalContexts" | "elementContexts" | "previewAnnotations" | "reviewComments"
+          >
+        >)
+    | null,
 ): boolean {
-  return draft === null || (draft.prompt.length === 0 && draft.images.length === 0);
+  return (
+    draft === null ||
+    (draft.prompt.length === 0 &&
+      draft.images.length === 0 &&
+      (draft.terminalContexts?.length ?? 0) === 0 &&
+      (draft.elementContexts?.length ?? 0) === 0 &&
+      (draft.previewAnnotations?.length ?? 0) === 0 &&
+      (draft.reviewComments?.length ?? 0) === 0)
+  );
 }
 
 export function mergeBoardTimelineMessages(
@@ -417,17 +465,33 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       let sentDraft: {
         readonly prompt: string;
         readonly images: ComposerImageAttachment[];
+        readonly terminalContexts: TerminalContextDraft[];
+        readonly elementContexts: ElementContextDraft[];
+        readonly previewAnnotations: PreviewAnnotationPayload[];
+        readonly reviewComments: ReviewCommentContext[];
       } | null = null;
       let sendSucceeded = false;
       let sendError: unknown = null;
       try {
         const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
         if (!draft) return;
-        const submission = resolveBoardComposerSubmission({
+        const sendState = deriveComposerSendState({
           prompt: draft.prompt,
           imageCount: draft.images.length,
+          terminalContexts: draft.terminalContexts,
+          elementContextCount:
+            draft.elementContexts.length +
+            draft.previewAnnotations.length +
+            draft.reviewComments.length,
         });
-        if (submission === null) return;
+        if (!sendState.hasSendableContent) return;
+        const outgoingMessageText = buildBoardComposerMessageText({
+          prompt: draft.prompt,
+          terminalContexts: sendState.sendableTerminalContexts,
+          elementContexts: draft.elementContexts,
+          previewAnnotations: draft.previewAnnotations,
+          reviewComments: draft.reviewComments,
+        });
         const requestedModelSelection = resolveBoardComposerModelSelection(
           draft,
           summary.modelSelection,
@@ -452,25 +516,22 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           sizeBytes: image.sizeBytes,
           previewUrl: image.previewUrl,
         }));
-        const attachmentsPromise = Promise.all(
-          draft.images.map(async (image) => ({
-            type: "image" as const,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-            dataUrl: await readFileAsDataUrl(image.file),
-          })),
-        );
-
         optimisticMessageId = messageId;
-        sentDraft = { prompt: draft.prompt, images: [...draft.images] };
+        sentDraft = {
+          prompt: draft.prompt,
+          images: [...draft.images],
+          terminalContexts: [...draft.terminalContexts],
+          elementContexts: [...draft.elementContexts],
+          previewAnnotations: [...draft.previewAnnotations],
+          reviewComments: [...draft.reviewComments],
+        };
         setTimelineAnchorMessageId(messageId);
         setOptimisticUserMessages((existing) => [
           ...existing,
           {
             id: messageId,
             role: "user",
-            text: submission.text,
+            text: outgoingMessageText,
             ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
             turnId: null,
             createdAt,
@@ -503,7 +564,15 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             return;
           }
         }
-        const attachments = await attachmentsPromise;
+        const attachments = await Promise.all(
+          draft.images.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
         const result = await startThreadTurn({
           environmentId: threadRef.environmentId,
           input: {
@@ -511,7 +580,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             message: {
               messageId,
               role: "user",
-              text: submission.text,
+              text: outgoingMessageText,
               attachments,
             },
             modelSelection,
@@ -545,9 +614,15 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             for (const image of sentDraft.images) revokeBlobPreviewUrl(image.previewUrl);
             promptRef.current = sentDraft.prompt;
             composerImagesRef.current = retryImages;
+            composerTerminalContextsRef.current = sentDraft.terminalContexts;
+            composerElementContextsRef.current = sentDraft.elementContexts;
             const draftStore = useComposerDraftStore.getState();
             draftStore.setPrompt(threadRef, sentDraft.prompt);
             draftStore.addImages(threadRef, retryImages);
+            draftStore.setTerminalContexts(threadRef, sentDraft.terminalContexts);
+            draftStore.setElementContexts(threadRef, sentDraft.elementContexts);
+            draftStore.setPreviewAnnotations(threadRef, sentDraft.previewAnnotations);
+            draftStore.setReviewComments(threadRef, sentDraft.reviewComments);
             composerRef.current?.resetCursorState({
               prompt: sentDraft.prompt,
               cursor: sentDraft.prompt.length,
