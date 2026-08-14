@@ -176,8 +176,11 @@ export function SessionBoard() {
   const projectScopeKey = useProjectScopeStore((state) => state.projectScopeKey);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
   const [snoozeDropRequest, setSnoozeDropRequest] = useState<BoardSnoozeDropRequest | null>(null);
-  const [changeRequestStateByKey, setChangeRequestStateByKey] = useState<
-    ReadonlyMap<string, ChangeRequestStateLike | null>
+  const [changeRequestResolutionByKey, setChangeRequestResolutionByKey] = useState<
+    ReadonlyMap<
+      string,
+      { readonly sourceKey: string; readonly state: ChangeRequestStateLike | null }
+    >
   >(() => new Map());
   const [collapsedProjectKeys, setCollapsedProjectKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -218,6 +221,13 @@ export function SessionBoard() {
     }
     return map;
   }, [projects]);
+  const projectByPhysicalKey = useMemo(
+    () =>
+      new Map(
+        projects.map((project) => [boardProjectKey(project.environmentId, project.id), project]),
+      ),
+    [projects],
+  );
 
   const { projectGroupByPhysicalKey, projectRefByGroupKey } = useMemo(() => {
     const groups = buildSidebarProjectSnapshots({
@@ -331,17 +341,70 @@ export function SessionBoard() {
   );
 
   const handleChangeRequestState = useCallback(
-    (threadKey: string, state: ChangeRequestStateLike | null) => {
-      setChangeRequestStateByKey((current) => {
-        if (state === null && !current.has(threadKey)) return current;
-        if (state !== null && current.get(threadKey) === state) return current;
+    (threadKey: string, sourceKey: string, state: ChangeRequestStateLike | null) => {
+      setChangeRequestResolutionByKey((current) => {
+        const existing = current.get(threadKey);
+        if (existing?.sourceKey === sourceKey && existing.state === state) return current;
         const next = new Map(current);
-        if (state === null) next.delete(threadKey);
-        else next.set(threadKey, state);
+        next.set(threadKey, { sourceKey, state });
         return next;
       });
     },
     [],
+  );
+
+  const { changeRequestSourceKeyByThreadKey, changeRequestReporterGroups } = useMemo(() => {
+    const sourceKeyByThreadKey = new Map<string, string>();
+    const groups = new Map<
+      string,
+      {
+        readonly environmentId: SidebarThreadSummary["environmentId"];
+        readonly workspacePath: string;
+        readonly threads: Array<{
+          readonly cardKey: string;
+          readonly branch: string;
+          readonly sourceKey: string;
+        }>;
+      }
+    >();
+    for (const thread of threads) {
+      const supportsSettlement =
+        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
+      if (thread.archivedAt !== null || !supportsSettlement || thread.branch === null) continue;
+      const projectKey = boardProjectKey(thread.environmentId, thread.projectId);
+      const project = projectByPhysicalKey.get(projectKey);
+      const cardKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      if (!project) {
+        sourceKeyByThreadKey.set(cardKey, `pending-project:${projectKey}:${thread.branch}`);
+        continue;
+      }
+      const workspacePath = thread.worktreePath ?? project.workspaceRoot;
+      const workspaceKey = `${thread.environmentId}:${workspacePath}`;
+      const sourceKey = `${workspaceKey}:${thread.branch}`;
+      sourceKeyByThreadKey.set(cardKey, sourceKey);
+      const group = groups.get(workspaceKey) ?? {
+        environmentId: thread.environmentId,
+        workspacePath,
+        threads: [],
+      };
+      group.threads.push({ cardKey, branch: thread.branch, sourceKey });
+      groups.set(workspaceKey, group);
+    }
+    return {
+      changeRequestSourceKeyByThreadKey: sourceKeyByThreadKey,
+      changeRequestReporterGroups: [...groups.entries()],
+    };
+  }, [projectByPhysicalKey, serverConfigs, threads]);
+
+  const changeRequestStateForThread = useCallback(
+    (threadKey: string): ChangeRequestStateLike | null => {
+      const expectedSourceKey = changeRequestSourceKeyByThreadKey.get(threadKey);
+      const resolution = changeRequestResolutionByKey.get(threadKey);
+      return expectedSourceKey !== undefined && resolution?.sourceKey === expectedSourceKey
+        ? resolution.state
+        : null;
+    },
+    [changeRequestResolutionByKey, changeRequestSourceKeyByThreadKey],
   );
 
   const { placed, nextSnoozeWakeAtMs } = useMemo<{
@@ -366,7 +429,7 @@ export function SessionBoard() {
             autoSettleAfterDays,
             supportsSettlement: capabilities?.threadSettlement === true,
             supportsSnooze: capabilities?.threadSnooze === true,
-            changeRequestState: changeRequestStateByKey.get(key) ?? null,
+            changeRequestState: changeRequestStateForThread(key),
           });
           if (visibility === "archived") return null;
           if (visibility === "snoozed" && thread.snoozedUntil != null) {
@@ -418,7 +481,7 @@ export function SessionBoard() {
     };
   }, [
     autoSettleAfterDays,
-    changeRequestStateByKey,
+    changeRequestStateForThread,
     environmentById,
     lanes,
     settlementNow,
@@ -437,6 +500,13 @@ export function SessionBoard() {
 
   useEffect(() => {
     for (const entry of placed) {
+      const expectedSourceKey = changeRequestSourceKeyByThreadKey.get(entry.key);
+      if (
+        expectedSourceKey !== undefined &&
+        changeRequestResolutionByKey.get(entry.key)?.sourceKey !== expectedSourceKey
+      ) {
+        continue;
+      }
       const current = laneEntryByThreadKey[entry.key];
       if (current?.laneId === entry.laneId) continue;
       // Implicit Triage has creation time as its natural arrival and needs no
@@ -459,7 +529,14 @@ export function SessionBoard() {
           : null;
       recordLaneEntry(entry.ref, entry.laneId, lifecycleEnteredAt ?? undefined);
     }
-  }, [laneEntryByThreadKey, placed, placementByThreadKey, recordLaneEntry]);
+  }, [
+    changeRequestResolutionByKey,
+    changeRequestSourceKeyByThreadKey,
+    laneEntryByThreadKey,
+    placed,
+    placementByThreadKey,
+    recordLaneEntry,
+  ]);
 
   useEffect(() => {
     if (nextSnoozeWakeAtMs === null) return;
@@ -788,7 +865,7 @@ export function SessionBoard() {
           const wasAlsoSettled = effectiveSettled(entry.thread, {
             now: settlementNow,
             autoSettleAfterDays,
-            changeRequestState: changeRequestStateByKey.get(entry.key) ?? null,
+            changeRequestState: changeRequestStateForThread(entry.key),
           });
           if (
             !(await runLifecycleCommand("Failed to wake thread", () => unsnoozeThread(entry.ref)))
@@ -866,7 +943,7 @@ export function SessionBoard() {
     [
       autoSettleAfterDays,
       boardLanes,
-      changeRequestStateByKey,
+      changeRequestStateForThread,
       groupByProject,
       settlementNow,
       orderedPlaced,
@@ -882,21 +959,15 @@ export function SessionBoard() {
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      {threads.map((thread) => {
-        const supportsSettlement =
-          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
-          true;
-        if (thread.archivedAt !== null || !supportsSettlement) return null;
-        const cardKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-        return (
-          <BoardChangeRequestStateReporter
-            key={cardKey}
-            cardKey={cardKey}
-            thread={thread}
-            onChangeRequestState={handleChangeRequestState}
-          />
-        );
-      })}
+      {changeRequestReporterGroups.map(([workspaceKey, group]) => (
+        <BoardChangeRequestStateReporter
+          key={workspaceKey}
+          environmentId={group.environmentId}
+          workspacePath={group.workspacePath}
+          threads={group.threads}
+          onChangeRequestState={handleChangeRequestState}
+        />
+      ))}
       <header
         className={cn(
           "flex min-h-12 shrink-0 items-center gap-2 border-b border-border py-2 pl-[calc(env(safe-area-inset-left)+0.5rem)] pr-[calc(env(safe-area-inset-right)+0.5rem)] transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:gap-3 sm:px-4 sm:py-2.5",
@@ -1047,7 +1118,7 @@ export function SessionBoard() {
                           entries={bySwimlaneLaneColumn.get(column.key) ?? []}
                           draggingKey={draggingKey}
                           collapsed={collapsedLifecycleLaneIds.includes(column.lane.id)}
-                          changeRequestStateByKey={changeRequestStateByKey}
+                          changeRequestStateForThread={changeRequestStateForThread}
                           snoozeDropRequest={snoozeDropRequest}
                           onSnoozeDropRequestHandled={(threadKey, nonce) =>
                             setSnoozeDropRequest((current) =>
@@ -1425,7 +1496,7 @@ function LaneDropCell({
   entries,
   draggingKey,
   collapsed,
-  changeRequestStateByKey,
+  changeRequestStateForThread,
   snoozeDropRequest,
   onSnoozeDropRequestHandled,
 }: {
@@ -1435,7 +1506,7 @@ function LaneDropCell({
   readonly entries: ReadonlyArray<PlacedThread>;
   readonly draggingKey: string | null;
   readonly collapsed: boolean;
-  readonly changeRequestStateByKey: ReadonlyMap<string, ChangeRequestStateLike | null>;
+  readonly changeRequestStateForThread: (threadKey: string) => ChangeRequestStateLike | null;
   readonly snoozeDropRequest: BoardSnoozeDropRequest | null;
   readonly onSnoozeDropRequestHandled: (threadKey: string, nonce: number) => void;
 }) {
@@ -1473,7 +1544,7 @@ function LaneDropCell({
                 environmentLabel={entry.environmentLabel}
                 environmentConnection={entry.environmentConnection}
                 isDragging={draggingKey === entry.key}
-                changeRequestState={changeRequestStateByKey.get(entry.key) ?? null}
+                changeRequestState={changeRequestStateForThread(entry.key)}
                 snoozeDropRequest={
                   snoozeDropRequest?.threadKey === entry.key
                     ? {

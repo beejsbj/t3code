@@ -133,29 +133,34 @@ export interface BoardSessionCardProps {
  */
 export const BoardChangeRequestStateReporter = memo(
   function BoardChangeRequestStateReporter(props: {
-    readonly cardKey: string;
-    readonly thread: SidebarThreadSummary;
+    readonly environmentId: SidebarThreadSummary["environmentId"];
+    readonly workspacePath: string;
+    readonly threads: ReadonlyArray<{
+      readonly cardKey: string;
+      readonly branch: string;
+      readonly sourceKey: string;
+    }>;
     readonly onChangeRequestState: (
       threadKey: string,
+      sourceKey: string,
       state: ChangeRequestStateLike | null,
     ) => void;
   }) {
-    const { cardKey, thread, onChangeRequestState } = props;
-    const project = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
-    const workspacePath = thread.worktreePath ?? project?.workspaceRoot ?? null;
     const gitStatus = useEnvironmentQuery(
-      (thread.branch != null || thread.worktreePath !== null) && workspacePath !== null
-        ? vcsEnvironment.status({
-            environmentId: thread.environmentId,
-            input: { cwd: workspacePath },
-          })
-        : null,
+      vcsEnvironment.status({
+        environmentId: props.environmentId,
+        input: { cwd: props.workspacePath },
+      }),
     );
-    const changeRequestState =
-      resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data })?.state ?? null;
     useEffect(() => {
-      onChangeRequestState(cardKey, changeRequestState);
-    }, [cardKey, changeRequestState, onChangeRequestState]);
+      if (gitStatus.isPending) return;
+      for (const thread of props.threads) {
+        const state =
+          resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data })?.state ??
+          null;
+        props.onChangeRequestState(thread.cardKey, thread.sourceKey, state);
+      }
+    }, [gitStatus.data, gitStatus.isPending, props]);
     return null;
   },
 );
