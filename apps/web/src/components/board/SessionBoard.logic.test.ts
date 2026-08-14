@@ -21,6 +21,7 @@ import {
   reorderBoardLaneKeys,
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
+  resolveBoardScrollTarget,
   resolveBoardThreadVisibility,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
@@ -69,10 +70,11 @@ const lifecycleOptions = {
   autoSettleAfterDays: 3,
   supportsSettlement: true,
   supportsSnooze: true,
+  changeRequestState: null,
 } as const;
 
 describe("resolveBoardThreadVisibility", () => {
-  it("hides archived, snoozed, and settled threads", () => {
+  it("hides archived threads and classifies snoozed and settled threads", () => {
     expect(
       resolveBoardThreadVisibility(
         threadShell({ archivedAt: "2026-08-12T15:30:00.000Z" }),
@@ -130,7 +132,7 @@ describe("resolveBoardThreadVisibility", () => {
     ).toBe("visible");
   });
 
-  it("does not hide lifecycle states a connected server cannot manage", () => {
+  it("does not classify lifecycle states a connected server cannot manage", () => {
     const thread = threadShell({
       settledOverride: "settled",
       settledAt: "2026-08-12T15:30:00.000Z",
@@ -156,6 +158,32 @@ describe("resolveBoardThreadVisibility", () => {
     expect(resolveBoardThreadVisibility({ ...stalePinned, pinnedAt: null }, lifecycleOptions)).toBe(
       "settled",
     );
+  });
+
+  it("matches sidebar settlement rules for open and completed pull requests", () => {
+    const stale = threadShell({
+      latestUserMessageAt: "2026-08-01T00:00:00.000Z",
+      latestTurn: null,
+    });
+
+    expect(
+      resolveBoardThreadVisibility(stale, {
+        ...lifecycleOptions,
+        changeRequestState: "open",
+      }),
+    ).toBe("visible");
+    expect(
+      resolveBoardThreadVisibility(threadShell(), {
+        ...lifecycleOptions,
+        changeRequestState: "merged",
+      }),
+    ).toBe("settled");
+    expect(
+      resolveBoardThreadVisibility(threadShell(), {
+        ...lifecycleOptions,
+        changeRequestState: "closed",
+      }),
+    ).toBe("settled");
   });
 });
 
@@ -483,5 +511,29 @@ describe("resolveBoardFocusAction", () => {
         acknowledgedRequestNonce: null,
       }),
     ).toBe("reveal");
+  });
+});
+
+describe("resolveBoardScrollTarget", () => {
+  it("centers a fitting card inside the unobscured viewport", () => {
+    expect(
+      resolveBoardScrollTarget({
+        card: { top: 500, bottom: 1020, left: 900, right: 1280 },
+        viewport: { top: 100, bottom: 900, left: 200, right: 1200 },
+        scrollTop: 300,
+        scrollLeft: 400,
+      }),
+    ).toEqual({ top: 560, left: 790 });
+  });
+
+  it("top-aligns a card that is taller than the available viewport", () => {
+    expect(
+      resolveBoardScrollTarget({
+        card: { top: 600, bottom: 1500, left: 100, right: 480 },
+        viewport: { top: 120, bottom: 820, left: 0, right: 1200 },
+        scrollTop: 250,
+        scrollLeft: 0,
+      }),
+    ).toEqual({ top: 730, left: 0 });
   });
 });

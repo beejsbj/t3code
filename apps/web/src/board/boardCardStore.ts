@@ -19,9 +19,9 @@ import { resolveStorage } from "../lib/storage";
 const BOARD_CARD_STORAGE_KEY = "t3code:board-cards:v1";
 const BOARD_CARD_STORAGE_VERSION = 2;
 
-export const CARD_MIN_HEIGHT = 180;
-export const CARD_MAX_HEIGHT = 900;
 export const CARD_DEFAULT_HEIGHT = 520;
+export const CARD_MIN_HEIGHT = CARD_DEFAULT_HEIGHT;
+export const CARD_MAX_HEIGHT = 900;
 const LEGACY_COMPACT_HEIGHT = 260;
 
 export interface BoardCardState {
@@ -60,7 +60,8 @@ function migratePersistedBoardCardState(persistedState: unknown, version: number
 
   // Version 1 exposed compact/tall preset buttons. Compact was the default,
   // so exact preset values are upgraded to the useful full-card default.
-  // Arbitrary drag-resized heights remain personal and are preserved.
+  // Taller drag-resized heights remain personal and are preserved; every
+  // shorter legacy value is raised to the new minimum during normalization.
   return {
     byThreadKey: Object.fromEntries(
       Object.entries(byThreadKey).map(([key, value]) => [

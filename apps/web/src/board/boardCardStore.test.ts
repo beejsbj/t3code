@@ -26,6 +26,13 @@ describe("boardCardStore", () => {
     expect(selectCardHeight(useBoardCardStore.getState().byThreadKey, refA)).toBe(CARD_MAX_HEIGHT);
   });
 
+  it("does not let a resized card become shorter than the full default", () => {
+    useBoardCardStore.getState().setHeight(refA, CARD_DEFAULT_HEIGHT - 200);
+    expect(selectCardHeight(useBoardCardStore.getState().byThreadKey, refA)).toBe(
+      CARD_DEFAULT_HEIGHT,
+    );
+  });
+
   it("selectCardHeight defaults to the full card height for an unknown thread", () => {
     expect(selectCardHeight(useBoardCardStore.getState().byThreadKey, refB)).toBe(
       CARD_DEFAULT_HEIGHT,
@@ -94,7 +101,7 @@ describe("boardCardStore", () => {
     ).toEqual({});
   });
 
-  it("migrates the removed compact preset while preserving custom heights", () => {
+  it("migrates short legacy heights while preserving taller custom heights", () => {
     const persistApi = useBoardCardStore.persist as unknown as {
       getOptions: () => {
         migrate: (persistedState: unknown, version: number) => unknown;
@@ -106,7 +113,7 @@ describe("boardCardStore", () => {
         {
           byThreadKey: {
             "env-1:thread-A": { heightPx: 260 },
-            "env-1:thread-B": { heightPx: 333 },
+            "env-1:thread-B": { heightPx: 640 },
           },
         },
         1,
@@ -114,7 +121,7 @@ describe("boardCardStore", () => {
     ).toEqual({
       byThreadKey: {
         "env-1:thread-A": { heightPx: CARD_DEFAULT_HEIGHT },
-        "env-1:thread-B": { heightPx: 333 },
+        "env-1:thread-B": { heightPx: 640 },
       },
     });
   });

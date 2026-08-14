@@ -1,4 +1,8 @@
-import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  effectiveSettled,
+  effectiveSnoozed,
+  type ChangeRequestStateLike,
+} from "@t3tools/client-runtime/state/thread-settled";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 import type { BoardLane, BoardLaneId } from "../../board/boardLaneStore.ts";
@@ -8,9 +12,9 @@ export const BOARD_WORKFLOW_COLUMN_WIDTH = 380;
 export type BoardThreadVisibility = "visible" | "archived" | "snoozed" | "settled";
 
 /**
- * The board is an active-work surface. Lifecycle state stays server-backed,
- * while local lane placement survives invisibility so a woken or re-engaged
- * thread returns to the same spatial slot.
+ * Lifecycle state stays server-backed and projects into its fixed board lane,
+ * while local workflow placement survives underneath so a woken or
+ * re-engaged thread returns to the same spatial slot.
  */
 export function resolveBoardThreadVisibility(
   thread: OrchestrationThreadShell,
@@ -19,6 +23,7 @@ export function resolveBoardThreadVisibility(
     readonly autoSettleAfterDays: number | null;
     readonly supportsSettlement: boolean;
     readonly supportsSnooze: boolean;
+    readonly changeRequestState: ChangeRequestStateLike | null;
   },
 ): BoardThreadVisibility {
   if (thread.archivedAt !== null) return "archived";
@@ -37,6 +42,7 @@ export function resolveBoardThreadVisibility(
     effectiveSettled(thread, {
       now: options.now,
       autoSettleAfterDays: options.autoSettleAfterDays,
+      changeRequestState: options.changeRequestState,
     })
   ) {
     return "settled";
@@ -188,6 +194,38 @@ export interface BoardRect {
   readonly bottom: number;
   readonly left: number;
   readonly right: number;
+}
+
+export interface BoardScrollTarget {
+  readonly top: number;
+  readonly left: number;
+}
+
+/**
+ * Centers a card inside the actually usable board viewport. Sticky lane and
+ * project headers cover the top of the raw scroller rect, so scrollIntoView
+ * can otherwise leave a card looking half-revealed even though the browser
+ * considers it visible. Cards taller than the usable viewport align below
+ * those headers; showing the whole card is physically impossible in that
+ * case.
+ */
+export function resolveBoardScrollTarget(input: {
+  readonly card: BoardRect;
+  readonly viewport: BoardRect;
+  readonly scrollTop: number;
+  readonly scrollLeft: number;
+}): BoardScrollTarget {
+  const cardHeight = input.card.bottom - input.card.top;
+  const viewportHeight = input.viewport.bottom - input.viewport.top;
+  const top =
+    cardHeight <= viewportHeight
+      ? input.scrollTop +
+        (input.card.top + input.card.bottom - input.viewport.top - input.viewport.bottom) / 2
+      : input.scrollTop + input.card.top - input.viewport.top;
+  const left =
+    input.scrollLeft +
+    (input.card.left + input.card.right - input.viewport.left - input.viewport.right) / 2;
+  return { top: Math.max(0, top), left: Math.max(0, left) };
 }
 
 function visibleFraction(card: BoardRect, viewport: BoardRect): number {
