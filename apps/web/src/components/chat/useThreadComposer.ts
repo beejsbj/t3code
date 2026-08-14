@@ -1,5 +1,6 @@
 import {
   type ApprovalRequestId,
+  type MessageId,
   type ModelSelection,
   type OrchestrationThreadActivity,
   type OrchestrationSessionStatus,
@@ -13,7 +14,7 @@ import {
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -38,6 +39,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   type SessionPhase,
   type SidebarThreadSummary,
+  type ChatMessage,
   type Thread,
 } from "../../types.ts";
 import {
@@ -80,9 +82,6 @@ export function resolveBoardComposerSubmission(input: {
   readonly prompt: string;
   readonly imageCount: number;
 }): { readonly text: string } | null {
-  if (input.sessionStatus === "starting" || input.sessionStatus === "running") {
-    return null;
-  }
   const text = input.prompt.trim();
   if (text.length === 0 && input.imageCount === 0) return null;
   return { text };
@@ -204,6 +203,28 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const isConnecting = phase === "connecting";
   const sendInFlightRef = useRef(false);
   const [isSendBusy, setIsSendBusy] = useState(false);
+  const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [timelineAnchorMessageId, setTimelineAnchorMessageId] = useState<MessageId | null>(null);
+  const clearTimelineAnchor = useCallback(() => setTimelineAnchorMessageId(null), []);
+
+  const timelineMessages = useMemo(() => {
+    const serverMessages = thread?.messages ?? [];
+    if (optimisticUserMessages.length === 0) return serverMessages;
+    const serverIds = new Set(serverMessages.map((message) => message.id));
+    const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+    return pendingMessages.length === 0 ? serverMessages : [...serverMessages, ...pendingMessages];
+  }, [optimisticUserMessages, thread?.messages]);
+
+  // Keep only messages that have not arrived through the server projection yet.
+  // The shared message id makes the handoff invisible to the timeline.
+  useEffect(() => {
+    const serverIds = new Set((thread?.messages ?? []).map((message) => message.id));
+    if (serverIds.size === 0) return;
+    setOptimisticUserMessages((existing) => {
+      const pending = existing.filter((message) => !serverIds.has(message.id));
+      return pending.length === existing.length ? existing : pending;
+    });
+  }, [thread?.messages]);
 
   const runtimeMode = summary.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode = summary.interactionMode ?? DEFAULT_INTERACTION_MODE;
@@ -215,6 +236,12 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
 
       sendInFlightRef.current = true;
       setIsSendBusy(true);
+      let optimisticMessageId: MessageId | null = null;
+      let sentDraft: {
+        readonly prompt: string;
+        readonly images: ComposerImageAttachment[];
+      } | null = null;
+      let sendSucceeded = false;
       try {
         const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
         if (!draft) return;
@@ -238,7 +265,17 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         const modelSelection = modelChangeBlockReason
           ? summary.modelSelection
           : requestedModelSelection;
-        const attachments = await Promise.all(
+        const messageId = newMessageId();
+        const createdAt = new Date().toISOString();
+        const optimisticAttachments = draft.images.map((image) => ({
+          type: "image" as const,
+          id: image.id,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          previewUrl: image.previewUrl,
+        }));
+        const attachmentsPromise = Promise.all(
           draft.images.map(async (image) => ({
             type: "image" as const,
             name: image.name,
@@ -247,6 +284,28 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             dataUrl: await readFileAsDataUrl(image.file),
           })),
         );
+
+        optimisticMessageId = messageId;
+        sentDraft = { prompt: draft.prompt, images: [...draft.images] };
+        setTimelineAnchorMessageId(messageId);
+        setOptimisticUserMessages((existing) => [
+          ...existing,
+          {
+            id: messageId,
+            role: "user",
+            text: submission.text,
+            ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+            turnId: null,
+            createdAt,
+            updatedAt: createdAt,
+            streaming: false,
+          },
+        ]);
+        promptRef.current = "";
+        composerImagesRef.current = [];
+        useComposerDraftStore.getState().clearComposerContent(threadRef);
+        composerRef.current?.resetCursorState();
+
         const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
           currentModelSelection: summary.modelSelection,
           nextModelSelection: modelSelection,
@@ -267,12 +326,13 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             return;
           }
         }
+        const attachments = await attachmentsPromise;
         const result = await startThreadTurn({
           environmentId: threadRef.environmentId,
           input: {
             threadId: threadRef.threadId,
             message: {
-              messageId: newMessageId(),
+              messageId,
               role: "user",
               text: submission.text,
               attachments,
@@ -281,7 +341,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             titleSeed: summary.title,
             runtimeMode: summary.runtimeMode,
             interactionMode: summary.interactionMode,
-            createdAt: new Date().toISOString(),
+            createdAt,
           },
         });
         if (result._tag === "Failure") {
@@ -290,9 +350,36 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           }
           return;
         }
-        useComposerDraftStore.getState().clearComposerContent(threadRef);
-        composerRef.current?.resetCursorState();
+        sendSucceeded = true;
+      } catch (error) {
+        console.error(error);
       } finally {
+        if (!sendSucceeded && optimisticMessageId !== null && sentDraft !== null) {
+          setOptimisticUserMessages((existing) =>
+            existing.filter((message) => message.id !== optimisticMessageId),
+          );
+          setTimelineAnchorMessageId((current) =>
+            current === optimisticMessageId ? null : current,
+          );
+
+          const currentDraft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+          if (
+            currentDraft !== null &&
+            currentDraft.prompt.length === 0 &&
+            currentDraft.images.length === 0
+          ) {
+            promptRef.current = sentDraft.prompt;
+            composerImagesRef.current = sentDraft.images;
+            const draftStore = useComposerDraftStore.getState();
+            draftStore.setPrompt(threadRef, sentDraft.prompt);
+            draftStore.addImages(threadRef, sentDraft.images);
+            composerRef.current?.resetCursorState({
+              prompt: sentDraft.prompt,
+              cursor: sentDraft.prompt.length,
+              detectTrigger: true,
+            });
+          }
+        }
         sendInFlightRef.current = false;
         setIsSendBusy(false);
       }
@@ -556,5 +643,11 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     ],
   );
 
-  return { chatComposerProps, composerRef };
+  return {
+    chatComposerProps,
+    composerRef,
+    timelineMessages,
+    timelineAnchorMessageId,
+    clearTimelineAnchor,
+  };
 }

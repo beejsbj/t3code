@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useSortable } from "@dnd-kit/sortable";
 import type { LegendListRef } from "@legendapp/list/react";
 import type {
+  MessageId,
   ScopedThreadRef,
   ServerProvider,
   ServerProviderSkill,
@@ -21,6 +22,8 @@ import {
   CircleDashedIcon,
   CircleXIcon,
   ClipboardCheckIcon,
+  FolderGit2Icon,
+  GitBranchIcon,
   GripVerticalIcon,
   Maximize2Icon,
   MessageCircleQuestionIcon,
@@ -86,6 +89,7 @@ import { resolveSnoozePresets } from "../Sidebar.snooze.ts";
 import { useBoardThreadComposer } from "../chat/useThreadComposer.ts";
 import { Button } from "../ui/button.tsx";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip.tsx";
 import { toastManager } from "../ui/toast.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import {
@@ -236,6 +240,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   );
   const threadProject = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
   const workspacePath = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
+  const repositoryLabel = threadProject?.repositoryIdentity?.displayName ?? projectTitle;
   const { openMenu, settle, unsettle, snooze, unsnooze } = useThreadActionMenu({
     threadRef,
     projectCwd: workspacePath,
@@ -511,6 +516,11 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
                 : ` · ${environmentConnection.phase}`}
             </p>
           </div>
+          <CheckoutIdentityIndicator
+            repository={repositoryLabel}
+            branch={thread.branch}
+            workspacePath={workspacePath}
+          />
           {isLifecycleLane ? null : (
             <BoardStatusIcon status={visualStatus} appearance={appearance} />
           )}
@@ -660,7 +670,25 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
   );
 
   const activities = fullThread?.activities ?? [];
-  const timelineMessages = fullThread?.messages ?? [];
+  const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
+    setExpandedImage(preview);
+  }, []);
+
+  const {
+    chatComposerProps,
+    composerRef,
+    timelineMessages,
+    timelineAnchorMessageId,
+    clearTimelineAnchor,
+  } = useBoardThreadComposer({
+    threadRef,
+    thread: fullThread,
+    summary: thread,
+    environmentLabel,
+    environmentConnection,
+    resolvedTheme,
+    onExpandImage: onExpandTimelineImage,
+  });
 
   const pendingApprovals = useMemo(() => derivePendingApprovals(activities), [activities]);
   const pendingUserInputs = useMemo(() => derivePendingUserInputs(activities), [activities]);
@@ -758,19 +786,14 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     [threadRef],
   );
 
-  const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
-    setExpandedImage(preview);
+  const onTimelineAnchorReady = useCallback((_messageId: MessageId, anchorIndex: number) => {
+    void legendListRef.current?.scrollToIndex({
+      index: anchorIndex,
+      animated: true,
+      viewPosition: 0,
+      viewOffset: 8,
+    });
   }, []);
-
-  const { chatComposerProps, composerRef } = useBoardThreadComposer({
-    threadRef,
-    thread: fullThread,
-    summary: thread,
-    environmentLabel,
-    environmentConnection,
-    resolvedTheme,
-    onExpandImage: onExpandTimelineImage,
-  });
   const acknowledgeFocus = useBoardFocusStore((state) => state.acknowledgeFocus);
 
   useEffect(() => {
@@ -790,6 +813,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
       <div className="flex min-h-0 flex-1 flex-col">
         <MessagesTimeline
           density="compact"
+          minimapVariant="compact"
           viewportClassName="pointer-coarse:overflow-y-hidden pointer-coarse:overscroll-y-auto pointer-coarse:touch-pan-y"
           isWorking={isWorking}
           activeTurnInProgress={activeTurnInProgress}
@@ -811,12 +835,11 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
           timestampFormat={timestampFormat}
           workspaceRoot={workspaceRoot}
           skills={skills}
-          anchorMessageId={null}
-          onAnchorReady={NOOP}
-          onAnchorSizeChanged={NOOP}
+          anchorMessageId={timelineAnchorMessageId}
+          onAnchorReady={onTimelineAnchorReady}
           contentInsetEndAdjustment={0}
           onIsAtEndChange={NOOP}
-          onManualNavigation={NOOP}
+          onManualNavigation={clearTimelineAnchor}
           hideEmptyPlaceholder={false}
           topFadeEnabled={false}
         />
@@ -939,5 +962,49 @@ function BoardStatusIcon({
     >
       <Icon aria-hidden className="size-4" />
     </span>
+  );
+}
+
+function CheckoutIdentityIndicator({
+  repository,
+  branch,
+  workspacePath,
+}: {
+  readonly repository: string;
+  readonly branch: string | null;
+  readonly workspacePath: string | null;
+}) {
+  const label = branch ? `${repository} on ${branch}` : repository;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Checkout: ${label}`}
+            className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70"
+          />
+        }
+      >
+        <FolderGit2Icon aria-hidden className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="bottom" align="end" className="max-w-72 whitespace-normal">
+        <span className="flex min-w-0 flex-col gap-1 py-0.5">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <FolderGit2Icon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+            <span className="truncate font-medium">{repository}</span>
+          </span>
+          {branch ? (
+            <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+              <GitBranchIcon aria-hidden className="size-3 shrink-0" />
+              <span className="truncate">{branch}</span>
+            </span>
+          ) : null}
+          {workspacePath ? (
+            <span className="truncate text-[10px] text-muted-foreground/70">{workspacePath}</span>
+          ) : null}
+        </span>
+      </TooltipPopup>
+    </Tooltip>
   );
 }
