@@ -18,6 +18,7 @@ import {
   laneIdForName,
   nextLaneOrder,
   reorderLaneUpdates,
+  reorderBoardLaneKeys,
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
   resolveBoardThreadVisibility,
@@ -221,20 +222,20 @@ describe("reorderLaneUpdates", () => {
 });
 
 describe("buildProjectSwimlanes", () => {
-  it("groups threads under the right project", () => {
+  it("groups threads under projects sorted by name, not thread activity", () => {
     const entries = [
-      placement("env:alpha", "Alpha", "lane-a", "2026-01-03T00:00:00.000Z"),
-      placement("env:beta", "Beta", "lane-b", "2026-01-02T00:00:00.000Z"),
-      placement("env:alpha", "Alpha", "lane-c", "2026-01-01T00:00:00.000Z"),
+      placement("env:zeta", "Zeta", "lane-a", "2026-01-03T00:00:00.000Z"),
+      placement("env:alpha", "alpha", "lane-b", "2026-01-01T00:00:00.000Z"),
+      placement("env:zeta", "Zeta", "lane-c", "2026-01-04T00:00:00.000Z"),
     ];
 
     const swimlanes = buildProjectSwimlanes(entries, null);
 
     expect(swimlanes).toHaveLength(2);
     expect(swimlanes[0]?.projectKey).toBe("env:alpha");
-    expect(swimlanes[0]?.sessionCount).toBe(2);
-    expect(swimlanes[1]?.projectKey).toBe("env:beta");
-    expect(swimlanes[1]?.sessionCount).toBe(1);
+    expect(swimlanes[0]?.sessionCount).toBe(1);
+    expect(swimlanes[1]?.projectKey).toBe("env:zeta");
+    expect(swimlanes[1]?.sessionCount).toBe(2);
   });
 
   it("omits projects with no visible sessions after filtering", () => {
@@ -318,8 +319,8 @@ describe("swimlaneColumnDroppableId", () => {
 
 describe("resolveBoardLaneDrop", () => {
   const entries = [
-    { key: "env-a:thread-1", environmentId: "env-a" },
-    { key: "env-b:thread-2", environmentId: "env-b" },
+    { key: "env-a:thread-1", environmentId: "env-a", laneColumnKey: laneKeys[0] },
+    { key: "env-b:thread-2", environmentId: "env-b", laneColumnKey: laneKeys[1] },
   ];
   const columns = [{ key: laneKeys[0] }, { key: laneKeys[1] }];
 
@@ -331,7 +332,7 @@ describe("resolveBoardLaneDrop", () => {
         entries,
         columns,
       }),
-    ).toEqual({ entry: entries[0], target: columns[0] });
+    ).toEqual({ entry: entries[0], target: columns[0], overEntry: null });
   });
 
   it("allows a card from any environment to enter a local lane", () => {
@@ -342,7 +343,39 @@ describe("resolveBoardLaneDrop", () => {
         entries,
         columns,
       }),
-    ).toEqual({ entry: entries[0], target: columns[1] });
+    ).toEqual({ entry: entries[0], target: columns[1], overEntry: null });
+  });
+
+  it("uses another card as a precise within-lane drop target", () => {
+    expect(
+      resolveBoardLaneDrop({
+        activeId: entries[0]!.key,
+        overId: entries[1]!.key,
+        entries,
+        columns,
+      }),
+    ).toEqual({ entry: entries[0], target: columns[1], overEntry: entries[1] });
+  });
+});
+
+describe("reorderBoardLaneKeys", () => {
+  it("moves a card above or below the hovered member", () => {
+    expect(
+      reorderBoardLaneKeys({
+        orderedKeys: ["a", "b", "c"],
+        activeKey: "c",
+        overKey: "b",
+        insertAfter: false,
+      }),
+    ).toEqual(["a", "c", "b"]);
+    expect(
+      reorderBoardLaneKeys({
+        orderedKeys: ["a", "b", "c"],
+        activeKey: "a",
+        overKey: "b",
+        insertAfter: true,
+      }),
+    ).toEqual(["b", "a", "c"]);
   });
 });
 

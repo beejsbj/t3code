@@ -63,7 +63,6 @@ export interface BoardThreadPlacement {
   readonly projectKey: string;
   readonly projectTitle: string;
   readonly laneColumnKey: string;
-  readonly updatedAt: string;
 }
 
 export interface ProjectSwimlane<T extends BoardThreadPlacement> {
@@ -109,17 +108,13 @@ export function buildProjectSwimlanes<T extends BoardThreadPlacement>(
     });
   }
 
-  return swimlanes.toSorted((left, right) => {
-    const leftNewest = left.entries.reduce(
-      (newest, entry) => (entry.updatedAt > newest ? entry.updatedAt : newest),
-      "",
-    );
-    const rightNewest = right.entries.reduce(
-      (newest, entry) => (entry.updatedAt > newest ? entry.updatedAt : newest),
-      "",
-    );
-    return rightNewest.localeCompare(leftNewest);
-  });
+  return swimlanes.toSorted(
+    (left, right) =>
+      left.projectTitle.localeCompare(right.projectTitle, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      }) || left.projectKey.localeCompare(right.projectKey),
+  );
 }
 
 export function shouldHideSwimlaneProjectHeader(projectScopeKey: string | null): boolean {
@@ -153,20 +148,39 @@ export function laneColumnKeyFromSwimlaneDroppableId(droppableId: string): strin
 
 /** A local lane accepts cards from every connected environment. */
 export function resolveBoardLaneDrop<
-  Entry extends { readonly key: string },
+  Entry extends { readonly key: string; readonly laneColumnKey: string },
   Column extends { readonly key: string },
 >(input: {
   readonly activeId: string;
   readonly overId: string;
   readonly entries: ReadonlyArray<Entry>;
   readonly columns: ReadonlyArray<Column>;
-}): { readonly entry: Entry; readonly target: Column } | null {
+}): { readonly entry: Entry; readonly target: Column; readonly overEntry: Entry | null } | null {
   const entry = input.entries.find((candidate) => candidate.key === input.activeId);
   if (entry === undefined) return null;
-  const laneColumnKey = laneColumnKeyFromSwimlaneDroppableId(input.overId);
+  const overEntry = input.entries.find((candidate) => candidate.key === input.overId) ?? null;
+  const laneColumnKey =
+    overEntry?.laneColumnKey ?? laneColumnKeyFromSwimlaneDroppableId(input.overId);
   if (laneColumnKey === null) return null;
   const target = input.columns.find((column) => column.key === laneColumnKey);
-  return target === undefined ? null : { entry, target };
+  return target === undefined ? null : { entry, target, overEntry };
+}
+
+export function reorderBoardLaneKeys(input: {
+  readonly orderedKeys: ReadonlyArray<string>;
+  readonly activeKey: string;
+  readonly overKey: string;
+  readonly insertAfter: boolean;
+}): ReadonlyArray<string> {
+  const withoutActive = input.orderedKeys.filter((key) => key !== input.activeKey);
+  const overIndex = withoutActive.indexOf(input.overKey);
+  if (overIndex === -1) return input.orderedKeys;
+  const insertionIndex = overIndex + (input.insertAfter ? 1 : 0);
+  return [
+    ...withoutActive.slice(0, insertionIndex),
+    input.activeKey,
+    ...withoutActive.slice(insertionIndex),
+  ];
 }
 
 export interface BoardRect {

@@ -6,7 +6,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "../lib/storage";
 
 const BOARD_LANE_STORAGE_KEY = "t3code:board-lanes:v1";
-const BOARD_LANE_STORAGE_VERSION = 2;
+const BOARD_LANE_STORAGE_VERSION = 3;
 
 export const BOARD_LANE_MIN_WIDTH = 260;
 export const BOARD_LANE_MAX_WIDTH = 720;
@@ -58,6 +58,11 @@ export interface BoardLaneState {
   readonly widthPx: number;
 }
 
+export interface BoardLaneEntryState {
+  readonly laneId: BoardLaneId;
+  readonly enteredAt: string;
+}
+
 export interface BoardLaneDraft {
   readonly name: string;
   readonly description: string;
@@ -72,10 +77,14 @@ interface BoardLaneStoreState {
    * board. Keys are scoped so two environments may both contribute `thread-1`.
    */
   readonly placementByThreadKey: Record<string, BoardLaneId | null>;
+  /** Explicit lane arrivals; implicit leftmost placement falls back to thread creation time. */
+  readonly laneEntryByThreadKey: Record<string, BoardLaneEntryState>;
+  /** Complete user-authored sequences. New arrivals not in a sequence sort above it. */
+  readonly orderByLaneId: Record<BoardLaneId, ReadonlyArray<string>>;
   readonly byLaneColumnKey: Record<string, BoardLaneState>;
   readonly groupByProject: boolean;
   readonly setPlacement: (ref: ScopedThreadRef, laneId: BoardLaneId | null) => void;
-  readonly removePlacement: (ref: ScopedThreadRef) => void;
+  readonly setLaneOrder: (laneId: BoardLaneId, orderedThreadKeys: ReadonlyArray<string>) => void;
   readonly createLane: (lane: BoardLane) => void;
   readonly updateLane: (laneId: BoardLaneId, draft: BoardLaneDraft) => void;
   readonly archiveLane: (laneId: BoardLaneId) => void;
@@ -124,6 +133,50 @@ function normalizePlacementByThreadKey(value: unknown): Record<string, BoardLane
   return placementByThreadKey;
 }
 
+function normalizeLaneEntryByThreadKey(value: unknown): Record<string, BoardLaneEntryState> {
+  if (typeof value !== "object" || value === null) return {};
+  const laneEntryByThreadKey: Record<string, BoardLaneEntryState> = {};
+  for (const [threadKey, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { laneId, enteredAt } = entry as Partial<BoardLaneEntryState>;
+    if (
+      typeof laneId === "string" &&
+      laneId.length > 0 &&
+      typeof enteredAt === "string" &&
+      Number.isFinite(Date.parse(enteredAt))
+    ) {
+      laneEntryByThreadKey[threadKey] = { laneId, enteredAt };
+    }
+  }
+  return laneEntryByThreadKey;
+}
+
+function normalizeOrderByLaneId(value: unknown): Record<BoardLaneId, ReadonlyArray<string>> {
+  if (typeof value !== "object" || value === null) return {};
+  const orderByLaneId: Record<BoardLaneId, ReadonlyArray<string>> = {};
+  for (const [laneId, order] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(order)) continue;
+    orderByLaneId[laneId] = [
+      ...new Set(order.filter((threadKey): threadKey is string => typeof threadKey === "string")),
+    ];
+  }
+  return orderByLaneId;
+}
+
+function withoutThreadKey(
+  orderByLaneId: Record<BoardLaneId, ReadonlyArray<string>>,
+  threadKey: string,
+): Record<BoardLaneId, ReadonlyArray<string>> {
+  let changed = false;
+  const next: Record<BoardLaneId, ReadonlyArray<string>> = {};
+  for (const [laneId, order] of Object.entries(orderByLaneId)) {
+    const filtered = order.filter((key) => key !== threadKey);
+    if (filtered.length !== order.length) changed = true;
+    if (filtered.length > 0) next[laneId] = filtered;
+  }
+  return changed ? next : orderByLaneId;
+}
+
 function normalizePersistedByLaneColumnKey(
   persistedState: unknown,
 ): Record<string, BoardLaneState> {
@@ -146,13 +199,67 @@ function normalizePersistedByLaneColumnKey(
  */
 function migrateBoardLaneState(persistedState: unknown, version: number): unknown {
   if (version >= BOARD_LANE_STORAGE_VERSION) return persistedState;
-  const legacy = persistedState as { groupByProject?: unknown; byLaneColumnKey?: unknown } | null;
+  const legacy = persistedState as {
+    lanes?: unknown;
+    placementByThreadKey?: unknown;
+    groupByProject?: unknown;
+    byLaneColumnKey?: unknown;
+  } | null;
+  const versionTwoState =
+    version < 2
+      ? {
+          lanes: DEFAULT_BOARD_LANES,
+          placementByThreadKey: {},
+          byLaneColumnKey: legacy?.byLaneColumnKey,
+          groupByProject: legacy?.groupByProject,
+        }
+      : legacy;
   return {
-    lanes: DEFAULT_BOARD_LANES,
-    placementByThreadKey: {},
-    byLaneColumnKey: legacy?.byLaneColumnKey,
-    groupByProject: legacy?.groupByProject,
+    ...versionTwoState,
+    laneEntryByThreadKey: {},
+    orderByLaneId: {},
   };
+}
+
+export interface BoardLaneOrderedEntry {
+  readonly key: string;
+  readonly laneId: BoardLaneId;
+  readonly createdAt: string;
+}
+
+/**
+ * Stable card order for every lane. Unknown entries are new arrivals and sit
+ * above the last manual sequence; otherwise lane-entry time (or creation time
+ * for implicit placement) is the default. Runtime activity never participates.
+ */
+export function orderBoardLaneEntries<T extends BoardLaneOrderedEntry>(
+  entries: ReadonlyArray<T>,
+  laneEntryByThreadKey: Readonly<Record<string, BoardLaneEntryState>>,
+  orderByLaneId: Readonly<Record<BoardLaneId, ReadonlyArray<string>>>,
+): ReadonlyArray<T> {
+  const indexByLaneId = new Map<string, ReadonlyMap<string, number>>();
+  for (const [laneId, order] of Object.entries(orderByLaneId)) {
+    indexByLaneId.set(laneId, new Map(order.map((threadKey, index) => [threadKey, index])));
+  }
+
+  return entries.toSorted((left, right) => {
+    const laneComparison = left.laneId.localeCompare(right.laneId);
+    if (laneComparison !== 0) return laneComparison;
+
+    const manualOrder = indexByLaneId.get(left.laneId);
+    const leftIndex = manualOrder?.get(left.key);
+    const rightIndex = manualOrder?.get(right.key);
+    if (leftIndex !== undefined && rightIndex !== undefined) return leftIndex - rightIndex;
+    if (leftIndex === undefined && rightIndex !== undefined) return -1;
+    if (leftIndex !== undefined && rightIndex === undefined) return 1;
+
+    const leftEntry = laneEntryByThreadKey[left.key];
+    const rightEntry = laneEntryByThreadKey[right.key];
+    const leftEnteredAt = leftEntry?.laneId === left.laneId ? leftEntry.enteredAt : left.createdAt;
+    const rightEnteredAt =
+      rightEntry?.laneId === right.laneId ? rightEntry.enteredAt : right.createdAt;
+    return rightEnteredAt.localeCompare(leftEnteredAt) || left.key.localeCompare(right.key);
+  });
 }
 
 export const useBoardLaneStore = create<BoardLaneStoreState>()(
@@ -160,25 +267,37 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
     (set) => ({
       lanes: DEFAULT_BOARD_LANES,
       placementByThreadKey: {},
+      laneEntryByThreadKey: {},
+      orderByLaneId: {},
       byLaneColumnKey: {},
       groupByProject: true,
       setPlacement: (ref, laneId) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           if (state.placementByThreadKey[threadKey] === laneId) return state;
+          const laneEntryByThreadKey = { ...state.laneEntryByThreadKey };
+          if (laneId === null) delete laneEntryByThreadKey[threadKey];
+          else laneEntryByThreadKey[threadKey] = { laneId, enteredAt: new Date().toISOString() };
           return {
             placementByThreadKey: {
               ...state.placementByThreadKey,
               [threadKey]: laneId,
             },
+            laneEntryByThreadKey,
+            orderByLaneId: withoutThreadKey(state.orderByLaneId, threadKey),
           };
         }),
-      removePlacement: (ref) =>
+      setLaneOrder: (laneId, orderedThreadKeys) =>
         set((state) => {
-          const threadKey = scopedThreadKey(ref);
-          if (!(threadKey in state.placementByThreadKey)) return state;
-          const { [threadKey]: _removed, ...placementByThreadKey } = state.placementByThreadKey;
-          return { placementByThreadKey };
+          const order = [...new Set(orderedThreadKeys)];
+          const current = state.orderByLaneId[laneId] ?? [];
+          if (
+            current.length === order.length &&
+            current.every((key, index) => key === order[index])
+          ) {
+            return state;
+          }
+          return { orderByLaneId: { ...state.orderByLaneId, [laneId]: order } };
         }),
       createLane: (lane) =>
         set((state) => {
@@ -205,12 +324,23 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
           }
           const lanes = state.lanes.filter((lane) => lane.id !== laneId);
           const placementByThreadKey = { ...state.placementByThreadKey };
+          const laneEntryByThreadKey = { ...state.laneEntryByThreadKey };
           for (const [threadKey, placement] of Object.entries(placementByThreadKey)) {
             // An archived lane turns cards back into implicit-leftmost placement.
-            if (placement === laneId) delete placementByThreadKey[threadKey];
+            if (placement === laneId) {
+              delete placementByThreadKey[threadKey];
+              delete laneEntryByThreadKey[threadKey];
+            }
           }
           const { [laneId]: _removedWidth, ...byLaneColumnKey } = state.byLaneColumnKey;
-          return { lanes, placementByThreadKey, byLaneColumnKey };
+          const { [laneId]: _removedOrder, ...orderByLaneId } = state.orderByLaneId;
+          return {
+            lanes,
+            placementByThreadKey,
+            laneEntryByThreadKey,
+            orderByLaneId,
+            byLaneColumnKey,
+          };
         }),
       setWidth: (laneColumnKey, widthPx) =>
         set((state) => {
@@ -242,6 +372,8 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
       partialize: (state) => ({
         lanes: state.lanes,
         placementByThreadKey: state.placementByThreadKey,
+        laneEntryByThreadKey: state.laneEntryByThreadKey,
+        orderByLaneId: state.orderByLaneId,
         byLaneColumnKey: state.byLaneColumnKey,
         groupByProject: state.groupByProject,
       }),
@@ -250,6 +382,12 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
         lanes: normalizeLanes((persistedState as { lanes?: unknown } | null)?.lanes),
         placementByThreadKey: normalizePlacementByThreadKey(
           (persistedState as { placementByThreadKey?: unknown } | null)?.placementByThreadKey,
+        ),
+        laneEntryByThreadKey: normalizeLaneEntryByThreadKey(
+          (persistedState as { laneEntryByThreadKey?: unknown } | null)?.laneEntryByThreadKey,
+        ),
+        orderByLaneId: normalizeOrderByLaneId(
+          (persistedState as { orderByLaneId?: unknown } | null)?.orderByLaneId,
         ),
         byLaneColumnKey: normalizePersistedByLaneColumnKey(persistedState),
         groupByProject:

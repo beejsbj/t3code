@@ -9,6 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ import {
   clampBoardLaneWidth,
   BOARD_LANE_MAX_WIDTH,
   BOARD_LANE_MIN_WIDTH,
+  orderBoardLaneEntries,
   selectBoardPlacement,
   selectBoardLaneWidth,
   useBoardLaneStore,
@@ -73,6 +75,7 @@ import {
   nextLaneOrder,
   reorderLaneUpdates,
   resolveBoardLaneDrop,
+  reorderBoardLaneKeys,
   resolveBoardFocusAction,
   resolveBoardThreadVisibility,
   shouldHideSwimlaneProjectHeader,
@@ -95,7 +98,7 @@ interface PlacedThread {
   readonly projectKey: string;
   readonly projectTitle: string;
   readonly laneColumnKey: string;
-  readonly updatedAt: string;
+  readonly createdAt: string;
 }
 
 interface BoardLaneColumn {
@@ -137,8 +140,10 @@ export function SessionBoard() {
   const setGroupByProject = useBoardLaneStore((state) => state.setGroupByProject);
   const lanes = useBoardLaneStore((state) => state.lanes);
   const placementByThreadKey = useBoardLaneStore((state) => state.placementByThreadKey);
+  const laneEntryByThreadKey = useBoardLaneStore((state) => state.laneEntryByThreadKey);
+  const orderByLaneId = useBoardLaneStore((state) => state.orderByLaneId);
   const setPlacement = useBoardLaneStore((state) => state.setPlacement);
-  const removePlacement = useBoardLaneStore((state) => state.removePlacement);
+  const setLaneOrder = useBoardLaneStore((state) => state.setLaneOrder);
   const createLane = useBoardLaneStore((state) => state.createLane);
   const updateLane = useBoardLaneStore((state) => state.updateLane);
   const archiveLane = useBoardLaneStore((state) => state.archiveLane);
@@ -301,11 +306,10 @@ export function SessionBoard() {
             projectTitle:
               projectGroup?.projectTitle ?? projectTitleById.get(physicalProjectKey) ?? "Project",
             laneColumnKey: columnKey,
-            updatedAt: thread.updatedAt,
+            createdAt: thread.createdAt,
           };
         })
-        .filter((entry): entry is PlacedThread => entry !== null)
-        .toSorted((left, right) => right.thread.updatedAt.localeCompare(left.thread.updatedAt)),
+        .filter((entry): entry is PlacedThread => entry !== null),
       nextSnoozeWakeAtMs: Number.isFinite(nextWakeAtMs) ? nextWakeAtMs : null,
     };
   }, [
@@ -321,6 +325,11 @@ export function SessionBoard() {
     threads,
   ]);
 
+  const orderedPlaced = useMemo(
+    () => orderBoardLaneEntries(placed, laneEntryByThreadKey, orderByLaneId),
+    [laneEntryByThreadKey, orderByLaneId, placed],
+  );
+
   useEffect(() => {
     if (nextSnoozeWakeAtMs === null) return;
     const delayMs = Math.min(Math.max(0, nextSnoozeWakeAtMs - Date.now()) + 50, 2_147_483_647);
@@ -330,18 +339,18 @@ export function SessionBoard() {
 
   const laneMemberCountByKey = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const entry of placed) {
+    for (const entry of orderedPlaced) {
       counts.set(entry.laneColumnKey, (counts.get(entry.laneColumnKey) ?? 0) + 1);
     }
     return counts;
-  }, [placed]);
+  }, [orderedPlaced]);
 
   const swimlanes = useMemo(() => {
-    if (groupByProject) return buildProjectSwimlanes(placed, projectScopeKey);
+    if (groupByProject) return buildProjectSwimlanes(orderedPlaced, projectScopeKey);
     const scopedEntries =
       projectScopeKey === null
-        ? placed
-        : placed.filter((entry) => entry.projectKey === projectScopeKey);
+        ? orderedPlaced
+        : orderedPlaced.filter((entry) => entry.projectKey === projectScopeKey);
     return buildProjectSwimlanes(
       scopedEntries.map((entry) => ({
         ...entry,
@@ -350,7 +359,7 @@ export function SessionBoard() {
       })),
       null,
     );
-  }, [groupByProject, placed, projectScopeKey]);
+  }, [groupByProject, orderedPlaced, projectScopeKey]);
 
   const hideSwimlaneProjectHeader =
     !groupByProject || shouldHideSwimlaneProjectHeader(projectScopeKey);
@@ -455,8 +464,8 @@ export function SessionBoard() {
   const clearFocusRequest = useBoardFocusStore((state) => state.clearRequest);
   const setFocusedThreadKey = useBoardFocusStore((state) => state.setFocused);
   const setExpandedThreadKey = useBoardFocusStore((state) => state.setExpanded);
-  const placedRef = useRef(placed);
-  placedRef.current = placed;
+  const placedRef = useRef(orderedPlaced);
+  placedRef.current = orderedPlaced;
 
   useEffect(() => {
     if (focusRequest === null) return;
@@ -472,7 +481,10 @@ export function SessionBoard() {
             focusRequest.threadKey,
       );
       if (removedThread !== undefined) {
-        removePlacement(scopeThreadRef(removedThread.environmentId, removedThread.id));
+        const leftmostLane = boardLanes[0]?.lane.id;
+        if (leftmostLane !== undefined) {
+          setPlacement(scopeThreadRef(removedThread.environmentId, removedThread.id), leftmostLane);
+        }
         return;
       }
     }
@@ -519,8 +531,9 @@ export function SessionBoard() {
     return () => cancelAnimationFrame(frame);
   }, [
     clearFocusRequest,
+    boardLanes,
     focusRequest,
-    removePlacement,
+    setPlacement,
     setExpandedThreadKey,
     setFocusedThreadKey,
     threads,
@@ -528,7 +541,18 @@ export function SessionBoard() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  const collisionDetection = useCallback<CollisionDetection>((args) => pointerWithin(args), []);
+  const placedKeySet = useMemo(
+    () => new Set(orderedPlaced.map((entry) => entry.key)),
+    [orderedPlaced],
+  );
+  const collisionDetection = useCallback<CollisionDetection>(
+    (args) =>
+      pointerWithin(args).toSorted(
+        (left, right) =>
+          Number(placedKeySet.has(String(right.id))) - Number(placedKeySet.has(String(left.id))),
+      ),
+    [placedKeySet],
+  );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setDraggingKey(String(event.active.id));
@@ -543,15 +567,61 @@ export function SessionBoard() {
       const drop = resolveBoardLaneDrop({
         activeId: String(active.id),
         overId: String(over.id),
-        entries: placed,
+        entries: orderedPlaced,
         columns: boardLanes,
       });
       if (drop === null) return;
-      const { entry, target } = drop;
+      const { entry, target, overEntry } = drop;
       const targetLaneId = target.lane.id;
-      if (entry.laneId !== targetLaneId) setPlacement(entry.ref, targetLaneId);
+      if (overEntry !== null) {
+        const sameVisibleGroup = !groupByProject || overEntry.projectKey === entry.projectKey;
+        if (sameVisibleGroup) {
+          const targetEntries = orderedPlaced.filter(
+            (candidate) =>
+              candidate.laneId === targetLaneId &&
+              (!groupByProject || candidate.projectKey === entry.projectKey),
+          );
+          const translated = active.rect.current.translated;
+          const insertAfter =
+            translated !== null &&
+            translated.top + translated.height / 2 > over.rect.top + over.rect.height / 2;
+          const scopedOrder = reorderBoardLaneKeys({
+            orderedKeys: targetEntries.map((candidate) => candidate.key),
+            activeKey: entry.key,
+            overKey: overEntry.key,
+            insertAfter,
+          });
+          if (entry.laneId !== targetLaneId) setPlacement(entry.ref, targetLaneId);
+
+          // Persist a complete lane order. When grouped, preserve the other
+          // alphabetical project slices around the reordered project slice.
+          const scopedSet = new Set(scopedOrder);
+          const fullLaneOrder = orderedPlaced
+            .filter((candidate) => candidate.laneId === targetLaneId)
+            .map((candidate) => candidate.key)
+            .filter((key) => !scopedSet.has(key));
+          const firstScopedIndex = orderedPlaced
+            .filter((candidate) => candidate.laneId === targetLaneId)
+            .findIndex((candidate) => scopedSet.has(candidate.key));
+          fullLaneOrder.splice(Math.max(0, firstScopedIndex), 0, ...scopedOrder);
+          setLaneOrder(targetLaneId, fullLaneOrder);
+          return;
+        }
+      }
+
+      if (entry.laneId !== targetLaneId) {
+        setPlacement(entry.ref, targetLaneId);
+        return;
+      }
+
+      // Dropping on the current lane header is an explicit new lane entry:
+      // place it at the top without involving activity timestamps.
+      const laneOrder = orderedPlaced
+        .filter((candidate) => candidate.laneId === targetLaneId && candidate.key !== entry.key)
+        .map((candidate) => candidate.key);
+      setLaneOrder(targetLaneId, [entry.key, ...laneOrder]);
     },
-    [boardLanes, placed, setPlacement],
+    [boardLanes, groupByProject, orderedPlaced, setLaneOrder, setPlacement],
   );
 
   return (
@@ -1025,20 +1095,25 @@ function LaneDropCell({
         isOver && "bg-accent/40",
       )}
     >
-      {entries.map((entry) => (
-        <BoardSessionCard
-          key={entry.key}
-          cardKey={entry.key}
-          threadRef={entry.ref}
-          thread={entry.thread}
-          laneId={entry.laneId}
-          lanes={lanes}
-          projectTitle={entry.projectTitle}
-          environmentLabel={entry.environmentLabel}
-          environmentConnection={entry.environmentConnection}
-          isDragging={draggingKey === entry.key}
-        />
-      ))}
+      <SortableContext
+        items={entries.map((entry) => entry.key)}
+        strategy={verticalListSortingStrategy}
+      >
+        {entries.map((entry) => (
+          <BoardSessionCard
+            key={entry.key}
+            cardKey={entry.key}
+            threadRef={entry.ref}
+            thread={entry.thread}
+            laneId={entry.laneId}
+            lanes={lanes}
+            projectTitle={entry.projectTitle}
+            environmentLabel={entry.environmentLabel}
+            environmentConnection={entry.environmentConnection}
+            isDragging={draggingKey === entry.key}
+          />
+        ))}
+      </SortableContext>
     </div>
   );
 }

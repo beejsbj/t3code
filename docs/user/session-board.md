@@ -20,6 +20,11 @@ You can create, rename, describe, reorder, and archive lanes. Drag a lane's righ
 width, and drag the bottom of a card to change that card's height. New cards open at the full working
 height; there is no separate compact-size mode.
 
+Projects are listed alphabetically when project grouping is on. Cards do not move when a session
+starts working or receives updates. A lane defaults to newest arrival first—using the time a card was
+created or moved into that lane—and dragging a card above or below another card saves that manual
+order locally.
+
 Each card header has quick actions to snooze or settle the session. Its context menu offers the same
 thread actions as the sidebar, along with board lane placement.
 

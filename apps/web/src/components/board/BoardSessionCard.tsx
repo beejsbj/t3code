@@ -1,5 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { useDraggable } from "@dnd-kit/core";
+import { useSortable } from "@dnd-kit/sortable";
 import type { LegendListRef } from "@legendapp/list/react";
 import type {
   ScopedThreadRef,
@@ -203,9 +203,17 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     setNodeRef,
     transform,
     isDragging: isDraggingSelf,
-  } = useDraggable({
+    transition,
+  } = useSortable({
     id: cardKey,
   });
+  const setCardNodeRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      slotRef.current = node;
+      setNodeRef(node);
+    },
+    [setNodeRef],
+  );
 
   const status = resolveThreadRuntimeState(thread);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[cardKey]);
@@ -331,14 +339,15 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
 
   return (
     <div
-      ref={slotRef}
+      ref={setCardNodeRef}
       data-board-card={thread.id}
       data-board-card-key={cardKey}
       data-lane={laneId ?? "unknown"}
       onPointerDownCapture={() => setFocusedKey(cardKey)}
-      style={
-        transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined
-      }
+      style={{
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+        transition,
+      }}
     >
       <div
         className={cn(
@@ -361,7 +370,6 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
         <header className="flex shrink-0 items-start gap-1.5 border-b border-border/60 px-2 py-1.5">
           <button
             type="button"
-            ref={setNodeRef}
             {...listeners}
             {...attributes}
             aria-label={`Drag ${thread.title}`}
