@@ -49,14 +49,14 @@ describe("resolveBoardComposerSubmission", () => {
     ).toBeNull();
   });
 
-  it.each(["starting", "running"] as const)("rejects a draft while the shell is %s", (status) => {
+  it.each(["starting", "running"] as const)("allows a steer while the shell is %s", (status) => {
     expect(
       resolveBoardComposerSubmission({
         sessionStatus: status,
         prompt: "follow up",
         imageCount: 0,
       }),
-    ).toBeNull();
+    ).toEqual({ text: "follow up" });
   });
 });
 
