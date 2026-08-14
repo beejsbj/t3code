@@ -88,10 +88,9 @@ const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 const NOOP = () => {};
 const DONE_APPEARANCE = {
   label: "Done",
-  accentClass: "bg-emerald-500 dark:bg-emerald-300/90",
+  borderClass: "border-emerald-500/50 dark:border-emerald-300/40",
   textClass: "text-emerald-700 dark:text-emerald-300",
   surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-emerald-500))]",
-  pulse: false,
 } satisfies ThreadRuntimeStateAppearance;
 
 type BoardCardVisualState = ThreadRuntimeState | "done";
@@ -351,22 +350,15 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     >
       <div
         className={cn(
-          "relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/70 shadow-sm",
+          "relative flex min-h-0 flex-col overflow-hidden rounded-lg border shadow-sm",
+          appearance.borderClass,
           appearance.surfaceClass,
-          isFocused && "border-primary/60 ring-1 ring-primary/40",
+          isFocused && "ring-1 ring-primary/40",
           (isDraggingSelf || props.isDragging) && "opacity-60",
         )}
         style={{ height: `${effectiveHeight}px` }}
         onContextMenu={handleContextMenu}
       >
-        <span
-          aria-hidden
-          className={cn(
-            "absolute inset-x-0 top-0 z-10 h-0.5",
-            appearance.accentClass,
-            appearance.pulse && "animate-status-pulse motion-reduce:animate-none",
-          )}
-        />
         <header className="flex shrink-0 items-start gap-1.5 border-b border-border/60 px-2 py-1.5">
           <button
             type="button"

@@ -28,8 +28,9 @@ order locally.
 Each card header has quick actions to snooze or settle the session. Its context menu offers the same
 thread actions as the sidebar, along with board lane placement.
 
-Card status uses the same glyphs and hues as the sidebar. The full card surface carries a very light
-wash of that hue so working, completed, waiting, and failed sessions remain easy to scan.
+Card status uses the same glyphs and hues as the sidebar. The full border carries the state color and
+the card surface carries a very light wash of that hue, so working, completed, waiting, and failed
+sessions remain easy to scan.
 
 Lane definitions, widths, ordering, and session placements are saved by the client displaying the
 board. They survive reloads on that browser or desktop installation. They are not synchronized to
