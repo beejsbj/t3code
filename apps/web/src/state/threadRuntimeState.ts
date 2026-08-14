@@ -53,6 +53,8 @@ export interface ThreadRuntimeStateAppearance {
   readonly accentClass: string;
   /** Foreground utility for status text set in the state's hue. */
   readonly textClass: string;
+  /** Card surface mixed very lightly toward the state's hue. */
+  readonly surfaceClass: string;
   /** Whether the state is in motion and should pulse. */
   readonly pulse: boolean;
 }
@@ -70,48 +72,56 @@ const THREAD_RUNTIME_STATE_APPEARANCE: Readonly<
     label: "Approval",
     accentClass: "bg-amber-500 dark:bg-amber-300/90",
     textClass: "text-amber-600 dark:text-amber-300/90",
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-amber-500))]",
     pulse: false,
   },
   input: {
     label: "Input",
     accentClass: "bg-indigo-500 dark:bg-indigo-300/90",
     textClass: "text-indigo-600 dark:text-indigo-300/90",
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-indigo-500))]",
     pulse: false,
   },
   working: {
     label: "Working",
     accentClass: "bg-sky-500 dark:bg-sky-300/80",
     textClass: "text-sky-600 dark:text-sky-300/80",
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-sky-500))]",
     pulse: true,
   },
   monitoring: {
     label: "Monitoring",
     accentClass: "bg-sky-500 dark:bg-sky-300/80",
     textClass: "text-sky-600 dark:text-sky-300/80",
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-sky-500))]",
     pulse: false,
   },
   connecting: {
     label: "Connecting",
     accentClass: "bg-sky-500 dark:bg-sky-300/80",
     textClass: "text-sky-600 dark:text-sky-300/80",
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-sky-500))]",
     pulse: true,
   },
   failed: {
     label: "Failed",
     accentClass: "bg-red-500 dark:bg-red-300/90",
     textClass: "text-red-600 dark:text-red-300/90",
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-red-500))]",
     pulse: false,
   },
   "plan-ready": {
     label: "Plan ready",
     accentClass: "bg-violet-500 dark:bg-violet-300/90",
     textClass: "text-violet-600 dark:text-violet-300/90",
+    surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-violet-500))]",
     pulse: false,
   },
   idle: {
     label: "Idle",
     accentClass: "bg-muted-foreground/40",
     textClass: "text-muted-foreground",
+    surfaceClass: "bg-card",
     pulse: false,
   },
 };

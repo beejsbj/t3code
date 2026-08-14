@@ -9,7 +9,19 @@ import type {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
-import { AlarmClockIcon, CheckIcon, GripVerticalIcon, Maximize2Icon } from "lucide-react";
+import {
+  AlarmClockIcon,
+  CheckIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleXIcon,
+  ClipboardCheckIcon,
+  GripVerticalIcon,
+  Maximize2Icon,
+  MessageCircleQuestionIcon,
+  RadarIcon,
+} from "lucide-react";
 import {
   memo,
   useCallback,
@@ -50,11 +62,14 @@ import {
   resolveThreadRuntimeState,
   threadRuntimeStateAppearance,
   type ThreadRuntimeState,
+  type ThreadRuntimeStateAppearance,
 } from "../../state/threadRuntimeState.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
+import { useUiStateStore } from "../../uiStateStore.ts";
 import { cn } from "~/lib/utils";
+import { hasUnseenCompletion } from "../Sidebar.logic.ts";
 import { useThreadTimeline } from "../chat/useThreadTimeline.ts";
 import { ChatComposer } from "../chat/ChatComposer.tsx";
 import { resolveRenameCommit } from "../threadRename.logic.ts";
@@ -71,6 +86,15 @@ import { type ExpandedImagePreview } from "../chat/ExpandedImagePreview.tsx";
 
 const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 const NOOP = () => {};
+const DONE_APPEARANCE = {
+  label: "Done",
+  accentClass: "bg-emerald-500 dark:bg-emerald-300/90",
+  textClass: "text-emerald-700 dark:text-emerald-300",
+  surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-emerald-500))]",
+  pulse: false,
+} satisfies ThreadRuntimeStateAppearance;
+
+type BoardCardVisualState = ThreadRuntimeState | "done";
 
 export interface BoardSessionCardProps {
   readonly cardKey: string;
@@ -184,7 +208,11 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   });
 
   const status = resolveThreadRuntimeState(thread);
-  const appearance = threadRuntimeStateAppearance(status);
+  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[cardKey]);
+  const visualStatus: BoardCardVisualState =
+    status === "idle" && hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "done" : status;
+  const appearance =
+    visualStatus === "done" ? DONE_APPEARANCE : threadRuntimeStateAppearance(visualStatus);
 
   const [draggingHeight, setDraggingHeight] = useState<number | null>(null);
   const teardownResizeRef = useRef<(() => void) | null>(null);
@@ -314,7 +342,8 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     >
       <div
         className={cn(
-          "relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/70 bg-card shadow-sm",
+          "relative flex min-h-0 flex-col overflow-hidden rounded-lg border border-border/70 shadow-sm",
+          appearance.surfaceClass,
           isFocused && "border-primary/60 ring-1 ring-primary/40",
           (isDraggingSelf || props.isDragging) && "opacity-60",
         )}
@@ -376,7 +405,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
                 : ` · ${environmentConnection.phase}`}
             </p>
           </div>
-          <StatusDot status={status} />
+          <BoardStatusIcon status={visualStatus} appearance={appearance} />
           {showSnoozeButton ? (
             <Menu open={snoozeMenuOpen} onOpenChange={setSnoozeMenuOpen}>
               <MenuTrigger
@@ -729,20 +758,51 @@ function AttentionStrip({
   );
 }
 
-// Matches resolveThreadStatusPill's colorClass for the same states (Sidebar.logic.ts)
-// so the strip's headings read the same hue as the sidebar pill for approval/input.
-function StatusDot({ status }: { readonly status: ThreadRuntimeState }) {
-  const appearance = threadRuntimeStateAppearance(status);
+function BoardStatusIcon({
+  status,
+  appearance,
+}: {
+  readonly status: BoardCardVisualState;
+  readonly appearance: ThreadRuntimeStateAppearance;
+}) {
+  let Icon = CircleCheckIcon;
+  switch (status) {
+    case "working":
+    case "connecting":
+      Icon = CircleDashedIcon;
+      break;
+    case "approval":
+      Icon = CircleAlertIcon;
+      break;
+    case "input":
+      Icon = MessageCircleQuestionIcon;
+      break;
+    case "failed":
+      Icon = CircleXIcon;
+      break;
+    case "plan-ready":
+      Icon = ClipboardCheckIcon;
+      break;
+    case "monitoring":
+      Icon = RadarIcon;
+      break;
+    case "done":
+    case "idle":
+      break;
+  }
   return (
     <span
+      role="img"
+      aria-label={appearance.label}
       data-testid="board-card-status"
       data-status={status}
       title={appearance.label}
       className={cn(
-        "mt-1 size-1.5 shrink-0 rounded-full",
-        appearance.accentClass,
-        appearance.pulse && "animate-status-pulse motion-reduce:animate-none",
+        "mt-0.5 inline-flex shrink-0 items-center justify-center",
+        appearance.textClass,
       )}
-    />
+    >
+      <Icon aria-hidden className="size-4" />
+    </span>
   );
 }
