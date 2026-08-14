@@ -99,11 +99,14 @@ import {
 } from "./BoardSessionCard.logic.ts";
 import { useInViewport } from "./useInViewport.ts";
 import { MessagesTimeline } from "../chat/MessagesTimeline.tsx";
+import {
+  resolveTimelineIsAtEnd,
+  shouldPositionTimelineAnchor,
+} from "../chat/MessagesTimeline.logic.ts";
 import { ExpandedImageDialog } from "../chat/ExpandedImageDialog.tsx";
 import { type ExpandedImagePreview } from "../chat/ExpandedImagePreview.tsx";
 
 const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
-const NOOP = () => {};
 const DONE_APPEARANCE = {
   label: "Done",
   borderClass: "border-emerald-500/50 dark:border-emerald-300/40",
@@ -240,7 +243,12 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   );
   const threadProject = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
   const workspacePath = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
-  const repositoryLabel = threadProject?.repositoryIdentity?.displayName ?? projectTitle;
+  const repositoryIdentity = threadProject?.repositoryIdentity;
+  const repositoryLabel =
+    repositoryIdentity?.displayName ??
+    (repositoryIdentity?.owner && repositoryIdentity.name
+      ? `${repositoryIdentity.owner}/${repositoryIdentity.name}`
+      : projectTitle);
   const { openMenu, settle, unsettle, snooze, unsnooze } = useThreadActionMenu({
     threadRef,
     projectCwd: workspacePath,
@@ -660,6 +668,9 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
   const legendListRef = useRef<LegendListRef | null>(null);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
+  const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
+  const activeTimelineAnchorRef = useRef<MessageId | null>(null);
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
@@ -689,6 +700,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     resolvedTheme,
     onExpandImage: onExpandTimelineImage,
   });
+  activeTimelineAnchorRef.current = timelineAnchorMessageId;
 
   const pendingApprovals = useMemo(() => derivePendingApprovals(activities), [activities]);
   const pendingUserInputs = useMemo(() => derivePendingUserInputs(activities), [activities]);
@@ -786,7 +798,30 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     [threadRef],
   );
 
-  const onTimelineAnchorReady = useCallback((_messageId: MessageId, anchorIndex: number) => {
+  useEffect(() => {
+    if (timelineAnchorMessageId === null) return;
+    positionedTimelineAnchorRef.current = null;
+    setTimelineLiveFollowEnabled(true);
+  }, [timelineAnchorMessageId]);
+
+  const cancelTimelineFollow = useCallback(() => {
+    activeTimelineAnchorRef.current = null;
+    positionedTimelineAnchorRef.current = null;
+    setTimelineLiveFollowEnabled(false);
+    clearTimelineAnchor();
+  }, [clearTimelineAnchor]);
+
+  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
+    if (
+      !shouldPositionTimelineAnchor(
+        activeTimelineAnchorRef.current,
+        positionedTimelineAnchorRef.current,
+        messageId,
+      )
+    ) {
+      return;
+    }
+    positionedTimelineAnchorRef.current = messageId;
     void legendListRef.current?.scrollToIndex({
       index: anchorIndex,
       animated: true,
@@ -794,6 +829,80 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
       viewOffset: 8,
     });
   }, []);
+
+  const timelineContentOverflowsViewport = useCallback(() => {
+    const state = legendListRef.current?.getState();
+    if (!state || state.data.length === 0) return false;
+    const lastRowIndex = state.data.length - 1;
+    const lastRowTop = state.positionAtIndex(lastRowIndex);
+    const lastRowHeight = state.sizeAtIndex(lastRowIndex);
+    if (
+      typeof lastRowTop !== "number" ||
+      typeof lastRowHeight !== "number" ||
+      !Number.isFinite(lastRowTop) ||
+      !Number.isFinite(lastRowHeight)
+    ) {
+      return false;
+    }
+    return lastRowTop + Math.max(1, lastRowHeight) > (state.scrollLength ?? 0);
+  }, []);
+
+  const onTimelineIsAtEndChange = useCallback((isAtEnd: boolean) => {
+    if (isAtEnd) setTimelineLiveFollowEnabled(true);
+  }, []);
+
+  useEffect(() => {
+    let frame: number | null = null;
+    let removeListeners: (() => void) | null = null;
+    const attach = (attemptsRemaining: number) => {
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const scrollNode = legendListRef.current?.getScrollableNode();
+        if (!scrollNode) {
+          if (attemptsRemaining > 0) attach(attemptsRemaining - 1);
+          return;
+        }
+        const viewportIsAwayFromEnd = () =>
+          resolveTimelineIsAtEnd(legendListRef.current?.getState(), 0) === false;
+        const handleWheel = (event: WheelEvent) => {
+          if (event.deltaY < 0 && timelineContentOverflowsViewport()) cancelTimelineFollow();
+        };
+        const handleTouchMove = () => {
+          if (viewportIsAwayFromEnd()) cancelTimelineFollow();
+        };
+        const handlePointerDown = (event: PointerEvent) => {
+          if (event.target === scrollNode) {
+            if (timelineContentOverflowsViewport()) cancelTimelineFollow();
+            return;
+          }
+          if (viewportIsAwayFromEnd()) cancelTimelineFollow();
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+          if (
+            (event.key === "PageUp" || event.key === "Home" || event.key === "ArrowUp") &&
+            timelineContentOverflowsViewport()
+          ) {
+            cancelTimelineFollow();
+          }
+        };
+        scrollNode.addEventListener("wheel", handleWheel, { passive: true });
+        scrollNode.addEventListener("touchmove", handleTouchMove, { passive: true });
+        scrollNode.addEventListener("pointerdown", handlePointerDown, { passive: true });
+        scrollNode.addEventListener("keydown", handleKeyDown);
+        removeListeners = () => {
+          scrollNode.removeEventListener("wheel", handleWheel);
+          scrollNode.removeEventListener("touchmove", handleTouchMove);
+          scrollNode.removeEventListener("pointerdown", handlePointerDown);
+          scrollNode.removeEventListener("keydown", handleKeyDown);
+        };
+      });
+    };
+    attach(12);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      removeListeners?.();
+    };
+  }, [cancelTimelineFollow, threadRef, timelineContentOverflowsViewport]);
   const acknowledgeFocus = useBoardFocusStore((state) => state.acknowledgeFocus);
 
   useEffect(() => {
@@ -838,8 +947,9 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
           anchorMessageId={timelineAnchorMessageId}
           onAnchorReady={onTimelineAnchorReady}
           contentInsetEndAdjustment={0}
-          onIsAtEndChange={NOOP}
-          onManualNavigation={clearTimelineAnchor}
+          liveFollowEnabled={timelineLiveFollowEnabled}
+          onIsAtEndChange={onTimelineIsAtEndChange}
+          onManualNavigation={cancelTimelineFollow}
           hideEmptyPlaceholder={false}
           topFadeEnabled={false}
         />

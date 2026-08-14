@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useComposerDraftStore, type ComposerImageAttachment } from "../../composerDraftStore.ts";
+import type { ChatMessage } from "../../types.ts";
 
 import {
+  boardComposerDraftCanBeRestored,
   canBeginBoardComposerSend,
+  mergeBoardTimelineMessages,
   resolveBoardComposerModelSelection,
   resolveBoardComposerSubmission,
   useThreadComposerRouteState,
@@ -32,7 +37,6 @@ describe("resolveBoardComposerSubmission", () => {
   it("allows the shell-backed composer to send before thread detail loads", () => {
     expect(
       resolveBoardComposerSubmission({
-        sessionStatus: "ready",
         prompt: "  follow up  ",
         imageCount: 0,
       }),
@@ -42,21 +46,86 @@ describe("resolveBoardComposerSubmission", () => {
   it("rejects an empty draft", () => {
     expect(
       resolveBoardComposerSubmission({
-        sessionStatus: "ready",
         prompt: "  ",
         imageCount: 0,
       }),
     ).toBeNull();
   });
 
-  it.each(["starting", "running"] as const)("allows a steer while the shell is %s", (status) => {
+  it("does not couple submission validity to session lifecycle", () => {
     expect(
       resolveBoardComposerSubmission({
-        sessionStatus: status,
         prompt: "follow up",
         imageCount: 0,
       }),
     ).toEqual({ text: "follow up" });
+  });
+});
+
+describe("boardComposerDraftCanBeRestored", () => {
+  it("restores after clearComposerContent deletes a plain-message draft", () => {
+    const threadRef = scopeThreadRef(
+      EnvironmentId.make("board-send-failure-environment"),
+      ThreadId.make("board-send-failure-thread"),
+    );
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "message to retry");
+    store.clearComposerContent(threadRef);
+
+    const clearedDraft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    expect(clearedDraft).toBeNull();
+    expect(boardComposerDraftCanBeRestored(clearedDraft)).toBe(true);
+
+    useComposerDraftStore.getState().setPrompt(threadRef, "message to retry");
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt).toBe(
+      "message to retry",
+    );
+  });
+
+  it("restores over an empty draft but never overwrites concurrent input", () => {
+    expect(boardComposerDraftCanBeRestored({ prompt: "", images: [] })).toBe(true);
+    expect(boardComposerDraftCanBeRestored({ prompt: "new input", images: [] })).toBe(false);
+    expect(
+      boardComposerDraftCanBeRestored({
+        prompt: "",
+        images: [{} as ComposerImageAttachment],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("mergeBoardTimelineMessages", () => {
+  it("hands an optimistic image preview to the matching projected message", () => {
+    const messageId = MessageId.make("board-image-message");
+    const serverMessage: ChatMessage = {
+      id: messageId,
+      role: "user",
+      text: "image",
+      attachments: [
+        {
+          type: "image",
+          id: "server-attachment",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 128,
+        },
+      ],
+      turnId: null,
+      createdAt: "2026-08-14T12:00:00.000Z",
+      updatedAt: "2026-08-14T12:00:00.000Z",
+      streaming: false,
+    };
+    const optimisticMessage: ChatMessage = {
+      ...serverMessage,
+      attachments: [{ ...serverMessage.attachments![0]!, previewUrl: "blob:optimistic" }],
+    };
+
+    const merged = mergeBoardTimelineMessages([serverMessage], [optimisticMessage], {
+      [messageId]: ["blob:optimistic"],
+    });
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.attachments?.[0]?.previewUrl).toBe("blob:optimistic");
   });
 });
 
