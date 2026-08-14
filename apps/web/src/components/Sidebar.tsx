@@ -1126,6 +1126,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-sidebar-thread-key={threadKey}
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
         <Tooltip>
@@ -1260,6 +1261,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   return (
     <li
       data-thread-item
+      data-sidebar-thread-key={threadKey}
       ref={sortable?.setNodeRef}
       style={
         sortable
@@ -2031,6 +2033,20 @@ export default function Sidebar() {
       .getElementById(`sidebar-thread-search-result-${activeSearchResultIndex}`)
       ?.scrollIntoView({ block: "nearest" });
   }, [activeSearchResultIndex, isSearchingThreads, threadSearchResultOrderKey]);
+
+  useEffect(() => {
+    if (!isBoardRoute || boardFocusedThreadKey === null) return;
+    const frame = window.requestAnimationFrame(() => {
+      // Match by dataset instead of a selector value: scoped thread keys are
+      // environment-owned strings and are not guaranteed selector-safe.
+      for (const node of document.querySelectorAll<HTMLElement>("[data-sidebar-thread-key]")) {
+        if (node.dataset.sidebarThreadKey !== boardFocusedThreadKey) continue;
+        node.scrollIntoView({ block: "nearest" });
+        break;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [boardFocusedThreadKey, isBoardRoute]);
 
   // Arm a timeout for the earliest upcoming wake so the shelf empties the
   // moment a snooze expires instead of on the next minute tick. Sorted

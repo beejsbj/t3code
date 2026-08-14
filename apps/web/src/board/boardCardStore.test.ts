@@ -3,10 +3,9 @@ import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
-  CARD_COMPACT_HEIGHT,
+  CARD_DEFAULT_HEIGHT,
   CARD_MAX_HEIGHT,
   CARD_MIN_HEIGHT,
-  CARD_TALL_HEIGHT,
   selectCardHeight,
   useBoardCardStore,
 } from "./boardCardStore.ts";
@@ -27,27 +26,17 @@ describe("boardCardStore", () => {
     expect(selectCardHeight(useBoardCardStore.getState().byThreadKey, refA)).toBe(CARD_MAX_HEIGHT);
   });
 
-  it("setSize applies the preset compact/tall heights", () => {
-    useBoardCardStore.getState().setSize(refA, "tall");
-    expect(selectCardHeight(useBoardCardStore.getState().byThreadKey, refA)).toBe(CARD_TALL_HEIGHT);
-
-    useBoardCardStore.getState().setSize(refA, "compact");
-    expect(selectCardHeight(useBoardCardStore.getState().byThreadKey, refA)).toBe(
-      CARD_COMPACT_HEIGHT,
-    );
-  });
-
-  it("selectCardHeight defaults to compact for an unknown thread", () => {
+  it("selectCardHeight defaults to the full card height for an unknown thread", () => {
     expect(selectCardHeight(useBoardCardStore.getState().byThreadKey, refB)).toBe(
-      CARD_COMPACT_HEIGHT,
+      CARD_DEFAULT_HEIGHT,
     );
   });
 
   it("removeThread clears persisted state", () => {
-    useBoardCardStore.getState().setSize(refA, "tall");
+    useBoardCardStore.getState().setHeight(refA, CARD_MIN_HEIGHT);
     useBoardCardStore.getState().removeThread(refA);
     expect(selectCardHeight(useBoardCardStore.getState().byThreadKey, refA)).toBe(
-      CARD_COMPACT_HEIGHT,
+      CARD_DEFAULT_HEIGHT,
     );
     expect(useBoardCardStore.getState().byThreadKey).toEqual({});
   });
@@ -103,5 +92,30 @@ describe("boardCardStore", () => {
           useBoardCardStore.getInitialState(),
         ).byThreadKey,
     ).toEqual({});
+  });
+
+  it("migrates the removed compact preset while preserving custom heights", () => {
+    const persistApi = useBoardCardStore.persist as unknown as {
+      getOptions: () => {
+        migrate: (persistedState: unknown, version: number) => unknown;
+      };
+    };
+
+    expect(
+      persistApi.getOptions().migrate(
+        {
+          byThreadKey: {
+            "env-1:thread-A": { heightPx: 260 },
+            "env-1:thread-B": { heightPx: 333 },
+          },
+        },
+        1,
+      ),
+    ).toEqual({
+      byThreadKey: {
+        "env-1:thread-A": { heightPx: CARD_DEFAULT_HEIGHT },
+        "env-1:thread-B": { heightPx: 333 },
+      },
+    });
   });
 });

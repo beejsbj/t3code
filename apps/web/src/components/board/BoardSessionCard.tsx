@@ -8,7 +8,8 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { ChevronsDownUpIcon, GripVerticalIcon, Maximize2Icon } from "lucide-react";
+import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { AlarmClockIcon, CheckIcon, GripVerticalIcon, Maximize2Icon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -24,7 +25,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 
 import {
-  cardSizeForHeight,
   CARD_MAX_HEIGHT,
   CARD_MIN_HEIGHT,
   clampCardHeight,
@@ -36,6 +36,8 @@ import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { useDiffPanelStore } from "../../diffPanelStore.ts";
 import { useRightPanelStore } from "../../rightPanelStore.ts";
 import { useTheme } from "../../hooks/useTheme.ts";
+import { useThreadActionMenu } from "../../hooks/useThreadActionMenu.ts";
+import { useClientSettings } from "../../hooks/useSettings.ts";
 import { ensureLocalApi } from "../../localApi.ts";
 import {
   derivePendingApprovals,
@@ -44,8 +46,6 @@ import {
   type PendingUserInput,
 } from "../../session-logic.ts";
 import { readProject, useServerConfigs, useThread } from "../../state/entities.ts";
-import { useUiStateStore } from "../../uiStateStore.ts";
-import { useThreadContextMenu } from "../useThreadContextMenu.ts";
 import {
   resolveThreadRuntimeState,
   threadRuntimeStateAppearance,
@@ -57,8 +57,11 @@ import type { SidebarThreadSummary } from "../../types.ts";
 import { cn } from "~/lib/utils";
 import { useThreadTimeline } from "../chat/useThreadTimeline.ts";
 import { ChatComposer } from "../chat/ChatComposer.tsx";
+import { resolveRenameCommit } from "../threadRename.logic.ts";
+import { resolveSnoozePresets } from "../Sidebar.snooze.ts";
 import { useBoardThreadComposer } from "../chat/useThreadComposer.ts";
 import { Button } from "../ui/button.tsx";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
 import { toastManager } from "../ui/toast.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { useInViewport } from "./useInViewport.ts";
@@ -93,14 +96,64 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     environmentConnection,
   } = props;
 
-  const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
-  const { openThreadContextMenu } = useThreadContextMenu({
-    onMarkUnread: markThreadUnread,
-  });
-
   const setHeight = useBoardCardStore((state) => state.setHeight);
-  const setSize = useBoardCardStore((state) => state.setSize);
   const heightPx = useBoardCardStore((state) => selectCardHeight(state.byThreadKey, threadRef));
+  const serverConfigs = useServerConfigs();
+  const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
+  const settlementSupported = capabilities?.threadSettlement === true;
+  const snoozeSupported = capabilities?.threadSnooze === true;
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
+  const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
+  const showSnoozeButton = snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
+
+  const [renaming, setRenaming] = useState<{
+    readonly title: string;
+    readonly originalTitle: string;
+  } | null>(null);
+  const renameCommittedRef = useRef(false);
+  const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const startRename = useCallback(() => {
+    renameCommittedRef.current = false;
+    setRenaming({ title: thread.title, originalTitle: thread.title });
+  }, [thread.title]);
+  const commitRename = useCallback(
+    (title: string) => {
+      const originalTitle = renaming?.originalTitle ?? thread.title;
+      setRenaming(null);
+      const resolution = resolveRenameCommit({ title, originalTitle });
+      if (resolution.action === "reject-empty") {
+        toastManager.add({ type: "warning", title: "Thread title cannot be empty" });
+        return;
+      }
+      if (resolution.action === "noop") return;
+      void updateThreadMetadata({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId, title: resolution.title },
+      }).then((result) => {
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          toastManager.add({
+            type: "error",
+            title: "Failed to rename thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+      });
+    },
+    [renaming?.originalTitle, thread.title, threadRef, updateThreadMetadata],
+  );
+  const threadProject = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
+  const workspacePath = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
+  const { openMenu, settle, snooze } = useThreadActionMenu({
+    threadRef,
+    projectCwd: workspacePath,
+    changeRequestState: null,
+    onStartRename: startRename,
+    boardLanes: lanes,
+  });
   // Expansion and focus live on the board's shared store, not on the card: the
   // sidebar opens and points at cards too, and there is only ever one of each.
   const expanded = useBoardFocusStore((state) => state.expandedThreadKey === cardKey);
@@ -215,25 +268,37 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   );
 
   const effectiveHeight = draggingHeight ?? heightPx;
-  const size = cardSizeForHeight(effectiveHeight);
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       event.preventDefault();
       event.stopPropagation();
-      const threadProject = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
-      const workspacePath = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
-      void openThreadContextMenu(
-        {
-          threadRef,
-          thread,
-          workspacePath,
-          lanes,
-        },
-        { x: event.clientX, y: event.clientY },
-      );
+      openMenu({ x: event.clientX, y: event.clientY });
     },
-    [lanes, openThreadContextMenu, thread, threadRef],
+    [openMenu],
+  );
+
+  const handleRenameKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLInputElement>) => {
+      event.stopPropagation();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        renameCommittedRef.current = true;
+        commitRename(event.currentTarget.value);
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        renameCommittedRef.current = true;
+        setRenaming(null);
+      }
+    },
+    [commitRename],
+  );
+
+  const handleRenameBlur = useCallback(
+    (event: React.FocusEvent<HTMLInputElement>) => {
+      if (!renameCommittedRef.current) commitRename(event.currentTarget.value);
+    },
+    [commitRename],
   );
 
   return (
@@ -276,9 +341,27 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
             <GripVerticalIcon className="size-3.5" />
           </button>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[11px] font-medium leading-4" title={thread.title}>
-              {thread.title}
-            </p>
+            {renaming ? (
+              <input
+                autoFocus
+                aria-label="Thread title"
+                value={renaming.title}
+                onChange={(event) =>
+                  setRenaming((current) =>
+                    current ? { ...current, title: event.currentTarget.value } : current,
+                  )
+                }
+                onFocus={(event) => event.currentTarget.select()}
+                onKeyDown={handleRenameKeyDown}
+                onBlur={handleRenameBlur}
+                onClick={(event) => event.stopPropagation()}
+                className="h-4 w-full rounded-sm border border-input bg-card px-1 text-[11px] font-medium leading-4 outline-none focus:border-foreground"
+              />
+            ) : (
+              <p className="truncate text-[11px] font-medium leading-4" title={thread.title}>
+                {thread.title}
+              </p>
+            )}
             <p className="truncate text-[10px] text-muted-foreground/60">
               {projectTitle}
               {thread.branch ? ` · ${thread.branch}` : ""}
@@ -294,15 +377,43 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
             </p>
           </div>
           <StatusDot status={status} />
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() => setSize(threadRef, size === "tall" ? "compact" : "tall")}
-            aria-label={size === "tall" ? "Make card compact" : "Make card tall"}
-            className="text-muted-foreground/60 hover:text-foreground"
-          >
-            <ChevronsDownUpIcon className="size-3.5" />
-          </Button>
+          {showSnoozeButton ? (
+            <Menu open={snoozeMenuOpen} onOpenChange={setSnoozeMenuOpen}>
+              <MenuTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Snooze session"
+                    className="text-muted-foreground/60 hover:text-foreground"
+                  />
+                }
+              >
+                <AlarmClockIcon className="size-3.5" />
+              </MenuTrigger>
+              <MenuPopup align="end" className="min-w-44">
+                {snoozePresets.map((preset) => (
+                  <MenuItem key={preset.id} onClick={() => void snooze(preset)}>
+                    {preset.label}
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      {preset.whenLabel}
+                    </span>
+                  </MenuItem>
+                ))}
+              </MenuPopup>
+            </Menu>
+          ) : null}
+          {settlementSupported ? (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => void settle()}
+              aria-label="Settle session"
+              className="text-muted-foreground/60 hover:text-foreground"
+            >
+              <CheckIcon className="size-3.5" />
+            </Button>
+          ) : null}
           <Button
             size="icon-xs"
             variant="ghost"

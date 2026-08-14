@@ -17,7 +17,11 @@ losing their lane placement. They return to the same lane when they wake or beco
 Archived sessions remain hidden.
 
 You can create, rename, describe, reorder, and archive lanes. Drag a lane's right edge to change its
-width, and drag the bottom of a card to change that card's height.
+width, and drag the bottom of a card to change that card's height. New cards open at the full working
+height; there is no separate compact-size mode.
+
+Each card header has quick actions to snooze or settle the session. Its context menu offers the same
+thread actions as the sidebar, along with board lane placement.
 
 Lane definitions, widths, ordering, and session placements are saved by the client displaying the
 board. They survive reloads on that browser or desktop installation. They are not synchronized to
@@ -41,7 +45,8 @@ environments. Turn **Group projects** off to view all sessions directly in each 
 
 Selecting a session in the sidebar while `/board` is open reveals and focuses its card instead of
 navigating away. Select the focused session again, or use the expand control on its card, to open a
-roomier chat over the board. Close the expanded view to return to the same spatial workspace.
+roomier chat over the board. Focusing a card also reveals the matching session in the sidebar. Close
+the expanded view to return to the same spatial workspace.
 
 The responsive web board remains available at phone-sized browser widths. A dedicated React Native
 board is not included yet.
