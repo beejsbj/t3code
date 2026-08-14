@@ -358,6 +358,60 @@ describe("boardLaneStore", () => {
     expect(merged.collapsedLifecycleLaneIds).toEqual([]);
   });
 
+  it("remaps version two placements before upgrading untouched legacy defaults", () => {
+    const persistApi = useBoardLaneStore.persist as unknown as {
+      getOptions: () => {
+        migrate: (persistedState: unknown, version: number) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useBoardLaneStore.getState>,
+        ) => ReturnType<typeof useBoardLaneStore.getState>;
+      };
+    };
+    const migrated = persistApi.getOptions().migrate(
+      {
+        lanes: [
+          {
+            id: "triage",
+            name: "Triage",
+            description: "New and unplaced sessions start here until you file them elsewhere",
+            order: -1,
+          },
+          {
+            id: "shaping",
+            name: "Grilling / shaping",
+            description: "Working out what this actually is",
+            order: 0,
+          },
+          {
+            id: "ready",
+            name: "Ready",
+            description: "Groomed and ready to pick up",
+            order: 1,
+          },
+          {
+            id: "done",
+            name: "Done",
+            description: "Finished work you want to keep visible on this board",
+            order: 2,
+          },
+        ],
+        placementByThreadKey: {
+          "env-a:shaping": "shaping",
+          "env-a:done": "done",
+        },
+      },
+      2,
+    );
+    const merged = persistApi.getOptions().merge(migrated, useBoardLaneStore.getInitialState());
+
+    expect(merged.lanes).toEqual(DEFAULT_BOARD_LANES);
+    expect(merged.placementByThreadKey).toEqual({
+      "env-a:shaping": "in-progress",
+      "env-a:done": "review",
+    });
+  });
+
   it.each([
     { lifecycleLanes: [] },
     {
@@ -415,10 +469,59 @@ describe("boardLaneStore", () => {
         },
         ...lifecycleLanes,
       ];
-      const migrated = persistApi.getOptions().migrate({ lanes: legacyLanes }, 3);
+      const migrated = persistApi.getOptions().migrate(
+        {
+          lanes: legacyLanes,
+          placementByThreadKey: {
+            "env-a:shaping": "shaping",
+            "env-a:done": "done",
+          },
+          laneEntryByThreadKey: {
+            "env-a:shaping": {
+              laneId: "shaping",
+              enteredAt: "2026-01-01T00:00:00.000Z",
+            },
+            "env-a:done": {
+              laneId: "done",
+              enteredAt: "2026-01-02T00:00:00.000Z",
+            },
+          },
+          orderByLaneId: {
+            shaping: ["env-a:shaping"],
+            done: ["env-a:done"],
+          },
+          byLaneColumnKey: {
+            shaping: { widthPx: 410 },
+            done: { widthPx: 430 },
+          },
+        },
+        3,
+      );
       const merged = persistApi.getOptions().merge(migrated, useBoardLaneStore.getInitialState());
 
       expect(merged.lanes).toEqual(DEFAULT_BOARD_LANES);
+      expect(merged.placementByThreadKey).toEqual({
+        "env-a:shaping": "in-progress",
+        "env-a:done": "review",
+      });
+      expect(merged.laneEntryByThreadKey).toEqual({
+        "env-a:shaping": {
+          laneId: "in-progress",
+          enteredAt: "2026-01-01T00:00:00.000Z",
+        },
+        "env-a:done": {
+          laneId: "review",
+          enteredAt: "2026-01-02T00:00:00.000Z",
+        },
+      });
+      expect(merged.orderByLaneId).toEqual({
+        "in-progress": ["env-a:shaping"],
+        review: ["env-a:done"],
+      });
+      expect(merged.byLaneColumnKey).toEqual({
+        "in-progress": { widthPx: 410 },
+        review: { widthPx: 430 },
+      });
     },
   );
 

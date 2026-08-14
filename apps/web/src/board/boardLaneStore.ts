@@ -135,6 +135,11 @@ const LEGACY_LIFECYCLE_BOARD_LANES: ReadonlyArray<BoardLane> = Object.freeze([
   },
 ]);
 
+const LEGACY_DEFAULT_WORKFLOW_LANE_REPLACEMENTS: Readonly<Record<string, BoardLaneId>> = {
+  shaping: "in-progress",
+  done: "review",
+};
+
 export interface BoardLaneState {
   readonly widthPx: number;
 }
@@ -220,6 +225,48 @@ function isUntouchedLegacyDefaultLanes(value: unknown): boolean {
       entries.some((lane) => isSameLane(lane, legacyLane)),
     ) && entries.every((lane) => allowed.some((legacyLane) => isSameLane(lane, legacyLane)))
   );
+}
+
+function remapLegacyDefaultLaneId(value: unknown): unknown {
+  return typeof value === "string"
+    ? (LEGACY_DEFAULT_WORKFLOW_LANE_REPLACEMENTS[value] ?? value)
+    : value;
+}
+
+function remapLegacyDefaultPlacement(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([threadKey, laneId]) => [
+      threadKey,
+      remapLegacyDefaultLaneId(laneId),
+    ]),
+  );
+}
+
+function remapLegacyDefaultLaneEntries(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([threadKey, entry]) => {
+      if (typeof entry !== "object" || entry === null) return [threadKey, entry];
+      const laneEntry = entry as Record<string, unknown>;
+      return [threadKey, { ...laneEntry, laneId: remapLegacyDefaultLaneId(laneEntry.laneId) }];
+    }),
+  );
+}
+
+function remapLegacyDefaultLaneKeyedState(value: unknown): unknown {
+  if (typeof value !== "object" || value === null) return value;
+  const remapped: Record<string, unknown> = {};
+  for (const [laneId, laneState] of Object.entries(value as Record<string, unknown>)) {
+    const targetLaneId = remapLegacyDefaultLaneId(laneId);
+    if (typeof targetLaneId !== "string") continue;
+    const current = remapped[targetLaneId];
+    remapped[targetLaneId] =
+      Array.isArray(current) && Array.isArray(laneState)
+        ? [...new Set([...current, ...laneState])]
+        : laneState;
+  }
+  return remapped;
 }
 
 function normalizeLanes(value: unknown): ReadonlyArray<BoardLane> {
@@ -353,6 +400,8 @@ function migrateBoardLaneState(persistedState: unknown, version: number): unknow
   const legacy = persistedState as {
     lanes?: unknown;
     placementByThreadKey?: unknown;
+    laneEntryByThreadKey?: unknown;
+    orderByLaneId?: unknown;
     groupByProject?: unknown;
     byLaneColumnKey?: unknown;
   } | null;
@@ -373,7 +422,18 @@ function migrateBoardLaneState(persistedState: unknown, version: number): unknow
           orderByLaneId: {},
         }
       : versionTwoState;
-  return { ...versionThreeState, collapsedLifecycleLaneIds: [] };
+  if (!isUntouchedLegacyDefaultLanes(versionThreeState?.lanes)) {
+    return { ...versionThreeState, collapsedLifecycleLaneIds: [] };
+  }
+  return {
+    ...versionThreeState,
+    lanes: DEFAULT_BOARD_LANES,
+    placementByThreadKey: remapLegacyDefaultPlacement(versionThreeState?.placementByThreadKey),
+    laneEntryByThreadKey: remapLegacyDefaultLaneEntries(versionThreeState?.laneEntryByThreadKey),
+    orderByLaneId: remapLegacyDefaultLaneKeyedState(versionThreeState?.orderByLaneId),
+    byLaneColumnKey: remapLegacyDefaultLaneKeyedState(versionThreeState?.byLaneColumnKey),
+    collapsedLifecycleLaneIds: [],
+  };
 }
 
 export interface BoardLaneOrderedEntry {

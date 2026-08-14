@@ -67,6 +67,7 @@ function threadShell(overrides: Partial<OrchestrationThreadShell> = {}): Orchest
 
 const lifecycleOptions = {
   now: NOW,
+  settlementNow: NOW,
   autoSettleAfterDays: 3,
   supportsSettlement: true,
   supportsSnooze: true,
@@ -226,6 +227,14 @@ const lanes: ReadonlyArray<BoardLane> = [
   },
 ];
 
+const lanesWithFixedLifecycle: ReadonlyArray<BoardLane> = [
+  { id: "triage", name: "Triage", description: "New work", order: 0 },
+  { id: "blocked", name: "Blocked", description: "Waiting", order: 1 },
+  { id: "ready", name: "Ready", description: "Ready", order: 2 },
+  { id: "snoozed", name: "Snoozed", description: "Later", order: 50 },
+  { id: "settled", name: "Settled", description: "Finished", order: 60 },
+];
+
 describe("laneIdForName", () => {
   it("creates a readable unique lane id without exposing id as an authoring field", () => {
     expect(laneIdForName("To Review", lanes)).toBe("to-review");
@@ -237,6 +246,10 @@ describe("nextLaneOrder", () => {
   it("places a new lane after the highest existing order", () => {
     expect(nextLaneOrder(lanes)).toBe(21);
   });
+
+  it("ignores fixed lifecycle tails when placing a new workflow lane", () => {
+    expect(nextLaneOrder(lanesWithFixedLifecycle)).toBe(3);
+  });
 });
 
 describe("reorderLaneUpdates", () => {
@@ -246,6 +259,15 @@ describe("reorderLaneUpdates", () => {
       { laneId: "shaping", order: 10 },
     ]);
     expect(reorderLaneUpdates(lanes, "done", "down")).toEqual([]);
+  });
+
+  it("reorders only editable workflow lanes", () => {
+    expect(reorderLaneUpdates(lanesWithFixedLifecycle, "ready", "up")).toEqual([
+      { laneId: "ready", order: 1 },
+      { laneId: "blocked", order: 2 },
+    ]);
+    expect(reorderLaneUpdates(lanesWithFixedLifecycle, "blocked", "up")).toEqual([]);
+    expect(reorderLaneUpdates(lanesWithFixedLifecycle, "ready", "down")).toEqual([]);
   });
 });
 

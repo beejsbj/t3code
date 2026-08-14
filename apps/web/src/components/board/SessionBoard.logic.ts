@@ -6,6 +6,7 @@ import {
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 import type { BoardLane, BoardLaneId } from "../../board/boardLaneStore.ts";
+import { isBoardFixedLaneId } from "../../board/boardLanes.ts";
 
 export const BOARD_WORKFLOW_COLUMN_WIDTH = 380;
 
@@ -19,7 +20,10 @@ export type BoardThreadVisibility = "visible" | "archived" | "snoozed" | "settle
 export function resolveBoardThreadVisibility(
   thread: OrchestrationThreadShell,
   options: {
+    /** Exact wall clock for second-precise snooze wake boundaries. */
     readonly now: string;
+    /** Minute-quantized clock shared with the sidebar's settlement partition. */
+    readonly settlementNow: string;
     readonly autoSettleAfterDays: number | null;
     readonly supportsSettlement: boolean;
     readonly supportsSnooze: boolean;
@@ -40,7 +44,7 @@ export function resolveBoardThreadVisibility(
   if (
     options.supportsSettlement &&
     effectiveSettled(thread, {
-      now: options.now,
+      now: options.settlementNow,
       autoSettleAfterDays: options.autoSettleAfterDays,
       changeRequestState: options.changeRequestState,
     })
@@ -278,7 +282,8 @@ export function laneIdForName(name: string, lanes: ReadonlyArray<BoardLane>): Bo
 }
 
 export function nextLaneOrder(lanes: ReadonlyArray<BoardLane>): number {
-  return lanes.length === 0 ? 0 : Math.max(...lanes.map((lane) => lane.order)) + 1;
+  const editableLanes = lanes.filter((lane) => !isBoardFixedLaneId(lane.id));
+  return editableLanes.length === 0 ? 0 : Math.max(...editableLanes.map((lane) => lane.order)) + 1;
 }
 
 export function reorderLaneUpdates(
@@ -286,9 +291,9 @@ export function reorderLaneUpdates(
   laneId: BoardLaneId,
   direction: "up" | "down",
 ): ReadonlyArray<{ readonly laneId: BoardLaneId; readonly order: number }> {
-  const ordered = lanes.toSorted(
-    (left, right) => left.order - right.order || left.id.localeCompare(right.id),
-  );
+  const ordered = lanes
+    .filter((lane) => !isBoardFixedLaneId(lane.id))
+    .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id));
   const laneIndex = ordered.findIndex((lane) => lane.id === laneId);
   const neighbourIndex = laneIndex + (direction === "up" ? -1 : 1);
   const lane = ordered[laneIndex];

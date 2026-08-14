@@ -93,7 +93,7 @@ import { Textarea } from "../ui/textarea.tsx";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
-import { BoardSessionCard } from "./BoardSessionCard.tsx";
+import { BoardChangeRequestStateReporter, BoardSessionCard } from "./BoardSessionCard.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { stackedThreadToast, toastManager } from "../ui/toast.tsx";
 import {
@@ -171,6 +171,7 @@ export function SessionBoard() {
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
   const nowMinute = useNowMinute();
+  const settlementNow = `${nowMinute}:00.000Z`;
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   const projectScopeKey = useProjectScopeStore((state) => state.projectScopeKey);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
@@ -332,9 +333,11 @@ export function SessionBoard() {
   const handleChangeRequestState = useCallback(
     (threadKey: string, state: ChangeRequestStateLike | null) => {
       setChangeRequestStateByKey((current) => {
-        if ((current.get(threadKey) ?? null) === state) return current;
+        if (state === null && !current.has(threadKey)) return current;
+        if (state !== null && current.get(threadKey) === state) return current;
         const next = new Map(current);
-        next.set(threadKey, state);
+        if (state === null) next.delete(threadKey);
+        else next.set(threadKey, state);
         return next;
       });
     },
@@ -359,6 +362,7 @@ export function SessionBoard() {
           const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
           const visibility = resolveBoardThreadVisibility(thread, {
             now,
+            settlementNow,
             autoSettleAfterDays,
             supportsSettlement: capabilities?.threadSettlement === true,
             supportsSnooze: capabilities?.threadSnooze === true,
@@ -417,7 +421,7 @@ export function SessionBoard() {
     changeRequestStateByKey,
     environmentById,
     lanes,
-    nowMinute,
+    settlementNow,
     placementByThreadKey,
     projectGroupByPhysicalKey,
     projectTitleById,
@@ -782,7 +786,7 @@ export function SessionBoard() {
 
         if (entry.laneId === SNOOZED_BOARD_LANE_ID) {
           const wasAlsoSettled = effectiveSettled(entry.thread, {
-            now: `${nowMinute}:00.000Z`,
+            now: settlementNow,
             autoSettleAfterDays,
             changeRequestState: changeRequestStateByKey.get(entry.key) ?? null,
           });
@@ -864,7 +868,7 @@ export function SessionBoard() {
       boardLanes,
       changeRequestStateByKey,
       groupByProject,
-      nowMinute,
+      settlementNow,
       orderedPlaced,
       runLifecycleCommand,
       serverConfigs,
@@ -878,6 +882,21 @@ export function SessionBoard() {
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+      {threads.map((thread) => {
+        const supportsSettlement =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement ===
+          true;
+        if (thread.archivedAt !== null || !supportsSettlement) return null;
+        const cardKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+        return (
+          <BoardChangeRequestStateReporter
+            key={cardKey}
+            cardKey={cardKey}
+            thread={thread}
+            onChangeRequestState={handleChangeRequestState}
+          />
+        );
+      })}
       <header
         className={cn(
           "flex min-h-12 shrink-0 items-center gap-2 border-b border-border py-2 pl-[calc(env(safe-area-inset-left)+0.5rem)] pr-[calc(env(safe-area-inset-right)+0.5rem)] transition-[padding-left] duration-200 ease-linear motion-reduce:transition-none sm:gap-3 sm:px-4 sm:py-2.5",
@@ -1028,7 +1047,7 @@ export function SessionBoard() {
                           entries={bySwimlaneLaneColumn.get(column.key) ?? []}
                           draggingKey={draggingKey}
                           collapsed={collapsedLifecycleLaneIds.includes(column.lane.id)}
-                          onChangeRequestState={handleChangeRequestState}
+                          changeRequestStateByKey={changeRequestStateByKey}
                           snoozeDropRequest={snoozeDropRequest}
                           onSnoozeDropRequestHandled={(threadKey, nonce) =>
                             setSnoozeDropRequest((current) =>
@@ -1406,7 +1425,7 @@ function LaneDropCell({
   entries,
   draggingKey,
   collapsed,
-  onChangeRequestState,
+  changeRequestStateByKey,
   snoozeDropRequest,
   onSnoozeDropRequestHandled,
 }: {
@@ -1416,7 +1435,7 @@ function LaneDropCell({
   readonly entries: ReadonlyArray<PlacedThread>;
   readonly draggingKey: string | null;
   readonly collapsed: boolean;
-  readonly onChangeRequestState: (threadKey: string, state: ChangeRequestStateLike | null) => void;
+  readonly changeRequestStateByKey: ReadonlyMap<string, ChangeRequestStateLike | null>;
   readonly snoozeDropRequest: BoardSnoozeDropRequest | null;
   readonly onSnoozeDropRequestHandled: (threadKey: string, nonce: number) => void;
 }) {
@@ -1454,7 +1473,7 @@ function LaneDropCell({
                 environmentLabel={entry.environmentLabel}
                 environmentConnection={entry.environmentConnection}
                 isDragging={draggingKey === entry.key}
-                onChangeRequestState={onChangeRequestState}
+                changeRequestState={changeRequestStateByKey.get(entry.key) ?? null}
                 snoozeDropRequest={
                   snoozeDropRequest?.threadKey === entry.key
                     ? {

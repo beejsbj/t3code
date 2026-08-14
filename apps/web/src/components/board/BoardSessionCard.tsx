@@ -117,13 +117,48 @@ export interface BoardSessionCardProps {
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly isDragging: boolean;
-  readonly onChangeRequestState?: (threadKey: string, state: ChangeRequestStateLike | null) => void;
+  readonly changeRequestState: ChangeRequestStateLike | null;
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
   } | null;
   readonly onSnoozeDropRequestHandled?: (nonce: number) => void;
 }
+
+/**
+ * PR state participates in board lifecycle projection, so its subscription
+ * cannot live inside a card that disappears when a project or lifecycle lane
+ * is collapsed. SessionBoard mounts one reporter per eligible thread outside
+ * the visual lane tree and passes the resulting state back into visible cards.
+ */
+export const BoardChangeRequestStateReporter = memo(
+  function BoardChangeRequestStateReporter(props: {
+    readonly cardKey: string;
+    readonly thread: SidebarThreadSummary;
+    readonly onChangeRequestState: (
+      threadKey: string,
+      state: ChangeRequestStateLike | null,
+    ) => void;
+  }) {
+    const { cardKey, thread, onChangeRequestState } = props;
+    const project = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
+    const workspacePath = thread.worktreePath ?? project?.workspaceRoot ?? null;
+    const gitStatus = useEnvironmentQuery(
+      (thread.branch != null || thread.worktreePath !== null) && workspacePath !== null
+        ? vcsEnvironment.status({
+            environmentId: thread.environmentId,
+            input: { cwd: workspacePath },
+          })
+        : null,
+    );
+    const changeRequestState =
+      resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data })?.state ?? null;
+    useEffect(() => {
+      onChangeRequestState(cardKey, changeRequestState);
+    }, [cardKey, changeRequestState, onChangeRequestState]);
+    return null;
+  },
+);
 
 export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessionCardProps) {
   const {
@@ -196,23 +231,10 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   );
   const threadProject = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
   const workspacePath = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
-  const gitStatus = useEnvironmentQuery(
-    (thread.branch != null || thread.worktreePath !== null) && workspacePath !== null
-      ? vcsEnvironment.status({
-          environmentId: thread.environmentId,
-          input: { cwd: workspacePath },
-        })
-      : null,
-  );
-  const changeRequestState =
-    resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data })?.state ?? null;
-  useEffect(() => {
-    props.onChangeRequestState?.(cardKey, changeRequestState);
-  }, [cardKey, changeRequestState, props.onChangeRequestState]);
   const { openMenu, settle, unsettle, snooze, unsnooze } = useThreadActionMenu({
     threadRef,
     projectCwd: workspacePath,
-    changeRequestState,
+    changeRequestState: props.changeRequestState,
     onStartRename: startRename,
     boardLanes: lanes,
   });
