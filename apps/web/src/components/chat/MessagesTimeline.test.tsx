@@ -208,13 +208,13 @@ function buildLongUserMessageText(tail = "deep hidden detail only after expand")
   ).join("\n");
 }
 
-function buildUserTimelineEntry(text: string) {
+function buildUserTimelineEntry(text: string, suffix = "1") {
   return {
-    id: "entry-1",
+    id: `entry-${suffix}`,
     kind: "message" as const,
     createdAt: MESSAGE_CREATED_AT,
     message: {
-      id: MessageId.make("message-1"),
+      id: MessageId.make(`message-${suffix}`),
       role: "user" as const,
       text,
       turnId: null,
@@ -343,6 +343,23 @@ describe("MessagesTimeline", () => {
     expect(defaultMarkup).toContain("Hello from the board");
     expect(compactMarkup).toContain("Hello from the board");
     expect(compactMarkup).toContain('class="h-1"');
+  });
+
+  it("can keep turn navigation visible in compact density", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        density="compact"
+        minimapVariant="compact"
+        timelineEntries={[
+          buildUserTimelineEntry("First chapter", "first"),
+          buildUserTimelineEntry("Second chapter", "second"),
+        ]}
+      />,
+    );
+
+    expect(markup).toContain('data-testid="timeline-minimap"');
+    expect(markup).toContain("pr-1.5 pl-10");
   });
 
   it("uses the larger leading inset only when the top fade is enabled", () => {

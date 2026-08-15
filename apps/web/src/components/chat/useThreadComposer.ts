@@ -1,11 +1,12 @@
 import {
   type ApprovalRequestId,
+  type MessageId,
   type ModelSelection,
   type OrchestrationThreadActivity,
-  type OrchestrationSessionStatus,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type ProviderInteractionMode,
+  type PreviewAnnotationPayload,
   type RuntimeMode,
   type ScopedThreadRef,
   type ServerProvider,
@@ -13,7 +14,7 @@ import {
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -38,19 +39,41 @@ import {
   DEFAULT_RUNTIME_MODE,
   type SessionPhase,
   type SidebarThreadSummary,
+  type ChatMessage,
   type Thread,
 } from "../../types.ts";
 import {
   deriveLockedProvider,
   buildThreadTurnInterruptInput,
+  cloneComposerImageForRetry,
+  collectUserMessageBlobPreviewUrls,
   getStartedThreadModelChangeBlockReason,
   readFileAsDataUrl,
+  revokeBlobPreviewUrl,
+  revokeUserMessagePreviewUrls,
   resolveThreadMetadataUpdateForNextTurn,
+  deriveComposerSendState,
 } from "../ChatView.logic.ts";
-import { useComposerDraftStore, type ComposerImageAttachment } from "../../composerDraftStore.ts";
+import {
+  useComposerDraftStore,
+  type ComposerImageAttachment,
+  type ComposerThreadDraftState,
+} from "../../composerDraftStore.ts";
+import { useAssetUrls } from "../../assets/assetUrls.ts";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection.ts";
-import type { TerminalContextDraft } from "../../lib/terminalContext.ts";
-import type { ElementContextDraft } from "../../lib/elementContext.ts";
+import {
+  appendTerminalContextsToPrompt,
+  type TerminalContextDraft,
+} from "../../lib/terminalContext.ts";
+import {
+  appendElementContextsToPrompt,
+  type ElementContextDraft,
+} from "../../lib/elementContext.ts";
+import { appendPreviewAnnotationPrompt } from "../../lib/previewAnnotation.ts";
+import {
+  appendReviewCommentsToPrompt,
+  type ReviewCommentContext,
+} from "../../reviewCommentContext.ts";
 import type { ChatComposerProps } from "./ChatComposer.tsx";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview.tsx";
 import { toastManager } from "../ui/toast.tsx";
@@ -67,6 +90,7 @@ const EMPTY_PENDING_APPROVALS: PendingApproval[] = [];
 const EMPTY_PENDING_USER_INPUTS: PendingUserInput[] = [];
 const EMPTY_RESPONDING_REQUEST_IDS: ApprovalRequestId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProvider[] = [];
+const EMPTY_CHAT_MESSAGES: ReadonlyArray<ChatMessage> = [];
 // Shared no-op for the handful of board composer callbacks that are inert
 // (plan sidebar, focus scheduling, etc. don't apply to embedded cards). A
 // zero-arg function is structurally assignable to every callback prop type
@@ -76,16 +100,88 @@ const NOOP = () => {};
 export type ThreadComposerSurface = "route" | "board";
 
 export function resolveBoardComposerSubmission(input: {
-  readonly sessionStatus: OrchestrationSessionStatus | null;
   readonly prompt: string;
   readonly imageCount: number;
 }): { readonly text: string } | null {
-  if (input.sessionStatus === "starting" || input.sessionStatus === "running") {
-    return null;
-  }
   const text = input.prompt.trim();
   if (text.length === 0 && input.imageCount === 0) return null;
   return { text };
+}
+
+export function buildBoardComposerMessageText(input: {
+  readonly prompt: string;
+  readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  readonly elementContexts: ReadonlyArray<ElementContextDraft>;
+  readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
+  readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
+}): string {
+  const withTerminalContexts = appendTerminalContextsToPrompt(input.prompt, input.terminalContexts);
+  const withElementContexts = appendElementContextsToPrompt(
+    withTerminalContexts,
+    input.elementContexts,
+  );
+  const withPreviewAnnotations = input.previewAnnotations.reduce(
+    (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
+    withElementContexts,
+  );
+  return appendReviewCommentsToPrompt(withPreviewAnnotations, input.reviewComments);
+}
+
+export function boardComposerDraftCanBeRestored(
+  draft:
+    | (Pick<ComposerThreadDraftState, "prompt" | "images"> &
+        Partial<
+          Pick<
+            ComposerThreadDraftState,
+            "terminalContexts" | "elementContexts" | "previewAnnotations" | "reviewComments"
+          >
+        >)
+    | null,
+): boolean {
+  return (
+    draft === null ||
+    (draft.prompt.length === 0 &&
+      draft.images.length === 0 &&
+      (draft.terminalContexts?.length ?? 0) === 0 &&
+      (draft.elementContexts?.length ?? 0) === 0 &&
+      (draft.previewAnnotations?.length ?? 0) === 0 &&
+      (draft.reviewComments?.length ?? 0) === 0)
+  );
+}
+
+export function mergeBoardTimelineMessages(
+  serverMessages: ReadonlyArray<ChatMessage>,
+  optimisticUserMessages: ReadonlyArray<ChatMessage>,
+  attachmentPreviewHandoffByMessageId: Readonly<Record<string, ReadonlyArray<string>>>,
+): ReadonlyArray<ChatMessage> {
+  const serverMessagesWithPreviewHandoff = serverMessages.map((message) => {
+    const handoffPreviewUrls = attachmentPreviewHandoffByMessageId[message.id];
+    if (
+      message.role !== "user" ||
+      !handoffPreviewUrls ||
+      !message.attachments ||
+      message.attachments.length === 0
+    ) {
+      return message;
+    }
+    let imageIndex = 0;
+    let changed = false;
+    const attachments = message.attachments.map((attachment) => {
+      if (attachment.type !== "image") return attachment;
+      const previewUrl = handoffPreviewUrls[imageIndex];
+      imageIndex += 1;
+      if (!previewUrl || attachment.previewUrl === previewUrl) return attachment;
+      changed = true;
+      return { ...attachment, previewUrl };
+    });
+    return changed ? { ...message, attachments } : message;
+  });
+  if (optimisticUserMessages.length === 0) return serverMessagesWithPreviewHandoff;
+  const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
+  const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+  return pendingMessages.length === 0
+    ? serverMessagesWithPreviewHandoff
+    : [...serverMessagesWithPreviewHandoff, ...pendingMessages];
 }
 
 export function canBeginBoardComposerSend(
@@ -204,6 +300,156 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const isConnecting = phase === "connecting";
   const sendInFlightRef = useRef(false);
   const [isSendBusy, setIsSendBusy] = useState(false);
+  const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const optimisticUserMessagesRef = useRef(optimisticUserMessages);
+  optimisticUserMessagesRef.current = optimisticUserMessages;
+  const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
+    Record<string, ReadonlyArray<string>>
+  >({});
+  const attachmentPreviewHandoffByMessageIdRef = useRef(attachmentPreviewHandoffByMessageId);
+  attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
+  const [timelineAnchorMessageId, setTimelineAnchorMessageId] = useState<MessageId | null>(null);
+  const clearTimelineAnchor = useCallback(() => setTimelineAnchorMessageId(null), []);
+
+  const serverMessages = thread?.messages ?? EMPTY_CHAT_MESSAGES;
+  const serverAttachmentIds = useMemo(() => {
+    const attachmentIds = new Set<string>();
+    for (const message of serverMessages) {
+      for (const attachment of message.attachments ?? []) {
+        attachmentIds.add(attachment.id);
+      }
+    }
+    return [...attachmentIds];
+  }, [serverMessages]);
+  const serverAttachmentResources = useMemo(
+    () =>
+      serverAttachmentIds.map((attachmentId) => ({
+        _tag: "attachment" as const,
+        attachmentId,
+      })),
+    [serverAttachmentIds],
+  );
+  const serverAttachmentUrls = useAssetUrls(environmentId, serverAttachmentResources);
+  const serverAttachmentUrlById = useMemo(
+    () =>
+      new Map(
+        serverAttachmentIds.flatMap((attachmentId, index) => {
+          const url = serverAttachmentUrls[index];
+          return url ? [[attachmentId, url] as const] : [];
+        }),
+      ),
+    [serverAttachmentIds, serverAttachmentUrls],
+  );
+  const displayServerMessages = useMemo<ReadonlyArray<ChatMessage>>(
+    () =>
+      serverMessages.map((message) => {
+        if (!message.attachments || message.attachments.length === 0) return message;
+        return {
+          ...message,
+          attachments: message.attachments.map((attachment) => {
+            const previewUrl = serverAttachmentUrlById.get(attachment.id);
+            return previewUrl ? { ...attachment, previewUrl } : attachment;
+          }),
+        };
+      }),
+    [serverAttachmentUrlById, serverMessages],
+  );
+
+  const timelineMessages = useMemo(
+    () =>
+      mergeBoardTimelineMessages(
+        displayServerMessages,
+        optimisticUserMessages,
+        attachmentPreviewHandoffByMessageId,
+      ),
+    [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages],
+  );
+
+  useEffect(() => {
+    const serverIds = new Set(serverMessages.map((message) => message.id));
+    if (serverIds.size === 0) return;
+    const projectedMessages = optimisticUserMessages.filter((message) => serverIds.has(message.id));
+    if (projectedMessages.length === 0) return;
+    setAttachmentPreviewHandoffByMessageId((existing) => {
+      const additions: Record<string, ReadonlyArray<string>> = {};
+      for (const message of projectedMessages) {
+        const previewUrls = collectUserMessageBlobPreviewUrls(message);
+        if (previewUrls.length === 0) {
+          revokeUserMessagePreviewUrls(message);
+          continue;
+        }
+        additions[message.id] = previewUrls;
+      }
+      return Object.keys(additions).length === 0 ? existing : { ...existing, ...additions };
+    });
+    setOptimisticUserMessages((existing) =>
+      existing.filter((message) => !serverIds.has(message.id)),
+    );
+  }, [optimisticUserMessages, serverMessages]);
+
+  useEffect(() => {
+    if (typeof Image === "undefined") return;
+    const cleanups: Array<() => void> = [];
+    for (const [messageId, handoffPreviewUrls] of Object.entries(
+      attachmentPreviewHandoffByMessageId,
+    )) {
+      const serverMessage = displayServerMessages.find((message) => message.id === messageId);
+      const serverPreviewUrls = (serverMessage?.attachments ?? []).flatMap((attachment) =>
+        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
+      );
+      if (
+        serverPreviewUrls.length !== handoffPreviewUrls.length ||
+        serverPreviewUrls.some((previewUrl) => previewUrl.startsWith("blob:"))
+      ) {
+        continue;
+      }
+      let cancelled = false;
+      const images: HTMLImageElement[] = [];
+      void Promise.all(
+        serverPreviewUrls.map(
+          (previewUrl) =>
+            new Promise<void>((resolve, reject) => {
+              const image = new Image();
+              images.push(image);
+              image.addEventListener("load", () => resolve(), { once: true });
+              image.addEventListener("error", () => reject(), { once: true });
+              image.src = previewUrl;
+            }),
+        ),
+      ).then(
+        () => {
+          if (cancelled) return;
+          setAttachmentPreviewHandoffByMessageId((existing) => {
+            if (!(messageId in existing)) return existing;
+            const next = { ...existing };
+            delete next[messageId];
+            return next;
+          });
+          for (const previewUrl of handoffPreviewUrls) revokeBlobPreviewUrl(previewUrl);
+        },
+        () => {},
+      );
+      cleanups.push(() => {
+        cancelled = true;
+        for (const image of images) image.src = "";
+      });
+    }
+    return () => {
+      for (const cleanup of cleanups) cleanup();
+    };
+  }, [attachmentPreviewHandoffByMessageId, displayServerMessages]);
+
+  useEffect(
+    () => () => {
+      for (const message of optimisticUserMessagesRef.current) {
+        revokeUserMessagePreviewUrls(message);
+      }
+      for (const previewUrls of Object.values(attachmentPreviewHandoffByMessageIdRef.current)) {
+        for (const previewUrl of previewUrls) revokeBlobPreviewUrl(previewUrl);
+      }
+    },
+    [],
+  );
 
   const runtimeMode = summary.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode = summary.interactionMode ?? DEFAULT_INTERACTION_MODE;
@@ -215,15 +461,37 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
 
       sendInFlightRef.current = true;
       setIsSendBusy(true);
+      let optimisticMessageId: MessageId | null = null;
+      let sentDraft: {
+        readonly prompt: string;
+        readonly images: ComposerImageAttachment[];
+        readonly terminalContexts: TerminalContextDraft[];
+        readonly elementContexts: ElementContextDraft[];
+        readonly previewAnnotations: PreviewAnnotationPayload[];
+        readonly reviewComments: ReviewCommentContext[];
+      } | null = null;
+      let sendSucceeded = false;
+      let sendError: unknown = null;
       try {
         const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
         if (!draft) return;
-        const submission = resolveBoardComposerSubmission({
-          sessionStatus: summary.session?.status ?? null,
+        const sendState = deriveComposerSendState({
           prompt: draft.prompt,
           imageCount: draft.images.length,
+          terminalContexts: draft.terminalContexts,
+          elementContextCount:
+            draft.elementContexts.length +
+            draft.previewAnnotations.length +
+            draft.reviewComments.length,
         });
-        if (submission === null) return;
+        if (!sendState.hasSendableContent) return;
+        const outgoingMessageText = buildBoardComposerMessageText({
+          prompt: draft.prompt,
+          terminalContexts: sendState.sendableTerminalContexts,
+          elementContexts: draft.elementContexts,
+          previewAnnotations: draft.previewAnnotations,
+          reviewComments: draft.reviewComments,
+        });
         const requestedModelSelection = resolveBoardComposerModelSelection(
           draft,
           summary.modelSelection,
@@ -238,15 +506,44 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         const modelSelection = modelChangeBlockReason
           ? summary.modelSelection
           : requestedModelSelection;
-        const attachments = await Promise.all(
-          draft.images.map(async (image) => ({
-            type: "image" as const,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-            dataUrl: await readFileAsDataUrl(image.file),
-          })),
-        );
+        const messageId = newMessageId();
+        const createdAt = new Date().toISOString();
+        const optimisticAttachments = draft.images.map((image) => ({
+          type: "image" as const,
+          id: image.id,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          previewUrl: image.previewUrl,
+        }));
+        optimisticMessageId = messageId;
+        sentDraft = {
+          prompt: draft.prompt,
+          images: [...draft.images],
+          terminalContexts: [...draft.terminalContexts],
+          elementContexts: [...draft.elementContexts],
+          previewAnnotations: [...draft.previewAnnotations],
+          reviewComments: [...draft.reviewComments],
+        };
+        setTimelineAnchorMessageId(messageId);
+        setOptimisticUserMessages((existing) => [
+          ...existing,
+          {
+            id: messageId,
+            role: "user",
+            text: outgoingMessageText,
+            ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+            turnId: null,
+            createdAt,
+            updatedAt: createdAt,
+            streaming: false,
+          },
+        ]);
+        promptRef.current = "";
+        composerImagesRef.current = [];
+        useComposerDraftStore.getState().clearComposerContent(threadRef);
+        composerRef.current?.resetCursorState();
+
         const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
           currentModelSelection: summary.modelSelection,
           nextModelSelection: modelSelection,
@@ -262,37 +559,87 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           });
           if (metadataResult._tag === "Failure") {
             if (!isAtomCommandInterrupted(metadataResult)) {
-              console.error(squashAtomCommandFailure(metadataResult));
+              sendError = squashAtomCommandFailure(metadataResult);
             }
             return;
           }
         }
+        const attachments = await Promise.all(
+          draft.images.map(async (image) => ({
+            type: "image" as const,
+            name: image.name,
+            mimeType: image.mimeType,
+            sizeBytes: image.sizeBytes,
+            dataUrl: await readFileAsDataUrl(image.file),
+          })),
+        );
         const result = await startThreadTurn({
           environmentId: threadRef.environmentId,
           input: {
             threadId: threadRef.threadId,
             message: {
-              messageId: newMessageId(),
+              messageId,
               role: "user",
-              text: submission.text,
+              text: outgoingMessageText,
               attachments,
             },
             modelSelection,
             titleSeed: summary.title,
             runtimeMode: summary.runtimeMode,
             interactionMode: summary.interactionMode,
-            createdAt: new Date().toISOString(),
+            createdAt,
           },
         });
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
-            console.error(squashAtomCommandFailure(result));
+            sendError = squashAtomCommandFailure(result);
           }
           return;
         }
-        useComposerDraftStore.getState().clearComposerContent(threadRef);
-        composerRef.current?.resetCursorState();
+        sendSucceeded = true;
+      } catch (error) {
+        sendError = error;
       } finally {
+        if (!sendSucceeded && optimisticMessageId !== null && sentDraft !== null) {
+          setOptimisticUserMessages((existing) =>
+            existing.filter((message) => message.id !== optimisticMessageId),
+          );
+          setTimelineAnchorMessageId((current) =>
+            current === optimisticMessageId ? null : current,
+          );
+
+          const currentDraft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+          if (boardComposerDraftCanBeRestored(currentDraft)) {
+            const retryImages = sentDraft.images.map(cloneComposerImageForRetry);
+            for (const image of sentDraft.images) revokeBlobPreviewUrl(image.previewUrl);
+            promptRef.current = sentDraft.prompt;
+            composerImagesRef.current = retryImages;
+            composerTerminalContextsRef.current = sentDraft.terminalContexts;
+            composerElementContextsRef.current = sentDraft.elementContexts;
+            const draftStore = useComposerDraftStore.getState();
+            draftStore.setPrompt(threadRef, sentDraft.prompt);
+            draftStore.addImages(threadRef, retryImages);
+            draftStore.setTerminalContexts(threadRef, sentDraft.terminalContexts);
+            draftStore.setElementContexts(threadRef, sentDraft.elementContexts);
+            draftStore.setPreviewAnnotations(threadRef, sentDraft.previewAnnotations);
+            draftStore.setReviewComments(threadRef, sentDraft.reviewComments);
+            composerRef.current?.resetCursorState({
+              prompt: sentDraft.prompt,
+              cursor: sentDraft.prompt.length,
+              detectTrigger: true,
+            });
+          } else {
+            for (const image of sentDraft.images) revokeBlobPreviewUrl(image.previewUrl);
+          }
+          if (sendError !== null) {
+            toastManager.add({
+              type: "error",
+              title: "Failed to send message",
+              description:
+                sendError instanceof Error ? sendError.message : "The message was restored.",
+            });
+          }
+        }
         sendInFlightRef.current = false;
         setIsSendBusy(false);
       }
@@ -556,5 +903,11 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     ],
   );
 
-  return { chatComposerProps, composerRef };
+  return {
+    chatComposerProps,
+    composerRef,
+    timelineMessages,
+    timelineAnchorMessageId,
+    clearTimelineAnchor,
+  };
 }
