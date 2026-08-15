@@ -112,6 +112,7 @@ An empty database is a bad test. Seed your worktree's `.t3` with a copy of real 
 
 ## Pull requests
 
+- This checkout belongs to the `beejsbj/t3code` fork. Create and review pull requests only in `beejsbj/t3code`, using the fork's `main` as the base, unless the developer explicitly names another repository. Never open or comment on pull requests in `pingdotgg/t3code` by default.
 - Never make a PR unless the developer explicitly asks you to do so.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
