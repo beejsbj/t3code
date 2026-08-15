@@ -525,6 +525,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
             <div className="flex min-w-0 items-center gap-1 overflow-hidden text-[9px] text-muted-foreground/75">
               <span
                 data-board-dimension="project"
+                aria-label={`Project: ${projectTitle}`}
                 className="max-w-28 truncate rounded bg-muted px-1 py-0.5"
                 title={`Project: ${projectTitle}`}
               >
@@ -532,6 +533,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
               </span>
               <span
                 data-board-dimension="workflow"
+                aria-label={`Workflow: ${workflowLabel}`}
                 className="max-w-24 truncate rounded bg-muted px-1 py-0.5"
                 title={`Workflow: ${workflowLabel}`}
               >
@@ -539,6 +541,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
               </span>
               <span
                 data-board-dimension="state"
+                aria-label={`State: ${boardStateLabel}`}
                 className="max-w-20 truncate rounded bg-muted px-1 py-0.5"
                 title={`State: ${boardStateLabel}`}
               >
