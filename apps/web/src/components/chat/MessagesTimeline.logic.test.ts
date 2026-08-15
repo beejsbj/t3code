@@ -10,6 +10,7 @@ import {
   resolveAssistantMessageCopyState,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
+  shouldPositionTimelineAnchor,
   shouldPreserveAssistantLineBreaks,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
@@ -529,6 +530,20 @@ describe("work entry labels", () => {
       });
     },
   );
+});
+
+describe("shouldPositionTimelineAnchor", () => {
+  const messageId = MessageId.make("message-1");
+
+  it("positions an active anchor once", () => {
+    expect(shouldPositionTimelineAnchor(messageId, null, messageId)).toBe(true);
+    expect(shouldPositionTimelineAnchor(messageId, messageId, messageId)).toBe(false);
+  });
+
+  it("does not position a cancelled or stale anchor", () => {
+    expect(shouldPositionTimelineAnchor(null, null, messageId)).toBe(false);
+    expect(shouldPositionTimelineAnchor(MessageId.make("message-2"), null, messageId)).toBe(false);
+  });
 });
 
 describe("shouldPreserveAssistantLineBreaks", () => {

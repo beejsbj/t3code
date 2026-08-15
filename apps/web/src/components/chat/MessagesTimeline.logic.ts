@@ -91,6 +91,14 @@ export function liveWorkEntryLabel(
   return workEntryDisplayLabel(entry, workspaceRoot);
 }
 
+export function shouldPositionTimelineAnchor(
+  activeMessageId: MessageId | null,
+  positionedMessageId: MessageId | null,
+  readyMessageId: MessageId,
+): boolean {
+  return activeMessageId === readyMessageId && positionedMessageId !== readyMessageId;
+}
+
 export function workEntryIsVisibleInGroup(
   entry: WorkLogEntry,
   expandedToolGroupEntry = false,

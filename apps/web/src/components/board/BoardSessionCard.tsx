@@ -2,6 +2,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useSortable } from "@dnd-kit/sortable";
 import type { LegendListRef } from "@legendapp/list/react";
 import type {
+  MessageId,
   ScopedThreadRef,
   ServerProvider,
   ServerProviderSkill,
@@ -21,6 +22,8 @@ import {
   CircleDashedIcon,
   CircleXIcon,
   ClipboardCheckIcon,
+  FolderGit2Icon,
+  GitBranchIcon,
   GripVerticalIcon,
   Maximize2Icon,
   MessageCircleQuestionIcon,
@@ -86,20 +89,25 @@ import { resolveSnoozePresets } from "../Sidebar.snooze.ts";
 import { useBoardThreadComposer } from "../chat/useThreadComposer.ts";
 import { Button } from "../ui/button.tsx";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip.tsx";
 import { toastManager } from "../ui/toast.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import {
   boardCardVisitTimestamp,
+  resolveBoardTimelineFollowCancellation,
   shouldShowBoardStatusIcon,
   type BoardCardVisualState,
 } from "./BoardSessionCard.logic.ts";
 import { useInViewport } from "./useInViewport.ts";
 import { MessagesTimeline } from "../chat/MessagesTimeline.tsx";
+import {
+  resolveTimelineIsAtEnd,
+  shouldPositionTimelineAnchor,
+} from "../chat/MessagesTimeline.logic.ts";
 import { ExpandedImageDialog } from "../chat/ExpandedImageDialog.tsx";
 import { type ExpandedImagePreview } from "../chat/ExpandedImagePreview.tsx";
 
 const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
-const NOOP = () => {};
 const DONE_APPEARANCE = {
   label: "Done",
   borderClass: "border-emerald-500/50 dark:border-emerald-300/40",
@@ -236,6 +244,12 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   );
   const threadProject = readProject(scopeProjectRef(thread.environmentId, thread.projectId));
   const workspacePath = thread.worktreePath ?? threadProject?.workspaceRoot ?? null;
+  const repositoryIdentity = threadProject?.repositoryIdentity;
+  const repositoryLabel =
+    repositoryIdentity?.displayName ??
+    (repositoryIdentity?.owner && repositoryIdentity.name
+      ? `${repositoryIdentity.owner}/${repositoryIdentity.name}`
+      : projectTitle);
   const { openMenu, settle, unsettle, snooze, unsnooze } = useThreadActionMenu({
     threadRef,
     projectCwd: workspacePath,
@@ -510,6 +524,11 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
                 : ` · ${environmentConnection.phase}`}
             </p>
           </div>
+          <CheckoutIdentityIndicator
+            repository={repositoryLabel}
+            branch={thread.branch}
+            workspacePath={workspacePath}
+          />
           {isLifecycleLane ? null : (
             <BoardStatusIcon status={visualStatus} appearance={appearance} />
           )}
@@ -649,6 +668,10 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
   const legendListRef = useRef<LegendListRef | null>(null);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
+  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
+  const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
+  const activeTimelineAnchorRef = useRef<MessageId | null>(null);
+  const timelineFollowCancellationRef = useRef({ cancelled: false, leftEndBand: false });
   const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
     reportFailure: false,
   });
@@ -659,7 +682,28 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
   );
 
   const activities = fullThread?.activities ?? [];
-  const timelineMessages = fullThread?.messages ?? [];
+  const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
+    setExpandedImage(preview);
+  }, []);
+
+  const {
+    chatComposerProps,
+    composerRef,
+    timelineMessages,
+    timelineAnchorMessageId,
+    clearTimelineAnchor,
+  } = useBoardThreadComposer({
+    threadRef,
+    thread: fullThread,
+    summary: thread,
+    environmentLabel,
+    environmentConnection,
+    resolvedTheme,
+    onExpandImage: onExpandTimelineImage,
+  });
+  activeTimelineAnchorRef.current = timelineFollowCancellationRef.current.cancelled
+    ? null
+    : timelineAnchorMessageId;
 
   const pendingApprovals = useMemo(() => derivePendingApprovals(activities), [activities]);
   const pendingUserInputs = useMemo(() => derivePendingUserInputs(activities), [activities]);
@@ -757,19 +801,143 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     [threadRef],
   );
 
-  const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
-    setExpandedImage(preview);
+  useEffect(() => {
+    if (timelineAnchorMessageId === null) return;
+    timelineFollowCancellationRef.current = { cancelled: false, leftEndBand: false };
+    activeTimelineAnchorRef.current = timelineAnchorMessageId;
+    positionedTimelineAnchorRef.current = null;
+    setTimelineLiveFollowEnabled(true);
+  }, [timelineAnchorMessageId]);
+
+  const cancelTimelineFollow = useCallback(() => {
+    timelineFollowCancellationRef.current = { cancelled: true, leftEndBand: false };
+    activeTimelineAnchorRef.current = null;
+    positionedTimelineAnchorRef.current = null;
+    setTimelineLiveFollowEnabled(false);
   }, []);
 
-  const { chatComposerProps, composerRef } = useBoardThreadComposer({
+  const onTimelineAnchorReady = useCallback((messageId: MessageId, anchorIndex: number) => {
+    if (
+      !shouldPositionTimelineAnchor(
+        activeTimelineAnchorRef.current,
+        positionedTimelineAnchorRef.current,
+        messageId,
+      )
+    ) {
+      return;
+    }
+    positionedTimelineAnchorRef.current = messageId;
+    void legendListRef.current?.scrollToIndex({
+      index: anchorIndex,
+      animated: true,
+      viewPosition: 0,
+      viewOffset: 8,
+    });
+  }, []);
+
+  const timelineContentOverflowsViewport = useCallback(() => {
+    const state = legendListRef.current?.getState();
+    if (!state || state.data.length === 0) return false;
+    const lastRowIndex = state.data.length - 1;
+    const lastRowTop = state.positionAtIndex(lastRowIndex);
+    const lastRowHeight = state.sizeAtIndex(lastRowIndex);
+    if (
+      typeof lastRowTop !== "number" ||
+      typeof lastRowHeight !== "number" ||
+      !Number.isFinite(lastRowTop) ||
+      !Number.isFinite(lastRowHeight)
+    ) {
+      return false;
+    }
+    return lastRowTop + Math.max(1, lastRowHeight) > (state.scrollLength ?? 0);
+  }, []);
+
+  const updateTimelineFollowForEndState = useCallback(
+    (isAtEnd: boolean, explicitReturn = false) => {
+      const wasCancelled = timelineFollowCancellationRef.current.cancelled;
+      const next = resolveBoardTimelineFollowCancellation({
+        state: timelineFollowCancellationRef.current,
+        isAtEnd,
+        explicitReturn,
+      });
+      timelineFollowCancellationRef.current = next;
+      if (!next.cancelled && isAtEnd) {
+        setTimelineLiveFollowEnabled(true);
+        if (wasCancelled) clearTimelineAnchor();
+      }
+    },
+    [clearTimelineAnchor],
+  );
+
+  const onTimelineIsAtEndChange = useCallback(
+    (isAtEnd: boolean) => updateTimelineFollowForEndState(isAtEnd),
+    [updateTimelineFollowForEndState],
+  );
+
+  useEffect(() => {
+    let frame: number | null = null;
+    let removeListeners: (() => void) | null = null;
+    const attach = (attemptsRemaining: number) => {
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const scrollNode = legendListRef.current?.getScrollableNode();
+        if (!scrollNode) {
+          if (attemptsRemaining > 0) attach(attemptsRemaining - 1);
+          return;
+        }
+        const viewportIsAwayFromEnd = () =>
+          resolveTimelineIsAtEnd(legendListRef.current?.getState(), 0) === false;
+        const handleWheel = (event: WheelEvent) => {
+          if (event.deltaY < 0 && timelineContentOverflowsViewport()) {
+            cancelTimelineFollow();
+          } else if (event.deltaY > 0 && timelineFollowCancellationRef.current.cancelled) {
+            requestAnimationFrame(() => {
+              if (viewportIsAwayFromEnd()) return;
+              updateTimelineFollowForEndState(true, true);
+            });
+          }
+        };
+        const handleTouchMove = () => {
+          if (viewportIsAwayFromEnd()) cancelTimelineFollow();
+        };
+        const handlePointerDown = (event: PointerEvent) => {
+          if (event.target === scrollNode) {
+            if (timelineContentOverflowsViewport()) cancelTimelineFollow();
+            return;
+          }
+          if (viewportIsAwayFromEnd()) cancelTimelineFollow();
+        };
+        const handleKeyDown = (event: KeyboardEvent) => {
+          if (
+            (event.key === "PageUp" || event.key === "Home" || event.key === "ArrowUp") &&
+            timelineContentOverflowsViewport()
+          ) {
+            cancelTimelineFollow();
+          }
+        };
+        scrollNode.addEventListener("wheel", handleWheel, { passive: true });
+        scrollNode.addEventListener("touchmove", handleTouchMove, { passive: true });
+        scrollNode.addEventListener("pointerdown", handlePointerDown, { passive: true });
+        scrollNode.addEventListener("keydown", handleKeyDown);
+        removeListeners = () => {
+          scrollNode.removeEventListener("wheel", handleWheel);
+          scrollNode.removeEventListener("touchmove", handleTouchMove);
+          scrollNode.removeEventListener("pointerdown", handlePointerDown);
+          scrollNode.removeEventListener("keydown", handleKeyDown);
+        };
+      });
+    };
+    attach(12);
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame);
+      removeListeners?.();
+    };
+  }, [
+    cancelTimelineFollow,
     threadRef,
-    thread: fullThread,
-    summary: thread,
-    environmentLabel,
-    environmentConnection,
-    resolvedTheme,
-    onExpandImage: onExpandTimelineImage,
-  });
+    timelineContentOverflowsViewport,
+    updateTimelineFollowForEndState,
+  ]);
   const acknowledgeFocus = useBoardFocusStore((state) => state.acknowledgeFocus);
 
   useEffect(() => {
@@ -789,6 +957,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
       <div className="flex min-h-0 flex-1 flex-col">
         <MessagesTimeline
           density="compact"
+          minimapVariant="compact"
           viewportClassName="pointer-coarse:overflow-y-hidden pointer-coarse:overscroll-y-auto pointer-coarse:touch-pan-y"
           isWorking={isWorking}
           activeTurnInProgress={activeTurnInProgress}
@@ -810,12 +979,12 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
           timestampFormat={timestampFormat}
           workspaceRoot={workspaceRoot}
           skills={skills}
-          anchorMessageId={null}
-          onAnchorReady={NOOP}
-          onAnchorSizeChanged={NOOP}
+          anchorMessageId={timelineAnchorMessageId}
+          onAnchorReady={onTimelineAnchorReady}
           contentInsetEndAdjustment={0}
-          onIsAtEndChange={NOOP}
-          onManualNavigation={NOOP}
+          liveFollowEnabled={timelineLiveFollowEnabled}
+          onIsAtEndChange={onTimelineIsAtEndChange}
+          onManualNavigation={cancelTimelineFollow}
           hideEmptyPlaceholder={false}
           topFadeEnabled={false}
         />
@@ -938,5 +1107,49 @@ function BoardStatusIcon({
     >
       <Icon aria-hidden className="size-4" />
     </span>
+  );
+}
+
+function CheckoutIdentityIndicator({
+  repository,
+  branch,
+  workspacePath,
+}: {
+  readonly repository: string;
+  readonly branch: string | null;
+  readonly workspacePath: string | null;
+}) {
+  const label = branch ? `${repository} on ${branch}` : repository;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`Checkout: ${label}`}
+            className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/60 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70"
+          />
+        }
+      >
+        <FolderGit2Icon aria-hidden className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="bottom" align="end" className="max-w-72 whitespace-normal">
+        <span className="flex min-w-0 flex-col gap-1 py-0.5">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <FolderGit2Icon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+            <span className="truncate font-medium">{repository}</span>
+          </span>
+          {branch ? (
+            <span className="flex min-w-0 items-center gap-1.5 text-muted-foreground">
+              <GitBranchIcon aria-hidden className="size-3 shrink-0" />
+              <span className="truncate">{branch}</span>
+            </span>
+          ) : null}
+          {workspacePath ? (
+            <span className="truncate text-[10px] text-muted-foreground/70">{workspacePath}</span>
+          ) : null}
+        </span>
+      </TooltipPopup>
+    </Tooltip>
   );
 }

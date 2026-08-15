@@ -5367,6 +5367,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   skills={selectedProviderSkills}
                   containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
                   className={cn(
+                    isEmbeddedCompact && "max-h-17.5",
                     showMobilePendingAnswerActions && "max-sm:pb-11",
                     isComposerResting &&
                       "max-h-8 min-h-8 overflow-hidden whitespace-nowrap! leading-8",
