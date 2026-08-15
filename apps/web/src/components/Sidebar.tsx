@@ -1329,6 +1329,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     return (
       <li
         data-thread-item
+        data-sidebar-thread-key={threadKey}
         className="list-none [content-visibility:auto] [contain-intrinsic-size:auto_34px]"
       >
         <Tooltip>
@@ -1480,6 +1481,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   return (
     <li
       data-thread-item
+      data-sidebar-thread-key={threadKey}
       ref={sortable?.setNodeRef}
       style={
         sortable
@@ -2435,6 +2437,58 @@ export default function Sidebar() {
     return routeThread === undefined ? [] : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
+  useEffect(() => {
+    if (!isBoardRoute || boardFocusedThreadKey === null) return;
+
+    if (
+      !snoozedShelfExpanded &&
+      snoozedThreads.some(
+        (thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) ===
+          boardFocusedThreadKey,
+      )
+    ) {
+      setSnoozedShelfExpanded(true);
+      return;
+    }
+
+    const settledIndex = settledThreads.findIndex(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === boardFocusedThreadKey,
+    );
+    if (settledIndex !== -1) {
+      if (!settledShelfExpanded) {
+        setSettledShelfExpanded(true);
+        return;
+      }
+      if (settledIndex >= settledVisibleCount) {
+        setSettledVisibleCount(settledIndex + 1);
+        return;
+      }
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      // Match by dataset instead of a selector value: scoped thread keys are
+      // environment-owned strings and are not guaranteed selector-safe.
+      for (const node of document.querySelectorAll<HTMLElement>("[data-sidebar-thread-key]")) {
+        if (node.dataset.sidebarThreadKey !== boardFocusedThreadKey) continue;
+        node.scrollIntoView({ behavior: "smooth", block: "center" });
+        break;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    boardFocusedThreadKey,
+    isBoardRoute,
+    setSettledShelfExpanded,
+    setSnoozedShelfExpanded,
+    settledShelfExpanded,
+    settledThreads,
+    settledVisibleCount,
+    snoozedShelfExpanded,
+    snoozedThreads,
+  ]);
+
   const orderedThreads = useMemo(
     () => [...pinnedThreads, ...activeThreads, ...visibleSnoozedThreads, ...renderedSettledThreads],
     [pinnedThreads, activeThreads, visibleSnoozedThreads, renderedSettledThreads],
@@ -3318,6 +3372,24 @@ export default function Sidebar() {
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
+        const snapshot = changeRequestSnapshotByKey.get(threadKey);
+        const changeRequest =
+          snapshot != null &&
+          (thread.linkedPullRequest == null
+            ? thread.worktreePath === null || snapshot.branch === thread.branch
+            : snapshot.linkedPullRequest?.projectId === thread.linkedPullRequest.projectId &&
+              snapshot.linkedPullRequest.repository === thread.linkedPullRequest.repository &&
+              snapshot.linkedPullRequest.number === thread.linkedPullRequest.number)
+            ? snapshot.pr
+            : null;
+        const isEffectivelySettled =
+          supportsSettlement &&
+          effectiveSettled(thread, {
+            now: `${nowMinute}:00.000Z`,
+            autoSettleAfterDays,
+            autoSettleOnMerge,
+            changeRequest,
+          });
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
@@ -3349,6 +3421,40 @@ export default function Sidebar() {
         if (clicked._tag === "Failure") return;
         const laneId = boardLaneForPlacementAction(clicked.value, boardLanes);
         if (laneId !== undefined) {
+          // Board workflow placement is an active lifecycle choice. Match the
+          // card menu: wake and/or un-settle first, then save the spatial lane.
+          if (isSnoozed) {
+            const result = await unsnoozeThread(threadRef);
+            if (result._tag === "Failure") {
+              if (!isAtomCommandInterrupted(result)) {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Failed to wake thread",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+              }
+              return;
+            }
+          }
+          if (isEffectivelySettled) {
+            const result = await unsettleThread(threadRef);
+            if (result._tag === "Failure") {
+              if (!isAtomCommandInterrupted(result)) {
+                const error = squashAtomCommandFailure(result);
+                toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: "Failed to un-settle thread",
+                    description: error instanceof Error ? error.message : "An error occurred.",
+                  }),
+                );
+              }
+              return;
+            }
+          }
           setBoardPlacement(threadRef, laneId);
           return;
         }
@@ -3523,6 +3629,9 @@ export default function Sidebar() {
       attemptUnsettle,
       attemptUnsnooze,
       confirmThreadArchive,
+      autoSettleAfterDays,
+      autoSettleOnMerge,
+      changeRequestSnapshotByKey,
       confirmThreadDelete,
       copyBranchToClipboard,
       copyPathToClipboard,
@@ -3538,6 +3647,9 @@ export default function Sidebar() {
       startThreadRename,
       updateThreadMetadata,
       timestampFormat,
+      unsnoozeThread,
+      unsettleThread,
+      nowMinute,
     ],
   );
 
@@ -3673,6 +3785,7 @@ export default function Sidebar() {
               className="ps-[calc(var(--sidebar-row-content-inset)-1px)] focus-visible:ring-offset-2 focus-visible:ring-offset-sidebar"
               onClick={() => {
                 if (isMobile) setOpenMobile(false);
+                useBoardFocusStore.getState().setExpanded(null);
                 void router.navigate({ to: "/board" });
               }}
             >
