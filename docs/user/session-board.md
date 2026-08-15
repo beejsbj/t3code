@@ -29,9 +29,15 @@ starts working or receives updates. A lane defaults to newest arrival first—us
 created or moved into that lane—and dragging a card above or below another card saves that manual
 order locally.
 
-Each card header has icon actions to snooze or settle the session. Its context menu offers the same
-thread actions as the sidebar, along with workflow lane placement. Sessions cannot be removed from
-the board independently because the board and sidebar are two views over the same collection.
+Each card header has quick actions to snooze or settle the session. Its context menu offers the same
+thread actions as the sidebar, along with workflow lane placement. The checkout icon identifies the
+repository, branch, and workspace path on hover. Sessions cannot be removed from the board
+independently because the board and sidebar are two views over the same collection.
+
+Sending from a card behaves like sending from the normal chat workspace: the message appears
+immediately, the timeline keeps its place, and a message sent while the agent is working steers the
+active turn. The compact turn rail at the left of the timeline remains available for moving between
+earlier parts of the conversation.
 
 Card status uses the same glyphs and hues as the sidebar. The full border carries the state color and
 the card surface carries a very light wash of that hue, so working, completed, waiting, and failed

@@ -264,6 +264,8 @@ interface MessagesTimelineProps {
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
   density?: "default" | "compact";
+  /** Compact cards keep the same turn navigation in a narrower, preview-free rail. */
+  minimapVariant?: "default" | "compact" | "hidden";
   viewportClassName?: string;
   /** Kept for embedded-card callers using the previous anchoring contract. */
   onAnchorSizeChanged?: (messageId: MessageId, size: number) => void;
@@ -308,9 +310,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   topFadeEnabled = false,
   loadEarlier = null,
   density = "default",
+  minimapVariant,
   viewportClassName,
 }: MessagesTimelineProps) {
   const isCompact = density === "compact";
+  const resolvedMinimapVariant = minimapVariant ?? (isCompact ? "hidden" : "default");
   const [expandedTurnIds, setExpandedTurnIds] = useState<ReadonlySet<TurnId>>(new Set());
   const [expandedWorkGroupIds, setExpandedWorkGroupIds] = useState<ReadonlySet<string>>(new Set());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
@@ -522,6 +526,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }
 
     const measure = () => {
+      if (resolvedMinimapVariant === "compact") {
+        setMinimapHasPersistentGutter(true);
+        setMinimapHitStripWidth(32);
+        return;
+      }
       const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
       const nextHasPersistentGutter = resolveTimelineMinimapHasPersistentGutter(viewportWidth);
       setMinimapHasPersistentGutter((current) =>
@@ -539,7 +548,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [resolvedMinimapVariant, timelineViewportElement, rows.length]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -647,7 +656,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             onScroll={handleScroll}
             className={cn(
               "scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-              isCompact ? "px-1.5" : "px-3 sm:px-5",
+              isCompact
+                ? resolvedMinimapVariant === "compact"
+                  ? "pr-1.5 pl-10"
+                  : "px-1.5"
+                : "px-3 sm:px-5",
               topFadeEnabled && "topbar-scroll-fade",
               viewportClassName,
             )}
@@ -668,8 +681,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             }
             ListFooterComponent={isCompact ? TIMELINE_LIST_COMPACT_FOOTER : TIMELINE_LIST_FOOTER}
           />
-          {!isCompact ? (
+          {resolvedMinimapVariant !== "hidden" ? (
             <TimelineMinimap
+              variant={resolvedMinimapVariant}
               items={minimapItems}
               hasPersistentGutter={minimapHasPersistentGutter}
               hitStripWidth={minimapHitStripWidth}
@@ -778,12 +792,14 @@ function TimelineMinimap({
   items,
   stripMap,
   onSelect,
+  variant,
 }: {
   hasPersistentGutter: boolean;
   hitStripWidth: number;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
   onSelect: (item: TimelineMinimapItem) => void;
+  variant: "default" | "compact";
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
@@ -841,8 +857,9 @@ function TimelineMinimap({
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
-        hasPersistentGutter
+        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 hidden [@media(pointer:fine)]:block",
+        variant === "compact" ? "w-10" : "w-18",
+        variant === "compact" || hasPersistentGutter
           ? "opacity-100"
           : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
       )}
@@ -853,7 +870,8 @@ function TimelineMinimap({
         <button
           aria-label={`Jump to message: ${activeItem?.userText ?? "User message"}`}
           className={cn(
-            "absolute top-1/2 left-3 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+            "absolute top-1/2 -translate-y-1/2 cursor-pointer bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+            variant === "compact" ? "left-1" : "left-3",
             // The strip is width-capped to the side gutter so it never overlays
             // the centered content column; with no usable gutter it goes inert.
             hitStripWidth > 0 ? "pointer-events-auto" : "pointer-events-none",
@@ -937,7 +955,7 @@ function TimelineMinimap({
               />
             );
           })}
-          {activeItem ? (
+          {activeItem && variant === "default" ? (
             <span
               className="pointer-events-auto absolute left-8 w-80 cursor-text select-text"
               data-minimap-preview

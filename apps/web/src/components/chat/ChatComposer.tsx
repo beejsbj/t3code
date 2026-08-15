@@ -4043,7 +4043,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       : []
                   }
                   skills={selectedProviderStatus?.skills ?? []}
-                  {...(showMobilePendingAnswerActions ? { className: "max-sm:pb-11" } : {})}
+                  className={cn(
+                    isEmbeddedCompact ? "max-h-17.5" : null,
+                    showMobilePendingAnswerActions ? "max-sm:pb-11" : null,
+                  )}
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onChange={onPromptChange}
                   onCommandKeyDown={onComposerCommandKey}
