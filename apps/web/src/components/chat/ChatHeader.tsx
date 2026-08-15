@@ -45,6 +45,7 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { cn } from "~/lib/utils";
+import { resolveRenameCommit } from "../threadRename.logic";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
