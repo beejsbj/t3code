@@ -1,11 +1,27 @@
 import { describe, expect, it } from "vite-plus/test";
+import { MessageId } from "@t3tools/contracts";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
+  shouldPositionTimelineAnchor,
 } from "./MessagesTimeline.logic";
+
+describe("shouldPositionTimelineAnchor", () => {
+  const messageId = MessageId.make("message-1");
+
+  it("positions an active anchor once", () => {
+    expect(shouldPositionTimelineAnchor(messageId, null, messageId)).toBe(true);
+    expect(shouldPositionTimelineAnchor(messageId, messageId, messageId)).toBe(false);
+  });
+
+  it("does not position a cancelled or stale anchor", () => {
+    expect(shouldPositionTimelineAnchor(null, null, messageId)).toBe(false);
+    expect(shouldPositionTimelineAnchor(MessageId.make("message-2"), null, messageId)).toBe(false);
+  });
+});
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
