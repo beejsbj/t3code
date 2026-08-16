@@ -28,7 +28,6 @@ import { Board3DHud } from "./Hud.tsx";
 import { ElementSnapshotSource } from "./elementCapture.ts";
 import { SyntheticCardDom } from "./SyntheticCardDom.tsx";
 import { createRoot, type Root } from "react-dom/client";
-import { flushSync } from "react-dom";
 
 const MOVE_KEYS: Record<string, keyof Omit<MoveInput, "sprint">> = {
   KeyW: "forward",
@@ -107,7 +106,7 @@ export function Board3DView(): React.JSX.Element {
         const el = document.createElement("div");
         const root = createRoot(el);
         roots.set(id, root);
-        if (card) flushSync(() => root.render(<SyntheticCardDom card={card} />));
+        if (card) root.render(<SyntheticCardDom card={card} />);
         return el;
       },
     );
@@ -131,6 +130,10 @@ export function Board3DView(): React.JSX.Element {
     const observer = new ResizeObserver(() => {
       const rect = parent.getBoundingClientRect();
       renderer.resize(rect.width, rect.height, window.devicePixelRatio);
+      // Changing a canvas's backing dimensions clears WebGL's framebuffer.
+      // Force one scene redraw even while the camera and card textures are
+      // idle; otherwise the DOM HUD survives over a blank black canvas.
+      framePainted.current = false;
     });
     observer.observe(parent);
     return () => observer.disconnect();
