@@ -70,6 +70,7 @@ const lifecycleOptions = {
   now: NOW,
   settlementNow: NOW,
   autoSettleAfterDays: 3,
+  autoSettleOnMerge: true,
   supportsSettlement: true,
   supportsSnooze: true,
   changeRequestState: null,
@@ -180,6 +181,13 @@ describe("resolveBoardThreadVisibility", () => {
         changeRequestState: "merged",
       }),
     ).toBe("settled");
+    expect(
+      resolveBoardThreadVisibility(threadShell(), {
+        ...lifecycleOptions,
+        autoSettleOnMerge: false,
+        changeRequestState: "merged",
+      }),
+    ).toBe("visible");
     expect(
       resolveBoardThreadVisibility(threadShell(), {
         ...lifecycleOptions,
