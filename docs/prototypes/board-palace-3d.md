@@ -22,17 +22,19 @@ The mapping module must be pure and data-driven: same inputs → same layout, in
 
 ## Rendering: html-in-canvas
 
-- Cards are REAL DOM: reuse the existing board card markup in an offscreen positioned container with the `layoutsubtree` attribute.
-- Per frame (or on state change), each card's subtree is drawn into a WebGL texture via `texElementImage2D` and splashed on a billboard quad.
+- Cards are REAL DOM rendered as direct children of a `layoutsubtree` canvas.
+- The canvas `paint` event reports changed children; those children are uploaded into their existing WebGL textures with `texElementImage2D` and splashed on billboard quads.
 
-### Discovered API contract (empirically, Chrome 147 + flags)
+### API contract
 
-These were learned by probing a live page; do not re-derive:
+These follow the WICG examples and current Chromium IDL. See [html-in-canvas-examples-research.md](./html-in-canvas-examples-research.md) for primary sources.
 
 - `texElementImage2D` only accepts elements that are **immediate children of the canvas** being rendered to.
 - The **canvas itself** must carry the `layoutsubtree` attribute, not just the source element.
-- The source element must have a **cached paint record** — it must have painted at least once. So source cards are real painted DOM tiled below the viewport fold (composited under the GL output), and the first snapshot is deferred one frame after the DOM commits.
-- Enable with `--enable-blink-features=CanvasDrawElement,CanvasDrawElementInSubtree` (both) plus a GL backend; headless needs `--use-angle=swiftshader --enable-unsafe-swiftshader`.
+- Canvas children are laid out but are not composited onscreen until drawn; they need no offscreen positioning.
+- Upload inside the canvas `paint` event so Chromium's current-frame snapshot is available; call `requestPaint()` for the initial upload.
+- Current Chromium uses `texElementImage2D(target, internalformat, element)`; older developer-trial builds used the six-argument `texImage2D`-shaped overload, so the prototype supports both.
+- Enable with `--enable-blink-features=CanvasDrawElement`. Headless Chrome additionally needs a GL backend such as SwiftShader.
 - Raw WebGL2, NO three.js dependency — the scene is quads + a camera; the dep isn't worth it. Small mat4/quat helpers in-module.
 - Texture update policy: dirty-flag per card (state change, streaming text tick). Never re-snapshot every card every frame — that's the GPU-peg trap from AGENTS.md taste rules.
 - Fallback: if `layoutsubtree`/texElementImage2D is unavailable, render a "your browser can't do this yet" panel with the flag instructions. Detect, don't crash.

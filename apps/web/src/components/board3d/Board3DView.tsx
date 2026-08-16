@@ -25,9 +25,8 @@ import { ndcToWorldRay, pickCard } from "./raycast.ts";
 import { createRenderer, perspectiveMatrix, type Board3DRenderer } from "./renderer.ts";
 import { generateSyntheticCards, SYNTHETIC_LANES } from "./syntheticCards.ts";
 import { Board3DHud } from "./Hud.tsx";
-import { ElementSnapshotSource } from "./elementCapture.ts";
+import type { CanvasPaintEvent } from "./elementCapture.ts";
 import { SyntheticCardDom } from "./SyntheticCardDom.tsx";
-import { createRoot, type Root } from "react-dom/client";
 
 const MOVE_KEYS: Record<string, keyof Omit<MoveInput, "sprint">> = {
   KeyW: "forward",
@@ -60,8 +59,6 @@ export function Board3DView(): React.JSX.Element {
   const rendererRef = useRef<Board3DRenderer | null>(null);
   const cameraRef = useRef<CameraState>(createCamera());
   const keysRef = useRef(new Set<string>());
-  const snapshotsRef = useRef<ElementSnapshotSource | null>(null);
-  const snapshotRootsRef = useRef<Map<string, Root> | null>(null);
   const framePainted = useRef(false);
   const [pointerLocked, setPointerLocked] = useState(false);
   const [glReady, setGlReady] = useState(false);
@@ -89,35 +86,35 @@ export function Board3DView(): React.JSX.Element {
     };
   }, [transforms]);
 
-  // --- html-in-canvas snapshots: real DOM card textures --------------------
+  // --- html-in-canvas: paint direct canvas children into card textures -----
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer || !glReady || !renderer.elementTexturesSupported) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const source = new ElementSnapshotSource(canvas);
-    const roots = new Map<string, Root>();
-    snapshotsRef.current = source;
-    snapshotRootsRef.current = roots;
-    source.setCards(
-      cards.map((c) => c.id),
-      (id) => {
-        const card = cards.find((c) => c.id === id);
-        const el = document.createElement("div");
-        const root = createRoot(el);
-        roots.set(id, root);
-        if (card) root.render(<SyntheticCardDom card={card} />);
-        return el;
-      },
-    );
-    return () => {
-      for (const root of roots.values()) root.unmount();
-      roots.clear();
-      source.dispose();
-      snapshotsRef.current = null;
-      snapshotRootsRef.current = null;
+
+    const upload = (elements: readonly Element[]): void => {
+      let uploaded = false;
+      for (const element of elements) {
+        if (!(element instanceof HTMLElement)) continue;
+        const id = element.dataset.board3dCardId;
+        if (!id) continue;
+        uploaded = renderer.setCardTextureFromElement(id, element) || uploaded;
+      }
+      if (uploaded) framePainted.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    const handlePaint = (event: Event): void => {
+      const changed = (event as CanvasPaintEvent).changedElements;
+      upload(changed.length > 0 ? changed : Array.from(canvas.children));
+    };
+
+    canvas.addEventListener("paint", handlePaint);
+    canvas.setAttribute("layoutsubtree", "");
+    canvas.requestPaint?.();
+    return () => {
+      canvas.removeEventListener("paint", handlePaint);
+    };
   }, [glReady, cards]);
 
   // --- resize ---------------------------------------------------------------
@@ -167,22 +164,7 @@ export function Board3DView(): React.JSX.Element {
       const next = moving ? tickCamera(cam, input, dt) : cam;
       cameraRef.current = next;
       const renderer = rendererRef.current;
-      // Re-snapshot dirty cards into their textures (html-in-canvas). Dirty
-      // starts as "all", so the first frames populate every card once their
-      // source DOM has painted. Re-snapshotting marks the scene dirty so the
-      // frame below redraws with the fresh texture.
-      const snapshots = snapshotsRef.current;
-      let texturesDirty = false;
-      if (renderer && snapshots && renderer.elementTexturesSupported) {
-        for (const id of snapshots.consumeDirty()) {
-          const el = snapshots.getElement(id);
-          if (el) {
-            renderer.setCardTextureFromElement(id, el);
-            texturesDirty = true;
-          }
-        }
-      }
-      if (renderer && (moving || texturesDirty || !framePainted.current)) {
+      if (renderer && (moving || !framePainted.current)) {
         const canvas = canvasRef.current;
         const aspect = canvas ? canvas.width / Math.max(canvas.height, 1) : 16 / 9;
         renderer.render(viewMatrix(next), perspectiveMatrix(60, aspect, 0.1, 100));
@@ -315,7 +297,11 @@ export function Board3DView(): React.JSX.Element {
         className="h-full w-full cursor-crosshair"
         onClick={onCanvasClick}
         onMouseMove={onCanvasHover}
-      />
+      >
+        {cards.map((card) => (
+          <SyntheticCardDom key={card.id} card={card} />
+        ))}
+      </canvas>
       {!glReady && (
         <div className="absolute inset-0 flex items-center justify-center bg-background">
           <div className="max-w-md space-y-2 text-center text-muted-foreground">

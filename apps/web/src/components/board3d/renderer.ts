@@ -12,21 +12,17 @@
  * separately and unit-tested; the GL path itself is exercised in the browser.
  */
 
+import { uploadElementToBoundTexture } from "./elementCapture.ts";
+
 export interface Board3DRenderer {
   /** (Re)set the card set. Cards keep their texture across updates by id. */
   setCards(cards: readonly RenderCardInput[]): void;
-  /**
-   * Upload (or replace) a card's billboard texture. Until a real texture
-   * arrives for a card, a procedurally generated checkerboard is used so the
-   * scene is visible before DOM snapshots land.
-   */
-  setCardTexture(id: string, source: TexImageSource): void;
   /**
    * Snapshot a layoutsubtree DOM element straight into the card texture via
    * html-in-canvas (texElementImage2D). No-op when the id is unknown or the
    * browser lacks the API; callers gate on elementTexturesSupported.
    */
-  setCardTextureFromElement(id: string, element: HTMLElement): void;
+  setCardTextureFromElement(id: string, element: HTMLElement): boolean;
   /** True when this context can snapshot DOM elements into textures. */
   readonly elementTexturesSupported: boolean;
   /** Draw every card back-to-front with alpha blending and depth test on. */
@@ -90,8 +86,6 @@ interface RenderCard {
   id: string;
   position: Float32Array; // 3 elements
   texture: WebGLTexture;
-  /** True once a real texture replaced the placeholder checkerboard. */
-  hasCustomTexture: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,19 +227,6 @@ function configureTextureSampling(gl: WebGL2RenderingContext): void {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 }
 
-/** Upload a real texture (DOM snapshot, ImageBitmap, canvas, …) for a card. */
-function createCardTexture(
-  gl: WebGL2RenderingContext,
-  source: TexImageSource,
-): WebGLTexture | null {
-  const texture = gl.createTexture();
-  if (!texture) return null;
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
-  configureTextureSampling(gl);
-  return texture;
-}
-
 /** Sort card indices farthest-first for correct alpha blending. */
 function sortBackToFront(order: Int32Array, depth: Float32Array, count: number): void {
   for (let i = 0; i < count; i += 1) order[i] = i;
@@ -364,16 +345,13 @@ class WebGLBillboardRenderer implements Board3DRenderer {
         card.position[1] = input.position[1];
         card.position[2] = input.position[2];
       } else {
-        // Fresh card: create a placeholder tinted by its index. Non-custom
-        // cards have their placeholder re-created on each setCards so the
-        // index tint stays accurate.
+        // Fresh card: create a placeholder tinted by its index.
         const texture = createPlaceholderTexture(gl, i);
         if (!texture) continue;
         card = {
           id: input.id,
           position: Float32Array.from(input.position),
           texture,
-          hasCustomTexture: false,
         };
       }
       next.push(card);
@@ -397,16 +375,6 @@ class WebGLBillboardRenderer implements Board3DRenderer {
     if (this.order.length < count) this.order = new Int32Array(count);
   }
 
-  setCardTexture(id: string, source: TexImageSource): void {
-    const card = this.cardsById.get(id);
-    if (!card) return;
-    const texture = createCardTexture(this.gl, source);
-    if (!texture) return;
-    this.gl.deleteTexture(card.texture);
-    card.texture = texture;
-    card.hasCustomTexture = true;
-  }
-
   readonly elementTexturesSupported: boolean =
     typeof (
       WebGL2RenderingContext.prototype as unknown as {
@@ -414,33 +382,15 @@ class WebGLBillboardRenderer implements Board3DRenderer {
       }
     ).texElementImage2D === "function";
 
-  setCardTextureFromElement(id: string, element: HTMLElement): void {
+  setCardTextureFromElement(id: string, element: HTMLElement): boolean {
     const card = this.cardsById.get(id);
-    if (!card) return;
-    const gl = this.gl as WebGL2RenderingContext & {
-      texElementImage2D(
-        target: number,
-        level: number,
-        internalformat: number,
-        format: number,
-        type: number,
-        element: HTMLElement,
-      ): void;
-    };
-    if (typeof gl.texElementImage2D !== "function") return;
-    const texture = gl.createTexture();
-    if (!texture) return;
-    gl.bindTexture(gl.TEXTURE_2D, texture);
-    try {
-      gl.texElementImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, element);
-    } catch {
-      gl.deleteTexture(texture);
-      return;
-    }
+    if (!card) return false;
+    const gl = this.gl;
+    if (typeof gl.texElementImage2D !== "function") return false;
+    gl.bindTexture(gl.TEXTURE_2D, card.texture);
+    if (!uploadElementToBoundTexture(gl, element)) return false;
     configureTextureSampling(gl);
-    gl.deleteTexture(card.texture);
-    card.texture = texture;
-    card.hasCustomTexture = true;
+    return true;
   }
   render(view: Float32Array, proj: Float32Array): void {
     const gl = this.gl;

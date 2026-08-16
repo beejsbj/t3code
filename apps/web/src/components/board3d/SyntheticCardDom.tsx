@@ -46,6 +46,8 @@ export function SyntheticCardDom({ card }: { card: Board3DCard }): React.JSX.Ele
 
   return (
     <div
+      data-board3d-card-id={card.id}
+      inert
       style={{
         width: CARD_WIDTH_PX,
         borderRadius: 12,
