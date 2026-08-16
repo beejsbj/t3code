@@ -7,6 +7,7 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
   shouldPositionTimelineAnchor,
+  shouldPreserveAssistantLineBreaks,
 } from "./MessagesTimeline.logic";
 
 describe("shouldPositionTimelineAnchor", () => {
@@ -20,6 +21,17 @@ describe("shouldPositionTimelineAnchor", () => {
   it("does not position a cancelled or stale anchor", () => {
     expect(shouldPositionTimelineAnchor(null, null, messageId)).toBe(false);
     expect(shouldPositionTimelineAnchor(MessageId.make("message-2"), null, messageId)).toBe(false);
+  });
+});
+
+describe("shouldPreserveAssistantLineBreaks", () => {
+  it("preserves Claude insight formatting without changing regular markdown", () => {
+    expect(
+      shouldPreserveAssistantLineBreaks(
+        "★ Insight ─────────────────\\nFirst observation\\nSecond observation\\n─────────────────",
+      ),
+    ).toBe(true);
+    expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
   });
 });
 

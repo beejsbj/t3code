@@ -199,6 +199,7 @@ export function SessionBoard() {
   const { environments } = useEnvironments();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
+  const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
   const nowMinute = useNowMinute();
   const settlementNow = `${nowMinute}:00.000Z`;
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
@@ -480,6 +481,7 @@ export function SessionBoard() {
             now,
             settlementNow,
             autoSettleAfterDays,
+            autoSettleOnMerge,
             supportsSettlement: capabilities?.threadSettlement === true,
             supportsSnooze: capabilities?.threadSnooze === true,
             changeRequestState: changeRequestStateForThread(key),
@@ -530,6 +532,7 @@ export function SessionBoard() {
     };
   }, [
     autoSettleAfterDays,
+    autoSettleOnMerge,
     changeRequestStateForThread,
     environmentById,
     lanes,

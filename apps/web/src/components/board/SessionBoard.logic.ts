@@ -25,6 +25,7 @@ export function resolveBoardThreadVisibility(
     /** Minute-quantized clock shared with the sidebar's settlement partition. */
     readonly settlementNow: string;
     readonly autoSettleAfterDays: number | null;
+    readonly autoSettleOnMerge: boolean;
     readonly supportsSettlement: boolean;
     readonly supportsSnooze: boolean;
     readonly changeRequestState: ChangeRequestStateLike | null;
@@ -46,6 +47,7 @@ export function resolveBoardThreadVisibility(
     effectiveSettled(thread, {
       now: options.settlementNow,
       autoSettleAfterDays: options.autoSettleAfterDays,
+      autoSettleOnMerge: options.autoSettleOnMerge,
       changeRequestState: options.changeRequestState,
     })
   ) {
