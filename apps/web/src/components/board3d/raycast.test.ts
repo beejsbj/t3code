@@ -13,7 +13,7 @@ describe("ndcToWorldRay", () => {
     expect(ray.origin).toEqual([0, 0, 0]);
     expect(ray.direction[0]).toBeCloseTo(0, 10);
     expect(ray.direction[1]).toBeCloseTo(0, 10);
-    expect(ray.direction[2]).toBeCloseTo(1, 10);
+    expect(ray.direction[2]).toBeCloseTo(-1, 10);
   });
 
   it("returns a normalized direction", () => {

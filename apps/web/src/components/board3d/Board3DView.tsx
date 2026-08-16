@@ -156,8 +156,12 @@ export function Board3DView(): React.JSX.Element {
         if (axis) input[axis] = MOVE_SIGN[code] ?? 0;
       }
       const cam = cameraRef.current;
-      const moved = input.forward !== 0 || input.strafe !== 0 || input.vertical !== 0;
-      const next = moved ? tickCamera(cam, input, dt) : cam;
+      const hasInput = input.forward !== 0 || input.strafe !== 0 || input.vertical !== 0;
+      const hasVelocity = cam.velocity[0] !== 0 || cam.velocity[1] !== 0 || cam.velocity[2] !== 0;
+      // Always integrate while moving OR gliding to a stop, so momentum damps
+      // out smoothly instead of freezing the moment a key releases.
+      const moving = hasInput || hasVelocity;
+      const next = moving ? tickCamera(cam, input, dt) : cam;
       cameraRef.current = next;
       const renderer = rendererRef.current;
       // Re-snapshot dirty cards into their textures (html-in-canvas). Dirty
@@ -175,7 +179,7 @@ export function Board3DView(): React.JSX.Element {
           }
         }
       }
-      if (renderer && (moved || texturesDirty || !framePainted.current)) {
+      if (renderer && (moving || texturesDirty || !framePainted.current)) {
         const canvas = canvasRef.current;
         const aspect = canvas ? canvas.width / Math.max(canvas.height, 1) : 16 / 9;
         renderer.render(viewMatrix(next), perspectiveMatrix(60, aspect, 0.1, 100));

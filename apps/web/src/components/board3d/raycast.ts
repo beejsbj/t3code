@@ -40,9 +40,9 @@ const DEFAULT_HALF_HEIGHT = 0.9 / 2;
 const EPS_SQUARED = 1e-12;
 
 /**
- * Build a camera basis (forward / right / up) from a yaw and pitch.
- * Right is derived first so up = forward × right holds at the identity
- * orientation (yaw=0, pitch=0 gives forward=+Z, right=+X, up=+Y).
+ * Build a camera basis (forward / right / up) from a yaw and pitch. This must
+ * match the basis in camera.ts viewMatrix: yaw=0 faces -Z, so the forward
+ * z-component is negated. Getting this wrong inverts center-screen picking.
  */
 function cameraBasis(
   yaw: number,
@@ -57,11 +57,15 @@ function cameraBasis(
   const sp = Math.sin(pitch);
   const cp = Math.cos(pitch);
 
-  const forward: [number, number, number] = [sy * cp, sp, cy * cp];
-  const right: [number, number, number] = [cy, 0, -sy];
+  const forward: [number, number, number] = [sy * cp, sp, -cy * cp];
+  const right: [number, number, number] = [cy, 0, sy];
 
-  // up = normalize(cross(forward, right))
-  const up: [number, number, number] = [-sy * sp, cp, -cy * sp];
+  // up = cross(right, forward), matching the camera.ts up vector.
+  const up: [number, number, number] = [
+    right[1] * forward[2] - right[2] * forward[1],
+    right[2] * forward[0] - right[0] * forward[2],
+    right[0] * forward[1] - right[1] * forward[0],
+  ];
 
   return { forward, right, up };
 }
