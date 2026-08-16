@@ -24,6 +24,15 @@ The mapping module must be pure and data-driven: same inputs → same layout, in
 
 - Cards are REAL DOM: reuse the existing board card markup in an offscreen positioned container with the `layoutsubtree` attribute.
 - Per frame (or on state change), each card's subtree is drawn into a WebGL texture via `texElementImage2D` and splashed on a billboard quad.
+
+### Discovered API contract (empirically, Chrome 147 + flags)
+
+These were learned by probing a live page; do not re-derive:
+
+- `texElementImage2D` only accepts elements that are **immediate children of the canvas** being rendered to.
+- The **canvas itself** must carry the `layoutsubtree` attribute, not just the source element.
+- The source element must have a **cached paint record** — it must have painted at least once. So source cards are real painted DOM tiled below the viewport fold (composited under the GL output), and the first snapshot is deferred one frame after the DOM commits.
+- Enable with `--enable-blink-features=CanvasDrawElement,CanvasDrawElementInSubtree` (both) plus a GL backend; headless needs `--use-angle=swiftshader --enable-unsafe-swiftshader`.
 - Raw WebGL2, NO three.js dependency — the scene is quads + a camera; the dep isn't worth it. Small mat4/quat helpers in-module.
 - Texture update policy: dirty-flag per card (state change, streaming text tick). Never re-snapshot every card every frame — that's the GPU-peg trap from AGENTS.md taste rules.
 - Fallback: if `layoutsubtree`/texElementImage2D is unavailable, render a "your browser can't do this yet" panel with the flag instructions. Detect, don't crash.
