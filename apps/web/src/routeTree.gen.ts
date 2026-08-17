@@ -26,6 +26,7 @@ import { Route as SettingsAppearanceRouteImport } from './routes/settings.appear
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
+import { Route as ChatBoardSpatialPrototypeRouteImport } from './routes/_chat.board-spatial-prototype'
 import { Route as ChatBoardRouteImport } from './routes/_chat.board'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -114,6 +115,12 @@ const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   path: '/pull-requests',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatBoardSpatialPrototypeRoute =
+  ChatBoardSpatialPrototypeRouteImport.update({
+    id: '/board-spatial-prototype',
+    path: '/board-spatial-prototype',
+    getParentRoute: () => ChatRoute,
+  } as any)
 const ChatBoardRoute = ChatBoardRouteImport.update({
   id: '/board',
   path: '/board',
@@ -138,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/board': typeof ChatBoardRoute
+  '/board-spatial-prototype': typeof ChatBoardSpatialPrototypeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -158,6 +166,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/board': typeof ChatBoardRoute
+  '/board-spatial-prototype': typeof ChatBoardSpatialPrototypeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -181,6 +190,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/_chat/board': typeof ChatBoardRoute
+  '/_chat/board-spatial-prototype': typeof ChatBoardSpatialPrototypeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/connect_/callback': typeof ConnectCallbackRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
@@ -205,6 +215,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/board'
+    | '/board-spatial-prototype'
     | '/pull-requests'
     | '/connect/callback'
     | '/projects/$projectKey'
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/board'
+    | '/board-spatial-prototype'
     | '/pull-requests'
     | '/connect/callback'
     | '/projects/$projectKey'
@@ -247,6 +259,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/_chat/board'
+    | '/_chat/board-spatial-prototype'
     | '/_chat/pull-requests'
     | '/connect_/callback'
     | '/projects/$projectKey'
@@ -394,6 +407,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatPullRequestsRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/board-spatial-prototype': {
+      id: '/_chat/board-spatial-prototype'
+      path: '/board-spatial-prototype'
+      fullPath: '/board-spatial-prototype'
+      preLoaderRoute: typeof ChatBoardSpatialPrototypeRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/board': {
       id: '/_chat/board'
       path: '/board'
@@ -420,6 +440,7 @@ declare module '@tanstack/react-router' {
 
 interface ChatRouteChildren {
   ChatBoardRoute: typeof ChatBoardRoute
+  ChatBoardSpatialPrototypeRoute: typeof ChatBoardSpatialPrototypeRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
@@ -428,6 +449,7 @@ interface ChatRouteChildren {
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatBoardRoute: ChatBoardRoute,
+  ChatBoardSpatialPrototypeRoute: ChatBoardSpatialPrototypeRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
