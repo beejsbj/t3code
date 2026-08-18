@@ -117,9 +117,7 @@ export function SpatialSessionScene({
     delete canvas.dataset.spatialReady;
     canvas.dataset.spatialVariant = variant;
     canvas.setAttribute("layoutsubtree", "");
-    if (!("requestPaint" in HTMLCanvasElement.prototype)) {
-      installHtmlInCanvasPolyfill();
-    }
+    installHtmlInCanvasPolyfill();
     const polyfillHost = document.querySelector<HTMLElement>(
       '[data-host-of="spatial-session-canvas"]',
     );
