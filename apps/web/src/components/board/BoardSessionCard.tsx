@@ -38,7 +38,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
 } from "react";
 import {
   isAtomCommandInterrupted,
@@ -133,8 +132,8 @@ export interface BoardSessionCardProps {
   readonly changeRequestState: ChangeRequestStateLike | null;
   /** Spatial views keep lifecycle sessions readable instead of collapsing them to headers. */
   readonly showLifecycleBody?: boolean;
-  /** Optional prototype control rendered in the expanded sheet header. */
-  readonly expandedHeaderAccessory?: ReactNode;
+  /** Spatial card mode already owns expansion, so it can hide the board sheet affordance. */
+  readonly allowExpandedSheet?: boolean;
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
@@ -630,16 +629,18 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
               <CheckIcon className="size-3.5" />
             </Button>
           ) : null}
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() => setExpanded(true)}
-            aria-label="Zoom into session"
-            data-testid={`board-card-zoom-${thread.id}`}
-            className="text-muted-foreground/60 hover:text-foreground"
-          >
-            <Maximize2Icon className="size-3.5" />
-          </Button>
+          {props.allowExpandedSheet === false ? null : (
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => setExpanded(true)}
+              aria-label="Zoom into session"
+              data-testid={`board-card-zoom-${thread.id}`}
+              className="text-muted-foreground/60 hover:text-foreground"
+            >
+              <Maximize2Icon className="size-3.5" />
+            </Button>
+          )}
         </header>
 
         {isCompactLifecycleState ? null : (
@@ -677,12 +678,13 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
         )}
       </div>
 
-      <BoardCardExpandedSheet
-        target={{ kind: "thread", threadRef, title: thread.title }}
-        open={expanded}
-        onOpenChange={setExpanded}
-        headerAccessory={props.expandedHeaderAccessory}
-      />
+      {props.allowExpandedSheet === false ? null : (
+        <BoardCardExpandedSheet
+          target={{ kind: "thread", threadRef, title: thread.title }}
+          open={expanded}
+          onOpenChange={setExpanded}
+        />
+      )}
     </div>
   );
 });

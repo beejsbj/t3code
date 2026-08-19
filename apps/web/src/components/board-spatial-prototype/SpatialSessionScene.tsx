@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNod
 import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { BOARD_STATES } from "../../board/boardOrganization.ts";
 import { Button } from "../ui/button.tsx";
-import type { SpatialBoardSession } from "./SpatialBoardPrototype.tsx";
+import type { SpatialBoardSession, SpatialPresentation } from "./SpatialBoardPrototype.tsx";
 import { SpatialOrientationHud } from "./SpatialOrientationHud.tsx";
 import {
   HOME_SPATIAL_ORIENTATION,
@@ -23,6 +23,7 @@ import {
 
 interface SpatialSessionSceneProps {
   readonly sessions: ReadonlyArray<SpatialBoardSession>;
+  readonly presentation: SpatialPresentation;
   readonly children: (
     session: SpatialBoardSession,
     state: { readonly live: boolean; readonly focused: boolean },
@@ -59,6 +60,7 @@ interface SpatialLayout {
   readonly byKey: ReadonlyMap<string, LayoutCard>;
   readonly markers: Readonly<Record<SemanticAxis, ReadonlyArray<SemanticMarker>>>;
   readonly states: ReadonlyArray<StateMarker>;
+  readonly surface: SurfaceMetrics;
   readonly bounds: {
     readonly left: number;
     readonly top: number;
@@ -85,12 +87,33 @@ interface PersistentViewState {
 
 type DragMode = "pan" | "rotate";
 
-const SESSION_WIDTH = 1080;
-const SESSION_HEIGHT = 760;
-const COLUMN_GAP = 120;
-const ROW_GAP = 140;
-const CELL_SESSION_GAP = 56;
-const DEPTH_GAP = 560;
+interface SurfaceMetrics {
+  readonly width: number;
+  readonly height: number;
+  readonly columnGap: number;
+  readonly rowGap: number;
+  readonly cellGap: number;
+  readonly depthGap: number;
+}
+
+const SURFACE_METRICS: Readonly<Record<SpatialPresentation, SurfaceMetrics>> = {
+  cards: {
+    width: 428,
+    height: 560,
+    columnGap: 300,
+    rowGap: 320,
+    cellGap: 200,
+    depthGap: 1_000,
+  },
+  expanded: {
+    width: 1_080,
+    height: 760,
+    columnGap: 620,
+    rowGap: 520,
+    cellGap: 360,
+    depthGap: 1_800,
+  },
+};
 const CAMERA_FOV = 42;
 const MIN_ZOOM = 0.24;
 const MAX_ZOOM = 1.15;
@@ -101,11 +124,14 @@ const PINCH_DEPTH_PER_PIXEL = 0.03;
 const ROTATE_RADIANS_PER_PIXEL = 0.006;
 const MAX_LIVE_SESSION_SURFACES = 6;
 
-function planeZ(depth: number): number {
-  return -depth * DEPTH_GAP;
+function planeZ(depth: number, metrics: SurfaceMetrics): number {
+  return -depth * metrics.depthGap;
 }
 
-function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayout {
+function buildLayout(
+  sessions: ReadonlyArray<SpatialBoardSession>,
+  metrics: SurfaceMetrics,
+): SpatialLayout {
   const observedLaneLabels = new Map(
     sessions.map((session) => [session.laneId, session.workflowLabel] as const),
   );
@@ -122,7 +148,7 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
     id: state.id,
     label: state.label,
     index,
-    position: index * DEPTH_GAP,
+    position: index * metrics.depthGap,
     count: sessions.filter((session) => session.boardStateId === state.id).length,
   }));
   const depthByStateId = new Map(states.map((state) => [state.id, state.index] as const));
@@ -144,16 +170,16 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
         ),
       ),
     );
-    return largestCell * SESSION_HEIGHT + Math.max(0, largestCell - 1) * CELL_SESSION_GAP;
+    return largestCell * metrics.height + Math.max(0, largestCell - 1) * metrics.cellGap;
   });
   const rowTops: number[] = [];
   let nextTop = 0;
   for (const rowHeight of rowHeights) {
     rowTops.push(nextTop);
-    nextTop += rowHeight + ROW_GAP;
+    nextTop += rowHeight + metrics.rowGap;
   }
 
-  const columnStride = SESSION_WIDTH + COLUMN_GAP;
+  const columnStride = metrics.width + metrics.columnGap;
   const cards: LayoutCard[] = [];
   for (const session of sessions) {
     const columnIndex = lanes.findIndex(([laneId]) => laneId === session.laneId);
@@ -164,32 +190,32 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
     const peerIndex = peers.findIndex((peer) => peer.cardKey === session.cardKey);
     const x = Math.max(0, columnIndex) * columnStride;
     const y =
-      (rowTops[Math.max(0, rowIndex)] ?? 0) + peerIndex * (SESSION_HEIGHT + CELL_SESSION_GAP);
+      (rowTops[Math.max(0, rowIndex)] ?? 0) + peerIndex * (metrics.height + metrics.cellGap);
     cards.push({
       key: session.cardKey,
       x,
       y,
-      z: planeZ(depthIndex),
-      centerX: x + SESSION_WIDTH / 2,
-      centerY: y + SESSION_HEIGHT / 2,
+      z: planeZ(depthIndex, metrics),
+      centerX: x + metrics.width / 2,
+      centerY: y + metrics.height / 2,
       workflowId: session.laneId,
       projectId: session.projectTitle,
       stateId: session.boardStateId,
     });
   }
 
-  const width = Math.max(SESSION_WIDTH, lanes.length * columnStride - COLUMN_GAP);
-  const height = Math.max(SESSION_HEIGHT, nextTop - ROW_GAP);
+  const width = Math.max(metrics.width, lanes.length * columnStride - metrics.columnGap);
+  const height = Math.max(metrics.height, nextTop - metrics.rowGap);
   const workflowMarkers = lanes.map(([id, label], index) => ({
     id,
     label,
-    position: index * columnStride + SESSION_WIDTH / 2,
+    position: index * columnStride + metrics.width / 2,
     count: sessions.filter((session) => session.laneId === id).length,
   }));
   const projectMarkers = projects.map((project, index) => ({
     id: project,
     label: project,
-    position: (rowTops[index] ?? 0) + (rowHeights[index] ?? SESSION_HEIGHT) / 2,
+    position: (rowTops[index] ?? 0) + (rowHeights[index] ?? metrics.height) / 2,
     count: sessions.filter((session) => session.projectTitle === project).length,
   }));
 
@@ -204,6 +230,7 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
     byKey: new Map(cards.map((card) => [card.key, card])),
     markers: { workflow: workflowMarkers, project: projectMarkers, state: states },
     states,
+    surface: metrics,
     bounds: { left: 0, top: 0, right: width, bottom: height },
   };
 }
@@ -301,13 +328,13 @@ function nearestMarker(
   return nearest;
 }
 
-function markerSpacing(markers: ReadonlyArray<SemanticMarker>): number {
+function markerSpacing(markers: ReadonlyArray<SemanticMarker>, fallback: number): number {
   const gaps = markers
     .slice(1)
     .map((marker, index) => Math.abs(marker.position - (markers[index]?.position ?? 0)))
     .filter((gap) => gap > 0)
     .toSorted((left, right) => left - right);
-  return gaps[Math.floor(gaps.length / 2)] ?? DEPTH_GAP;
+  return gaps[Math.floor(gaps.length / 2)] ?? fallback;
 }
 
 function orderedDepthMarkers(
@@ -325,6 +352,7 @@ function roleDirectionGlyph(role: "horizontal" | "vertical", axis: SignedSemanti
 
 export function SpatialSessionScene({
   sessions,
+  presentation,
   children,
 }: SpatialSessionSceneProps): React.JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -340,7 +368,7 @@ export function SpatialSessionScene({
   const orientationRef = useRef<SpatialOrientation>(HOME_SPATIAL_ORIENTATION);
   const persistentView = useMemo<PersistentViewState>(
     () => ({ focus: new THREE.Vector3(), zoom: 0.78, initialized: false }),
-    [],
+    [presentation],
   );
   const [orientation, setOrientation] = useState<SpatialOrientation>(HOME_SPATIAL_ORIENTATION);
   const [liveSessionKeys, setLiveSessionKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -361,7 +389,10 @@ export function SpatialSessionScene({
   );
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
-  const layout = useMemo(() => buildLayout(sessionsRef.current), [layoutKey]);
+  const layout = useMemo(
+    () => buildLayout(sessionsRef.current, SURFACE_METRICS[presentation]),
+    [layoutKey, presentation],
+  );
 
   useEffect(() => {
     const root = rootRef.current;
@@ -381,7 +412,7 @@ export function SpatialSessionScene({
     const depthGrids = layout.states.map((state) => {
       const grid = new THREE.GridHelper(gridSize, gridDivisions, 0x64748b, 0xcbd5e1);
       grid.rotation.x = Math.PI / 2;
-      grid.position.set(boundsWidth / 2, -boundsHeight / 2, planeZ(state.index));
+      grid.position.set(boundsWidth / 2, -boundsHeight / 2, planeZ(state.index, layout.surface));
       const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
       for (const material of materials) {
         material.transparent = true;
@@ -396,8 +427,8 @@ export function SpatialSessionScene({
     const volumeRight = layout.bounds.right + 220;
     const volumeTop = -(layout.bounds.top - 220);
     const volumeBottom = -(layout.bounds.bottom + 220);
-    const firstZ = planeZ(0);
-    const lastZ = planeZ(Math.max(0, layout.states.length - 1));
+    const firstZ = planeZ(0, layout.surface);
+    const lastZ = planeZ(Math.max(0, layout.states.length - 1), layout.surface);
     const volumeGeometry = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(volumeLeft, volumeTop, firstZ),
       new THREE.Vector3(volumeLeft, volumeTop, lastZ),
@@ -545,14 +576,15 @@ export function SpatialSessionScene({
         projectionPoint.copy(cardCenter).project(camera);
         projectionEdge
           .copy(cardCenter)
-          .addScaledVector(cameraRight, SESSION_WIDTH / 2)
+          .addScaledVector(cameraRight, layout.surface.width / 2)
           .project(camera);
         const scale =
-          (Math.abs(projectionEdge.x - projectionPoint.x) * width) / Math.max(1, SESSION_WIDTH);
+          (Math.abs(projectionEdge.x - projectionPoint.x) * width) /
+          Math.max(1, layout.surface.width);
         const screenCenterX = (projectionPoint.x * 0.5 + 0.5) * width;
         const screenCenterY = (-projectionPoint.y * 0.5 + 0.5) * height;
-        const screenX = screenCenterX - (SESSION_WIDTH * scale) / 2;
-        const screenY = screenCenterY - (SESSION_HEIGHT * scale) / 2;
+        const screenX = screenCenterX - (layout.surface.width * scale) / 2;
+        const screenY = screenCenterY - (layout.surface.height * scale) / 2;
         const visible =
           cameraSpacePoint.z < -camera.near &&
           cameraSpacePoint.z > -camera.far &&
@@ -561,9 +593,9 @@ export function SpatialSessionScene({
           Number.isFinite(scale) &&
           scale > 0 &&
           screenX < width + 240 &&
-          screenX + SESSION_WIDTH * scale > -240 &&
+          screenX + layout.surface.width * scale > -240 &&
           screenY < height + 240 &&
-          screenY + SESSION_HEIGHT * scale > -240;
+          screenY + layout.surface.height * scale > -240;
         if (!visible) {
           element.style.visibility = "hidden";
           element.style.pointerEvents = "none";
@@ -840,7 +872,7 @@ export function SpatialSessionScene({
         const depthAxis = orientationRef.current.depth;
         const markers = layout.markers[depthAxis.axis];
         if (markers.length === 0) return;
-        const stride = markerSpacing(markers);
+        const stride = markerSpacing(markers, layout.surface.depthGap);
         signedSemanticAxisVector(depthAxis, depthVector);
         targetFocus.addScaledVector(depthVector, -delta.y * PINCH_DEPTH_PER_PIXEL * stride);
         const minimum = Math.min(...markers.map((marker) => marker.position));
@@ -961,8 +993,8 @@ export function SpatialSessionScene({
         {
           left: `${((card.x - layout.bounds.left) / width) * 100}%`,
           top: `${((card.y - layout.bounds.top) / height) * 100}%`,
-          width: `${Math.max(1.5, (SESSION_WIDTH / width) * 100)}%`,
-          height: `${Math.max(1.5, (SESSION_HEIGHT / height) * 100)}%`,
+          width: `${Math.max(1.5, (layout.surface.width / width) * 100)}%`,
+          height: `${Math.max(1.5, (layout.surface.height / height) * 100)}%`,
           opacity: 0.35,
         },
       ]),
@@ -983,8 +1015,12 @@ export function SpatialSessionScene({
           }}
           data-spatial-session-surface={session.cardKey}
           data-spatial-state={session.boardStateId}
-          className="absolute left-0 top-0 h-[760px] w-[1080px] origin-top-left transform-gpu contain-layout contain-paint"
-          style={{ opacity: 0 }}
+          className="absolute left-0 top-0 origin-top-left transform-gpu contain-layout contain-paint"
+          style={{
+            width: layout.surface.width,
+            height: layout.surface.height,
+            opacity: 0,
+          }}
           onPointerDownCapture={() => useBoardFocusStore.getState().setFocused(session.cardKey)}
           onFocusCapture={() => useBoardFocusStore.getState().setFocused(session.cardKey)}
         >
@@ -994,13 +1030,14 @@ export function SpatialSessionScene({
           })}
         </div>
       )),
-    [children, focusedThreadKey, liveSessionKeys, sessions],
+    [children, focusedThreadKey, layout.surface, liveSessionKeys, sessions],
   );
 
   return (
     <div
       ref={rootRef}
       data-spatial-scene
+      data-spatial-presentation={presentation}
       className="relative isolate min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_50%_42%,color-mix(in_srgb,var(--muted)_52%,transparent),var(--background)_68%)] outline-none data-[spatial-dragging=pan]:cursor-grabbing data-[spatial-dragging=rotate]:cursor-move"
     >
       <canvas
