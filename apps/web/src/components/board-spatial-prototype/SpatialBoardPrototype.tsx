@@ -190,7 +190,7 @@ export function SpatialBoardPrototype(): React.JSX.Element {
         <div className="min-w-0">
           <h1 className="text-sm font-medium">Spatial session board</h1>
           <p className="truncate text-[11px] text-muted-foreground">
-            {sessions.length} real sessions · workflow across · projects down · state through depth
+            {sessions.length} real sessions · workflow, project, and state arranged in space
           </p>
         </div>
         <p className="ml-auto max-w-[55%] truncate text-[11px] text-muted-foreground">

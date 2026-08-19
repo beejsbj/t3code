@@ -333,10 +333,10 @@ export function SpatialSessionScene({
   const depthRangeRef = useRef<HTMLInputElement | null>(null);
   const controllerRef = useRef<SceneController | null>(null);
   const orientationRef = useRef<SpatialOrientation>(HOME_SPATIAL_ORIENTATION);
-  const persistentViewRef = useRef<PersistentViewState | null>(null);
-  if (persistentViewRef.current === null) {
-    persistentViewRef.current = { focus: new THREE.Vector3(), zoom: 0.78, initialized: false };
-  }
+  const persistentView = useMemo<PersistentViewState>(
+    () => ({ focus: new THREE.Vector3(), zoom: 0.78, initialized: false }),
+    [],
+  );
   const [orientation, setOrientation] = useState<SpatialOrientation>(HOME_SPATIAL_ORIENTATION);
   const focusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
   const focusRequest = useBoardFocusStore((state) => state.request);
@@ -357,8 +357,7 @@ export function SpatialSessionScene({
   useEffect(() => {
     const root = rootRef.current;
     const canvas = canvasRef.current;
-    const persistentView = persistentViewRef.current;
-    if (!root || !canvas || !persistentView || layout.cards.length === 0) return;
+    if (!root || !canvas || layout.cards.length === 0) return;
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -589,7 +588,7 @@ export function SpatialSessionScene({
         if (!element) continue;
         const active = marker.id === activeMarker?.id;
         element.dataset.active = String(active);
-        element.setAttribute("aria-current", active ? "step" : "false");
+        element.setAttribute("aria-current", active ? "location" : "false");
       }
       if (depthLabelRef.current) depthLabelRef.current.textContent = activeMarker?.label ?? "Depth";
       if (depthRangeRef.current) depthRangeRef.current.value = String(activeDepthIndex);
@@ -864,11 +863,7 @@ export function SpatialSessionScene({
         const store = useBoardFocusStore.getState();
         if (store.expandedTarget) store.setExpanded(null);
         else store.setFocused(null);
-      } else if (event.altKey && event.key === "ArrowLeft") rotate("yaw-left");
-      else if (event.altKey && event.key === "ArrowRight") rotate("yaw-right");
-      else if (event.altKey && event.key === "ArrowUp") rotate("pitch-up");
-      else if (event.altKey && event.key === "ArrowDown") rotate("pitch-down");
-      else if (event.key === "Home" || event.key === "0") reset();
+      } else if (event.key === "Home" || event.key === "0") reset();
       else if (event.key === "+" || event.key === "=" || event.key === "PageDown") depthBy(1);
       else if (event.key === "-" || event.key === "_" || event.key === "PageUp") depthBy(-1);
       else if (event.key.toLowerCase() === "e") depthBy(1);
@@ -930,7 +925,7 @@ export function SpatialSessionScene({
         delete element.dataset.spatialActive;
       }
     };
-  }, [layout]);
+  }, [layout, persistentView]);
 
   useEffect(() => {
     if (focusedThreadKey) controllerRef.current?.focusCard(focusedThreadKey);
@@ -962,6 +957,25 @@ export function SpatialSessionScene({
   const horizontalMarkers = layout.markers[orientation.right.axis];
   const verticalMarkers = layout.markers[orientation.up.axis];
   const depthMarkers = orderedDepthMarkers(layout, orientation);
+  const cardLayer = useMemo(
+    () =>
+      sessions.map((session) => (
+        <div
+          key={session.cardKey}
+          ref={(element) => {
+            if (element) elementsRef.current.set(session.cardKey, element);
+            else elementsRef.current.delete(session.cardKey);
+          }}
+          data-spatial-session-card={session.cardKey}
+          data-spatial-state={session.boardStateId}
+          className="absolute left-0 top-0 w-[380px] origin-top-left transform-gpu contain-layout contain-paint"
+          style={{ opacity: 0 }}
+        >
+          {children(session)}
+        </div>
+      )),
+    [children, sessions],
+  );
 
   return (
     <div
@@ -974,26 +988,11 @@ export function SpatialSessionScene({
         className="pointer-events-none absolute inset-0 block h-full w-full"
       />
 
-      <div className="absolute inset-0 z-10 overflow-hidden">
-        {sessions.map((session) => (
-          <div
-            key={session.cardKey}
-            ref={(element) => {
-              if (element) elementsRef.current.set(session.cardKey, element);
-              else elementsRef.current.delete(session.cardKey);
-            }}
-            data-spatial-session-card={session.cardKey}
-            data-spatial-state={session.boardStateId}
-            className="absolute left-0 top-0 w-[380px] origin-top-left transform-gpu contain-layout contain-paint"
-            style={{ opacity: 0 }}
-          >
-            {children(session)}
-          </div>
-        ))}
-      </div>
+      <div className="absolute inset-0 z-10 overflow-hidden">{cardLayer}</div>
 
       <div
         data-spatial-hud
+        role="group"
         className="pointer-events-none absolute inset-x-0 top-0 z-30 h-9 overflow-hidden border-b border-border/70 bg-background/88 pl-24 shadow-sm backdrop-blur"
         aria-label={`${semanticAxisLabel(orientation.right.axis)} horizontal axis`}
       >
@@ -1020,6 +1019,7 @@ export function SpatialSessionScene({
 
       <div
         data-spatial-hud
+        role="group"
         className="pointer-events-none absolute inset-y-9 left-0 z-30 w-24 overflow-hidden border-r border-border/70 bg-background/88 shadow-sm backdrop-blur"
         aria-label={`${semanticAxisLabel(orientation.up.axis)} vertical axis`}
       >
@@ -1056,7 +1056,8 @@ export function SpatialSessionScene({
 
       <div
         data-spatial-hud
-        className="absolute right-4 top-1/2 z-40 w-36 -translate-y-1/2 rounded-xl border border-border bg-background/92 p-2 shadow-lg backdrop-blur"
+        role="group"
+        className="absolute right-4 top-1/2 z-40 w-40 -translate-y-1/2 rounded-xl border border-border bg-background/92 p-2 shadow-lg backdrop-blur"
         aria-label={`${semanticAxisLabel(orientation.depth.axis)} depth axis`}
       >
         <div className="mb-1.5 flex items-center text-[9px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
@@ -1088,10 +1089,13 @@ export function SpatialSessionScene({
 
       <div
         data-spatial-hud
+        role="group"
         className="absolute bottom-4 right-4 z-40 w-44 rounded-xl border border-border bg-background/92 p-2 shadow-lg backdrop-blur"
       >
         <div className="mb-2 flex items-center gap-1">
-          <span className="text-[10px] font-medium">Workflow × project map</span>
+          <span className="text-[10px] font-medium" title="Workflow × project home-plane map">
+            Home map
+          </span>
           <span
             ref={depthLabelRef}
             className="ml-auto max-w-16 truncate text-[10px] font-medium text-muted-foreground"

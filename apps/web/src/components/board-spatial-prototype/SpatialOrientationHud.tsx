@@ -67,6 +67,7 @@ export function SpatialOrientationHud({
     <div
       data-spatial-hud
       data-testid="spatial-orientation-hud"
+      role="group"
       aria-label="Spatial orientation"
       className="spatial-orientation-hud pointer-events-auto w-52 rounded-xl border border-border bg-background/92 p-2.5 shadow-lg backdrop-blur"
     >
