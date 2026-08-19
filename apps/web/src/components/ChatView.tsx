@@ -519,6 +519,9 @@ type ChatViewProps =
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
+      enableGlobalShortcuts?: boolean;
+      autoFocusComposer?: boolean;
+      provideDiffWorkerPool?: boolean;
       forceExpandedMobileComposer?: boolean;
       threadSyncPhase?: ThreadSyncPhase | null;
       routeKind: "server";
@@ -529,6 +532,9 @@ type ChatViewProps =
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
+      enableGlobalShortcuts?: boolean;
+      autoFocusComposer?: boolean;
+      provideDiffWorkerPool?: boolean;
       forceExpandedMobileComposer?: boolean;
       threadSyncPhase?: never;
       routeKind: "draft";
@@ -1199,6 +1205,8 @@ function ChatViewContent(props: ChatViewProps) {
     routeKind,
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
+    enableGlobalShortcuts = true,
+    autoFocusComposer = true,
     forceExpandedMobileComposer = false,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
@@ -4028,14 +4036,14 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThread?.id]);
 
   useEffect(() => {
-    if (!activeThread?.id || terminalUiState.terminalOpen) return;
+    if (!autoFocusComposer || !activeThread?.id || terminalUiState.terminalOpen) return;
     const frame = window.requestAnimationFrame(() => {
       focusComposer();
     });
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
+  }, [activeThread?.id, autoFocusComposer, focusComposer, terminalUiState.terminalOpen]);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -4690,6 +4698,7 @@ function ChatViewContent(props: ChatViewProps) {
   }, [activeThreadKey, focusComposer, terminalUiState.terminalOpen]);
 
   useEffect(() => {
+    if (!enableGlobalShortcuts) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
         event.stopPropagation();
@@ -4844,6 +4853,7 @@ function ChatViewContent(props: ChatViewProps) {
     toggleRightPanelMaximized,
     toggleTerminalVisibility,
     composerRef,
+    enableGlobalShortcuts,
   ]);
 
   const onRevertToTurnCount = useCallback(
@@ -6460,6 +6470,7 @@ function ChatViewContent(props: ChatViewProps) {
                             resolvedTheme={resolvedTheme}
                             settings={settings}
                             keybindings={keybindings}
+                            enableGlobalShortcuts={enableGlobalShortcuts}
                             terminalOpen={Boolean(terminalUiState.terminalOpen)}
                             gitCwd={gitCwd}
                             promptRef={promptRef}
@@ -6649,6 +6660,7 @@ function ChatViewContent(props: ChatViewProps) {
           agentsAvailable
           pullRequestStatuses={pullRequestTabStatuses}
           liveAgentCount={agentPanelModel.liveCount}
+          enableGlobalShortcuts={enableGlobalShortcuts}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6688,6 +6700,7 @@ function ChatViewContent(props: ChatViewProps) {
             agentsAvailable
             pullRequestStatuses={pullRequestTabStatuses}
             liveAgentCount={agentPanelModel.liveCount}
+            enableGlobalShortcuts={enableGlobalShortcuts}
           >
             {rightPanelContent}
           </RightPanelTabs>
@@ -6706,6 +6719,7 @@ function ChatViewContent(props: ChatViewProps) {
 }
 
 export default function ChatView(props: ChatViewProps) {
+  if (props.provideDiffWorkerPool === false) return <ChatViewContent {...props} />;
   return (
     <DiffWorkerPoolProvider>
       <ChatViewContent {...props} />

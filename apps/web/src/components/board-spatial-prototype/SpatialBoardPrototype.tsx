@@ -1,14 +1,11 @@
 /**
  * PROTOTYPE — real T3 board sessions placed in a navigable spatial scene.
  *
- * WebGL draws the field while cards remain live React DOM. This keeps native
- * card interaction intact while the spatial camera remains experimental.
+ * WebGL draws the field while full session views remain live React DOM. This
+ * keeps the existing T3 chat surface intact while the camera stays experimental.
  */
 
-import { DndContext } from "@dnd-kit/core";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { LayoutGridIcon, Maximize2Icon } from "lucide-react";
 import { useMemo } from "react";
 
 import {
@@ -24,15 +21,14 @@ import {
   type BoardStateId,
 } from "../../board/boardOrganization.ts";
 import { useClientSettings } from "../../hooks/useSettings.ts";
-import { useEnvironments } from "../../state/environments.ts";
 import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
 import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
-import { BoardSessionCard } from "../board/BoardSessionCard.tsx";
+import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider.tsx";
 import { resolveBoardThreadVisibility } from "../board/SessionBoard.logic.ts";
 import { SidebarInset } from "../ui/sidebar.tsx";
-import { Toggle, ToggleGroup } from "../ui/toggle-group.tsx";
 import { SpatialSessionScene } from "./SpatialSessionScene.tsx";
+import { SpatialSessionSurface } from "./SpatialSessionSurface.tsx";
 
 interface SpatialBoardSession {
   readonly cardKey: string;
@@ -44,54 +40,12 @@ interface SpatialBoardSession {
   readonly boardStateLabel: string;
   readonly lanes: ReadonlyArray<BoardLane>;
   readonly projectTitle: string;
-  readonly environmentLabel: string;
-  readonly environmentConnection: EnvironmentConnectionPresentation;
-}
-
-function SpatialViewModeToggle(props: {
-  readonly mode: "cards" | "expanded";
-  readonly placement: "board" | "modal";
-  readonly disabled: boolean;
-  readonly onModeChange: (mode: "cards" | "expanded") => void;
-}): React.JSX.Element {
-  return (
-    <ToggleGroup
-      data-spatial-view-toggle={props.placement}
-      className={
-        props.placement === "board"
-          ? "absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-0.5 shadow-md"
-          : "shrink-0 rounded-lg border border-border bg-background p-0.5"
-      }
-      size="xs"
-      variant="ghost"
-      value={[props.mode]}
-      onValueChange={(value) => {
-        const next = value[0];
-        if (next === "cards" || next === "expanded") props.onModeChange(next);
-      }}
-    >
-      <Toggle value="cards" aria-label="Board cards view" className="gap-1.5 px-2">
-        <LayoutGridIcon className="size-3" />
-        Cards
-      </Toggle>
-      <Toggle
-        value="expanded"
-        aria-label="Expanded session view"
-        className="gap-1.5 px-2"
-        disabled={props.disabled}
-      >
-        <Maximize2Icon className="size-3" />
-        Expanded
-      </Toggle>
-    </ToggleGroup>
-  );
 }
 
 function useRealBoardSessions(): ReadonlyArray<SpatialBoardSession> {
   const threads = useThreadShells();
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
-  const { environments } = useEnvironments();
   const lanes = useBoardLaneStore((state) => state.lanes);
   const placementByThreadKey = useBoardLaneStore((state) => state.placementByThreadKey);
   const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
@@ -100,9 +54,6 @@ function useRealBoardSessions(): ReadonlyArray<SpatialBoardSession> {
   return useMemo(() => {
     const projectTitleByKey = new Map(
       projects.map((project) => [`${project.environmentId}:${project.id}`, project.title] as const),
-    );
-    const environmentById = new Map(
-      environments.map((environment) => [environment.environmentId, environment] as const),
     );
     const now = new Date().toISOString();
 
@@ -129,7 +80,6 @@ function useRealBoardSessions(): ReadonlyArray<SpatialBoardSession> {
         const boardStateId = resolveBoardThreadState(thread, visibility);
         if (laneId === null || boardStateId === null) return [];
 
-        const environment = environmentById.get(thread.environmentId);
         return [
           {
             cardKey: scopedThreadKey(threadRef),
@@ -142,19 +92,12 @@ function useRealBoardSessions(): ReadonlyArray<SpatialBoardSession> {
             lanes,
             projectTitle:
               projectTitleByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? "Project",
-            environmentLabel: environment?.label ?? thread.environmentId,
-            environmentConnection: environment?.connection ?? {
-              phase: "available",
-              error: null,
-              traceId: null,
-            },
           },
         ];
       });
   }, [
     autoSettleAfterDays,
     autoSettleOnMerge,
-    environments,
     lanes,
     placementByThreadKey,
     projects,
@@ -166,23 +109,7 @@ function useRealBoardSessions(): ReadonlyArray<SpatialBoardSession> {
 export function SpatialBoardPrototype(): React.JSX.Element {
   const sessions = useRealBoardSessions();
   const focusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
-  const expandedTarget = useBoardFocusStore((state) => state.expandedTarget);
-  const setExpanded = useBoardFocusStore((state) => state.setExpanded);
-  const setFocused = useBoardFocusStore((state) => state.setFocused);
   const focusedSession = sessions.find((session) => session.cardKey === focusedThreadKey) ?? null;
-  const viewMode = expandedTarget?.kind === "thread" ? "expanded" : "cards";
-
-  const setViewMode = (mode: "cards" | "expanded") => {
-    if (mode === "cards") {
-      setExpanded(null);
-      return;
-    }
-
-    const session = focusedSession ?? sessions[0];
-    if (!session) return;
-    setFocused(session.cardKey);
-    setExpanded({ kind: "thread", threadKey: session.cardKey });
-  };
 
   return (
     <SidebarInset className="relative h-dvh min-h-0 overflow-hidden bg-background text-foreground">
@@ -190,7 +117,7 @@ export function SpatialBoardPrototype(): React.JSX.Element {
         <div className="min-w-0">
           <h1 className="text-sm font-medium">Spatial session board</h1>
           <p className="truncate text-[11px] text-muted-foreground">
-            {sessions.length} real sessions · workflow, project, and state arranged in space
+            {sessions.length} full sessions · workflow, project, and state arranged in space
           </p>
         </div>
         <p className="ml-auto max-w-[55%] truncate text-[11px] text-muted-foreground">
@@ -199,45 +126,15 @@ export function SpatialBoardPrototype(): React.JSX.Element {
             ? ` › ${focusedSession.workflowLabel} › ${focusedSession.projectTitle} › ${focusedSession.boardStateLabel} › ${focusedSession.thread.title}`
             : " › Overview"}
         </p>
-        <SpatialViewModeToggle
-          mode={viewMode}
-          placement="board"
-          disabled={sessions.length === 0}
-          onModeChange={setViewMode}
-        />
       </header>
 
-      <DndContext>
+      <DiffWorkerPoolProvider>
         <SpatialSessionScene sessions={sessions}>
-          {(session) => (
-            <BoardSessionCard
-              cardKey={session.cardKey}
-              threadRef={session.threadRef}
-              thread={session.thread}
-              laneId={session.laneId}
-              workflowLabel={session.workflowLabel}
-              boardStateId={session.boardStateId}
-              boardStateLabel={session.boardStateLabel}
-              draggable={false}
-              lanes={session.lanes}
-              projectTitle={session.projectTitle}
-              environmentLabel={session.environmentLabel}
-              environmentConnection={session.environmentConnection}
-              isDragging={false}
-              changeRequestState={null}
-              showLifecycleBody
-              expandedHeaderAccessory={
-                <SpatialViewModeToggle
-                  mode="expanded"
-                  placement="modal"
-                  disabled={false}
-                  onModeChange={setViewMode}
-                />
-              }
-            />
+          {(session, state) => (
+            <SpatialSessionSurface session={session} live={state.live} focused={state.focused} />
           )}
         </SpatialSessionScene>
-      </DndContext>
+      </DiffWorkerPoolProvider>
     </SidebarInset>
   );
 }

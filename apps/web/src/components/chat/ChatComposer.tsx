@@ -565,6 +565,7 @@ export interface ChatComposerProps {
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
+  enableGlobalShortcuts?: boolean;
   terminalOpen: boolean;
   gitCwd: string | null;
 
@@ -652,6 +653,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resolvedTheme,
     settings,
     keybindings,
+    enableGlobalShortcuts = true,
     terminalOpen,
     gitCwd,
     promptRef,
@@ -2287,6 +2289,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [prompt]);
 
   useEffect(() => {
+    if (!enableGlobalShortcuts) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
@@ -2315,6 +2318,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
+    enableGlobalShortcuts,
     isComposerApprovalState,
     isComposerModelPickerOpen,
     keybindings,
@@ -2743,6 +2747,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   respondingRequestIds={respondingRequestIds}
                   answers={activePendingDraftAnswers}
                   questionIndex={activePendingQuestionIndex}
+                  enableGlobalShortcuts={enableGlobalShortcuts}
                   onToggleOption={onSelectActivePendingUserInputOption}
                   onAdvance={onAdvanceActivePendingUserInput}
                 />
@@ -2783,6 +2788,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 respondingRequestIds={respondingRequestIds}
                 answers={activePendingDraftAnswers}
                 questionIndex={activePendingQuestionIndex}
+                enableGlobalShortcuts={enableGlobalShortcuts}
                 onToggleOption={onSelectActivePendingUserInputOption}
                 onAdvance={onAdvanceActivePendingUserInput}
               />

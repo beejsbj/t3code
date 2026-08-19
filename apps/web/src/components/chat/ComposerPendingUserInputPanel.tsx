@@ -14,6 +14,7 @@ interface PendingUserInputPanelProps {
   respondingRequestIds: ApprovalRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  enableGlobalShortcuts?: boolean;
   onToggleOption: (questionId: string, optionLabel: string) => void;
   onAdvance: () => void;
 }
@@ -23,6 +24,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   respondingRequestIds,
   answers,
   questionIndex,
+  enableGlobalShortcuts = true,
   onToggleOption,
   onAdvance,
 }: PendingUserInputPanelProps) {
@@ -37,6 +39,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
+      enableGlobalShortcuts={enableGlobalShortcuts}
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
     />
@@ -48,6 +51,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding,
   answers,
   questionIndex,
+  enableGlobalShortcuts,
   onToggleOption,
   onAdvance,
 }: {
@@ -55,6 +59,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
+  enableGlobalShortcuts: boolean;
   onToggleOption: (questionId: string, optionLabel: string) => void;
   onAdvance: () => void;
 }) {
@@ -133,7 +138,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // select prompts keep the existing auto-advance behavior. Collapsed prompts opt
   // out, since the numbers they refer to are not on screen.
   useEffect(() => {
-    if (!activeQuestion || isResponding || isCollapsed) return;
+    if (!enableGlobalShortcuts || !activeQuestion || isResponding || isCollapsed) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -157,7 +162,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, handleOptionSelection, isCollapsed, isResponding]);
+  }, [activeQuestion, enableGlobalShortcuts, handleOptionSelection, isCollapsed, isResponding]);
 
   if (!activeQuestion) {
     return null;

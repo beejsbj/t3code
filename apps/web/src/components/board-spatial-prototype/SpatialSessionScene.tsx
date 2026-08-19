@@ -23,7 +23,10 @@ import {
 
 interface SpatialSessionSceneProps {
   readonly sessions: ReadonlyArray<SpatialBoardSession>;
-  readonly children: (session: SpatialBoardSession) => ReactNode;
+  readonly children: (
+    session: SpatialBoardSession,
+    state: { readonly live: boolean; readonly focused: boolean },
+  ) => ReactNode;
 }
 
 interface LayoutCard {
@@ -82,12 +85,12 @@ interface PersistentViewState {
 
 type DragMode = "pan" | "rotate";
 
-const CARD_WIDTH = 380;
-const CARD_HEIGHT = 560;
-const COLUMN_GAP = 52;
-const ROW_GAP = 76;
-const CELL_CARD_GAP = 20;
-const DEPTH_GAP = 360;
+const SESSION_WIDTH = 1080;
+const SESSION_HEIGHT = 760;
+const COLUMN_GAP = 120;
+const ROW_GAP = 140;
+const CELL_SESSION_GAP = 56;
+const DEPTH_GAP = 560;
 const CAMERA_FOV = 42;
 const MIN_ZOOM = 0.24;
 const MAX_ZOOM = 1.15;
@@ -96,6 +99,7 @@ const CAMERA_EPSILON = 0.12;
 const ORIENTATION_EPSILON = 0.0005;
 const PINCH_DEPTH_PER_PIXEL = 0.03;
 const ROTATE_RADIANS_PER_PIXEL = 0.006;
+const MAX_LIVE_SESSION_SURFACES = 6;
 
 function planeZ(depth: number): number {
   return -depth * DEPTH_GAP;
@@ -140,7 +144,7 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
         ),
       ),
     );
-    return largestCell * CARD_HEIGHT + Math.max(0, largestCell - 1) * CELL_CARD_GAP;
+    return largestCell * SESSION_HEIGHT + Math.max(0, largestCell - 1) * CELL_SESSION_GAP;
   });
   const rowTops: number[] = [];
   let nextTop = 0;
@@ -149,7 +153,7 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
     nextTop += rowHeight + ROW_GAP;
   }
 
-  const columnStride = CARD_WIDTH + COLUMN_GAP;
+  const columnStride = SESSION_WIDTH + COLUMN_GAP;
   const cards: LayoutCard[] = [];
   for (const session of sessions) {
     const columnIndex = lanes.findIndex(([laneId]) => laneId === session.laneId);
@@ -159,32 +163,33 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
     const peers = cellSessions.get(cellKey) ?? [];
     const peerIndex = peers.findIndex((peer) => peer.cardKey === session.cardKey);
     const x = Math.max(0, columnIndex) * columnStride;
-    const y = (rowTops[Math.max(0, rowIndex)] ?? 0) + peerIndex * (CARD_HEIGHT + CELL_CARD_GAP);
+    const y =
+      (rowTops[Math.max(0, rowIndex)] ?? 0) + peerIndex * (SESSION_HEIGHT + CELL_SESSION_GAP);
     cards.push({
       key: session.cardKey,
       x,
       y,
       z: planeZ(depthIndex),
-      centerX: x + CARD_WIDTH / 2,
-      centerY: y + CARD_HEIGHT / 2,
+      centerX: x + SESSION_WIDTH / 2,
+      centerY: y + SESSION_HEIGHT / 2,
       workflowId: session.laneId,
       projectId: session.projectTitle,
       stateId: session.boardStateId,
     });
   }
 
-  const width = Math.max(CARD_WIDTH, lanes.length * columnStride - COLUMN_GAP);
-  const height = Math.max(CARD_HEIGHT, nextTop - ROW_GAP);
+  const width = Math.max(SESSION_WIDTH, lanes.length * columnStride - COLUMN_GAP);
+  const height = Math.max(SESSION_HEIGHT, nextTop - ROW_GAP);
   const workflowMarkers = lanes.map(([id, label], index) => ({
     id,
     label,
-    position: index * columnStride + CARD_WIDTH / 2,
+    position: index * columnStride + SESSION_WIDTH / 2,
     count: sessions.filter((session) => session.laneId === id).length,
   }));
   const projectMarkers = projects.map((project, index) => ({
     id: project,
     label: project,
-    position: (rowTops[index] ?? 0) + (rowHeights[index] ?? CARD_HEIGHT) / 2,
+    position: (rowTops[index] ?? 0) + (rowHeights[index] ?? SESSION_HEIGHT) / 2,
     count: sessions.filter((session) => session.projectTitle === project).length,
   }));
 
@@ -226,9 +231,9 @@ function isHudTarget(target: EventTarget | null): boolean {
   return target instanceof Element && target.closest("[data-spatial-hud]") !== null;
 }
 
-function scrollableAncestor(target: EventTarget | null, card: Element): HTMLElement | null {
+function scrollableAncestor(target: EventTarget | null, surface: Element): HTMLElement | null {
   let node = target instanceof HTMLElement ? target : null;
-  while (node && node !== card) {
+  while (node && node !== surface) {
     const style = window.getComputedStyle(node);
     if (
       (style.overflowY === "auto" || style.overflowY === "scroll") &&
@@ -338,7 +343,11 @@ export function SpatialSessionScene({
     [],
   );
   const [orientation, setOrientation] = useState<SpatialOrientation>(HOME_SPATIAL_ORIENTATION);
+  const [liveSessionKeys, setLiveSessionKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const liveSessionKeysRef = useRef<ReadonlySet<string>>(liveSessionKeys);
   const focusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
+  const focusedThreadKeyRef = useRef(focusedThreadKey);
+  focusedThreadKeyRef.current = focusedThreadKey;
   const focusRequest = useBoardFocusStore((state) => state.request);
   const layoutKey = useMemo(
     () =>
@@ -439,6 +448,18 @@ export function SpatialSessionScene({
     let dragY = 0;
     let dragged = false;
 
+    const syncLiveSessions = (nextKeys: ReadonlySet<string>): void => {
+      const currentKeys = liveSessionKeysRef.current;
+      if (
+        currentKeys.size === nextKeys.size &&
+        [...nextKeys].every((sessionKey) => currentKeys.has(sessionKey))
+      ) {
+        return;
+      }
+      liveSessionKeysRef.current = nextKeys;
+      setLiveSessionKeys(nextKeys);
+    };
+
     const syncPersistentView = (): void => {
       persistentView.focus.copy(targetFocus);
       persistentView.zoom = targetZoom;
@@ -513,6 +534,8 @@ export function SpatialSessionScene({
         activeMarkers,
         semanticCoordinate(currentFocus, activeAxis),
       );
+      const visibleSessionCandidates: Array<{ readonly key: string; readonly cameraZ: number }> =
+        [];
 
       for (const card of layout.cards) {
         const element = elementsRef.current.get(card.key);
@@ -522,14 +545,14 @@ export function SpatialSessionScene({
         projectionPoint.copy(cardCenter).project(camera);
         projectionEdge
           .copy(cardCenter)
-          .addScaledVector(cameraRight, CARD_WIDTH / 2)
+          .addScaledVector(cameraRight, SESSION_WIDTH / 2)
           .project(camera);
         const scale =
-          (Math.abs(projectionEdge.x - projectionPoint.x) * width) / Math.max(1, CARD_WIDTH);
+          (Math.abs(projectionEdge.x - projectionPoint.x) * width) / Math.max(1, SESSION_WIDTH);
         const screenCenterX = (projectionPoint.x * 0.5 + 0.5) * width;
         const screenCenterY = (-projectionPoint.y * 0.5 + 0.5) * height;
-        const screenX = screenCenterX - (CARD_WIDTH * scale) / 2;
-        const screenY = screenCenterY - (CARD_HEIGHT * scale) / 2;
+        const screenX = screenCenterX - (SESSION_WIDTH * scale) / 2;
+        const screenY = screenCenterY - (SESSION_HEIGHT * scale) / 2;
         const visible =
           cameraSpacePoint.z < -camera.near &&
           cameraSpacePoint.z > -camera.far &&
@@ -538,9 +561,9 @@ export function SpatialSessionScene({
           Number.isFinite(scale) &&
           scale > 0 &&
           screenX < width + 240 &&
-          screenX + CARD_WIDTH * scale > -240 &&
+          screenX + SESSION_WIDTH * scale > -240 &&
           screenY < height + 240 &&
-          screenY + CARD_HEIGHT * scale > -240;
+          screenY + SESSION_HEIGHT * scale > -240;
         if (!visible) {
           element.style.visibility = "hidden";
           element.style.pointerEvents = "none";
@@ -559,7 +582,19 @@ export function SpatialSessionScene({
         // the focal point is currently nearest another semantic plane.
         element.style.pointerEvents = "auto";
         element.dataset.spatialActive = String(active);
+        visibleSessionCandidates.push({ key: card.key, cameraZ: cameraSpacePoint.z });
       }
+
+      const nextLiveSessionKeys = new Set<string>();
+      const focusedKey = focusedThreadKeyRef.current;
+      if (focusedKey && layout.byKey.has(focusedKey)) nextLiveSessionKeys.add(focusedKey);
+      for (const candidate of visibleSessionCandidates.toSorted(
+        (left, right) => right.cameraZ - left.cameraZ,
+      )) {
+        if (nextLiveSessionKeys.size >= MAX_LIVE_SESSION_SURFACES) break;
+        nextLiveSessionKeys.add(candidate.key);
+      }
+      syncLiveSessions(nextLiveSessionKeys);
 
       const horizontalAxis = orientationRef.current.right.axis;
       for (const marker of layout.markers[horizontalAxis]) {
@@ -739,7 +774,10 @@ export function SpatialSessionScene({
 
     const onPointerDown = (event: PointerEvent): void => {
       if (event.button !== 0 || isHudTarget(event.target) || isEditableTarget(event.target)) return;
-      if (event.target instanceof Element && event.target.closest("[data-spatial-session-card]")) {
+      if (
+        event.target instanceof Element &&
+        event.target.closest("[data-spatial-session-surface]")
+      ) {
         return;
       }
       draggingPointerId = event.pointerId;
@@ -791,11 +829,11 @@ export function SpatialSessionScene({
 
     const onWheel = (event: WheelEvent): void => {
       if (isHudTarget(event.target)) return;
-      const card =
+      const surface =
         event.target instanceof Element
-          ? event.target.closest("[data-spatial-session-card]")
+          ? event.target.closest("[data-spatial-session-surface]")
           : null;
-      if (card && !event.ctrlKey && scrollableAncestor(event.target, card)) return;
+      if (surface && !event.ctrlKey && scrollableAncestor(event.target, surface)) return;
       event.preventDefault();
       const delta = normalizedWheelDelta(event);
       if (event.ctrlKey) {
@@ -826,21 +864,6 @@ export function SpatialSessionScene({
       commitTarget();
     };
 
-    const onDoubleClick = (event: MouseEvent): void => {
-      if (isHudTarget(event.target)) return;
-      const interactive =
-        event.target instanceof Element &&
-        event.target.closest("button, a, input, textarea, select, [contenteditable='true']");
-      if (interactive) return;
-      const card =
-        event.target instanceof Element
-          ? event.target.closest<HTMLElement>("[data-spatial-session-card]")
-          : null;
-      const cardKey = card?.dataset.spatialSessionCard;
-      if (!cardKey) return;
-      useBoardFocusStore.getState().setExpanded({ kind: "thread", threadKey: cardKey });
-    };
-
     const panByKey = (horizontal: number, vertical: number): void => {
       signedSemanticAxisVector(orientationRef.current.right, panRight);
       signedSemanticAxisVector(orientationRef.current.up, panUp);
@@ -850,20 +873,14 @@ export function SpatialSessionScene({
 
     const onKeyDown = (event: KeyboardEvent): void => {
       if (isEditableTarget(event.target)) return;
-      const activeCard =
-        document.activeElement instanceof Element
-          ? document.activeElement.closest<HTMLElement>("[data-spatial-session-card]")
-          : null;
-      if (event.key === "Enter" && activeCard?.dataset.spatialSessionCard) {
-        useBoardFocusStore.getState().setExpanded({
-          kind: "thread",
-          threadKey: activeCard.dataset.spatialSessionCard,
-        });
-      } else if (event.key === "Escape") {
-        const store = useBoardFocusStore.getState();
-        if (store.expandedTarget) store.setExpanded(null);
-        else store.setFocused(null);
-      } else if (event.key === "Home" || event.key === "0") reset();
+      if (
+        event.target instanceof Element &&
+        event.target.closest("[data-spatial-session-surface]")
+      ) {
+        return;
+      }
+      if (event.key === "Escape") useBoardFocusStore.getState().setFocused(null);
+      else if (event.key === "Home" || event.key === "0") reset();
       else if (event.key === "+" || event.key === "=" || event.key === "PageDown") depthBy(1);
       else if (event.key === "-" || event.key === "_" || event.key === "PageUp") depthBy(-1);
       else if (event.key.toLowerCase() === "e") depthBy(1);
@@ -884,7 +901,6 @@ export function SpatialSessionScene({
     root.addEventListener("pointerup", onPointerUp);
     root.addEventListener("pointercancel", onPointerUp);
     root.addEventListener("wheel", onWheel, { passive: false });
-    root.addEventListener("dblclick", onDoubleClick);
     window.addEventListener("keydown", onKeyDown, { capture: true });
     resize();
 
@@ -897,7 +913,6 @@ export function SpatialSessionScene({
       root.removeEventListener("pointerup", onPointerUp);
       root.removeEventListener("pointercancel", onPointerUp);
       root.removeEventListener("wheel", onWheel);
-      root.removeEventListener("dblclick", onDoubleClick);
       window.removeEventListener("keydown", onKeyDown, { capture: true });
       controllerRef.current = null;
       delete root.dataset.spatialReady;
@@ -946,8 +961,8 @@ export function SpatialSessionScene({
         {
           left: `${((card.x - layout.bounds.left) / width) * 100}%`,
           top: `${((card.y - layout.bounds.top) / height) * 100}%`,
-          width: `${Math.max(1.5, (CARD_WIDTH / width) * 100)}%`,
-          height: `${Math.max(1.5, (CARD_HEIGHT / height) * 100)}%`,
+          width: `${Math.max(1.5, (SESSION_WIDTH / width) * 100)}%`,
+          height: `${Math.max(1.5, (SESSION_HEIGHT / height) * 100)}%`,
           opacity: 0.35,
         },
       ]),
@@ -957,7 +972,7 @@ export function SpatialSessionScene({
   const horizontalMarkers = layout.markers[orientation.right.axis];
   const verticalMarkers = layout.markers[orientation.up.axis];
   const depthMarkers = orderedDepthMarkers(layout, orientation);
-  const cardLayer = useMemo(
+  const sessionLayer = useMemo(
     () =>
       sessions.map((session) => (
         <div
@@ -966,15 +981,20 @@ export function SpatialSessionScene({
             if (element) elementsRef.current.set(session.cardKey, element);
             else elementsRef.current.delete(session.cardKey);
           }}
-          data-spatial-session-card={session.cardKey}
+          data-spatial-session-surface={session.cardKey}
           data-spatial-state={session.boardStateId}
-          className="absolute left-0 top-0 w-[380px] origin-top-left transform-gpu contain-layout contain-paint"
+          className="absolute left-0 top-0 h-[760px] w-[1080px] origin-top-left transform-gpu contain-layout contain-paint"
           style={{ opacity: 0 }}
+          onPointerDownCapture={() => useBoardFocusStore.getState().setFocused(session.cardKey)}
+          onFocusCapture={() => useBoardFocusStore.getState().setFocused(session.cardKey)}
         >
-          {children(session)}
+          {children(session, {
+            live: liveSessionKeys.has(session.cardKey) || focusedThreadKey === session.cardKey,
+            focused: focusedThreadKey === session.cardKey,
+          })}
         </div>
       )),
-    [children, sessions],
+    [children, focusedThreadKey, liveSessionKeys, sessions],
   );
 
   return (
@@ -988,7 +1008,7 @@ export function SpatialSessionScene({
         className="pointer-events-none absolute inset-0 block h-full w-full"
       />
 
-      <div className="absolute inset-0 z-10 overflow-hidden">{cardLayer}</div>
+      <div className="absolute inset-0 z-10 overflow-hidden">{sessionLayer}</div>
 
       <div
         data-spatial-hud
@@ -1162,8 +1182,8 @@ export function SpatialSessionScene({
 
       <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center pr-48">
         <div className="rounded-full border border-border bg-background/88 px-3 py-1.5 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
-          Scroll X/Y · pinch depth · drag empty to pan · Alt-drag empty to rotate · double-click a
-          card to open
+          Scroll X/Y · pinch depth · drag empty to pan · Alt-drag empty to rotate · sessions are
+          live HTML
         </div>
       </div>
     </div>
