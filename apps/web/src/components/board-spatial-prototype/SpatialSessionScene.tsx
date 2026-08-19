@@ -78,6 +78,7 @@ const MAX_ZOOM = 1.15;
 const CAMERA_TAU_SECONDS = 0.06;
 const CAMERA_EPSILON = 0.12;
 const DEPTH_EPSILON = 0.001;
+const PINCH_DEPTH_PER_PIXEL = 0.03;
 
 function planeZ(depth: number): number {
   return -depth * DEPTH_GAP;
@@ -340,7 +341,7 @@ export function SpatialSessionScene({
     const setAnimating = (animating: boolean): void => {
       root.dataset.spatialAnimating = String(animating);
       for (const element of elementsRef.current.values()) {
-        if (animating) element.style.willChange = "transform, opacity";
+        if (animating) element.style.willChange = "transform";
         else element.style.removeProperty("will-change");
       }
     };
@@ -373,7 +374,7 @@ export function SpatialSessionScene({
         if (!element) continue;
         const depthDelta = card.depthIndex - current.depth;
         const cameraDistance = camera.position.z - card.z;
-        const visible = cameraDistance > camera.near && depthDelta > -1.15 && depthDelta < 5.75;
+        const visible = cameraDistance > camera.near && depthDelta > -0.55;
         if (!visible) {
           element.style.visibility = "hidden";
           element.style.pointerEvents = "none";
@@ -385,13 +386,9 @@ export function SpatialSessionScene({
         const screenX = (projectionPoint.x * 0.5 + 0.5) * width;
         const screenY = (-projectionPoint.y * 0.5 + 0.5) * height;
         const scale = ((projectionRight.x - projectionPoint.x) * width * 0.5) / CARD_WIDTH;
-        const opacity =
-          depthDelta < 0
-            ? THREE.MathUtils.clamp(1 + depthDelta * 0.84, 0.08, 1)
-            : THREE.MathUtils.clamp(Math.exp(-depthDelta * 0.42), 0.1, 1);
         element.style.visibility = "visible";
         element.style.transform = `translate3d(${screenX}px, ${screenY}px, 0) scale(${scale})`;
-        element.style.opacity = String(opacity);
+        element.style.opacity = "1";
         element.style.zIndex = String(2_000 - card.depthIndex);
         element.style.pointerEvents = card.depthIndex === activeDepth ? "auto" : "none";
         element.dataset.spatialActive = String(card.depthIndex === activeDepth);
@@ -419,17 +416,6 @@ export function SpatialSessionScene({
         element.dataset.active = String(state.index === activeDepth);
         element.setAttribute("aria-current", state.index === activeDepth ? "step" : "false");
       }
-      for (const depthGrid of depthGrids) {
-        const delta = depthGrid.index - current.depth;
-        const opacity =
-          delta < -1.15 || delta > 6
-            ? 0
-            : delta < 0
-              ? THREE.MathUtils.clamp(0.22 + delta * 0.16, 0.025, 0.22)
-              : THREE.MathUtils.clamp(0.22 * Math.exp(-delta * 0.38), 0.025, 0.22);
-        for (const material of depthGrid.materials) material.opacity = opacity;
-      }
-
       if (depthLabelRef.current) depthLabelRef.current.textContent = activeState?.label ?? "State";
       if (depthRangeRef.current) depthRangeRef.current.value = current.depth.toFixed(3);
       root.dataset.spatialDepth = current.depth.toFixed(3);
@@ -581,7 +567,7 @@ export function SpatialSessionScene({
       event.preventDefault();
       const delta = normalizedWheelDelta(event);
       if (event.ctrlKey) {
-        setTargetDepth(target.depth - delta.y * 0.006);
+        setTargetDepth(target.depth - delta.y * PINCH_DEPTH_PER_PIXEL);
         return;
       }
       const horizontal = event.shiftKey && Math.abs(delta.x) < 0.5 ? delta.y : delta.x;
@@ -702,7 +688,7 @@ export function SpatialSessionScene({
           top: `${((card.y - layout.bounds.top) / height) * 100}%`,
           width: `${Math.max(1.5, (CARD_WIDTH / width) * 100)}%`,
           height: `${Math.max(1.5, (CARD_HEIGHT / height) * 100)}%`,
-          opacity: 0.18 + card.depthIndex * 0.055,
+          opacity: 0.35,
         },
       ]),
     );
