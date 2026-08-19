@@ -1,11 +1,25 @@
 import { LocateFixedIcon, MinusIcon, PlusIcon } from "lucide-react";
 import * as THREE from "three";
-import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { BOARD_STATES } from "../../board/boardOrganization.ts";
 import { Button } from "../ui/button.tsx";
 import type { SpatialBoardSession } from "./SpatialBoardPrototype.tsx";
+import { SpatialOrientationHud } from "./SpatialOrientationHud.tsx";
+import {
+  HOME_SPATIAL_ORIENTATION,
+  nearestSpatialOrientation,
+  rotateSpatialOrientation,
+  semanticAxisLabel,
+  signedSemanticAxisVector,
+  spatialOrientationKey,
+  spatialOrientationQuaternion,
+  type SemanticAxis,
+  type SignedSemanticAxis,
+  type SpatialOrientation,
+  type SpatialRotation,
+} from "./spatialOrientation.ts";
 
 interface SpatialSessionSceneProps {
   readonly sessions: ReadonlyArray<SpatialBoardSession>;
@@ -19,28 +33,28 @@ interface LayoutCard {
   readonly z: number;
   readonly centerX: number;
   readonly centerY: number;
-  readonly depthIndex: number;
+  readonly workflowId: string;
+  readonly projectId: string;
+  readonly stateId: string;
 }
 
-interface AxisMarker {
+interface SemanticMarker {
   readonly id: string;
   readonly label: string;
+  /** Coordinate along the positive semantic axis, in world units. */
   readonly position: number;
+  readonly count: number;
 }
 
-interface StateMarker {
-  readonly id: string;
-  readonly label: string;
+interface StateMarker extends SemanticMarker {
   readonly index: number;
-  readonly count: number;
 }
 
 interface SpatialLayout {
   readonly key: string;
   readonly cards: ReadonlyArray<LayoutCard>;
   readonly byKey: ReadonlyMap<string, LayoutCard>;
-  readonly lanes: ReadonlyArray<AxisMarker>;
-  readonly projects: ReadonlyArray<AxisMarker>;
+  readonly markers: Readonly<Record<SemanticAxis, ReadonlyArray<SemanticMarker>>>;
   readonly states: ReadonlyArray<StateMarker>;
   readonly bounds: {
     readonly left: number;
@@ -52,19 +66,21 @@ interface SpatialLayout {
 
 interface SceneController {
   readonly focusCard: (cardKey: string) => void;
-  readonly focusLane: (laneId: string) => void;
-  readonly focusProject: (projectTitle: string) => void;
+  readonly focusMarker: (axis: SemanticAxis, markerId: string) => void;
   readonly reset: () => void;
-  readonly setDepth: (depth: number) => void;
+  readonly resetOrientation: () => void;
+  readonly rotate: (rotation: SpatialRotation) => void;
+  readonly setDepthIndex: (index: number) => void;
   readonly depthBy: (amount: number) => void;
 }
 
-interface CameraPoint {
-  x: number;
-  y: number;
-  depth: number;
+interface PersistentViewState {
+  readonly focus: THREE.Vector3;
   zoom: number;
+  initialized: boolean;
 }
+
+type DragMode = "pan" | "rotate";
 
 const CARD_WIDTH = 380;
 const CARD_HEIGHT = 560;
@@ -77,8 +93,9 @@ const MIN_ZOOM = 0.24;
 const MAX_ZOOM = 1.15;
 const CAMERA_TAU_SECONDS = 0.06;
 const CAMERA_EPSILON = 0.12;
-const DEPTH_EPSILON = 0.001;
+const ORIENTATION_EPSILON = 0.0005;
 const PINCH_DEPTH_PER_PIXEL = 0.03;
+const ROTATE_RADIANS_PER_PIXEL = 0.006;
 
 function planeZ(depth: number): number {
   return -depth * DEPTH_GAP;
@@ -101,6 +118,7 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
     id: state.id,
     label: state.label,
     index,
+    position: index * DEPTH_GAP,
     count: sessions.filter((session) => session.boardStateId === state.id).length,
   }));
   const depthByStateId = new Map(states.map((state) => [state.id, state.index] as const));
@@ -149,21 +167,25 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
       z: planeZ(depthIndex),
       centerX: x + CARD_WIDTH / 2,
       centerY: y + CARD_HEIGHT / 2,
-      depthIndex,
+      workflowId: session.laneId,
+      projectId: session.projectTitle,
+      stateId: session.boardStateId,
     });
   }
 
   const width = Math.max(CARD_WIDTH, lanes.length * columnStride - COLUMN_GAP);
   const height = Math.max(CARD_HEIGHT, nextTop - ROW_GAP);
-  const laneMarkers = lanes.map(([id, label], index) => ({
+  const workflowMarkers = lanes.map(([id, label], index) => ({
     id,
     label,
     position: index * columnStride + CARD_WIDTH / 2,
+    count: sessions.filter((session) => session.laneId === id).length,
   }));
   const projectMarkers = projects.map((project, index) => ({
     id: project,
     label: project,
     position: (rowTops[index] ?? 0) + (rowHeights[index] ?? CARD_HEIGHT) / 2,
+    count: sessions.filter((session) => session.projectTitle === project).length,
   }));
 
   return {
@@ -175,8 +197,7 @@ function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayou
       .join("\u0001"),
     cards,
     byKey: new Map(cards.map((card) => [card.key, card])),
-    lanes: laneMarkers,
-    projects: projectMarkers,
+    markers: { workflow: workflowMarkers, project: projectMarkers, state: states },
     states,
     bounds: { left: 0, top: 0, right: width, bottom: height },
   };
@@ -224,6 +245,79 @@ function clampZoom(zoom: number): number {
   return THREE.MathUtils.clamp(zoom, MIN_ZOOM, MAX_ZOOM);
 }
 
+function semanticCoordinate(point: THREE.Vector3, axis: SemanticAxis): number {
+  switch (axis) {
+    case "workflow":
+      return point.x;
+    case "project":
+      return -point.y;
+    case "state":
+      return -point.z;
+  }
+}
+
+function setSemanticCoordinate(point: THREE.Vector3, axis: SemanticAxis, value: number): void {
+  switch (axis) {
+    case "workflow":
+      point.x = value;
+      return;
+    case "project":
+      point.y = -value;
+      return;
+    case "state":
+      point.z = -value;
+  }
+}
+
+function cardMarkerId(card: LayoutCard, axis: SemanticAxis): string {
+  switch (axis) {
+    case "workflow":
+      return card.workflowId;
+    case "project":
+      return card.projectId;
+    case "state":
+      return card.stateId;
+  }
+}
+
+function nearestMarker(
+  markers: ReadonlyArray<SemanticMarker>,
+  coordinate: number,
+): SemanticMarker | undefined {
+  let nearest = markers[0];
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const marker of markers) {
+    const distance = Math.abs(marker.position - coordinate);
+    if (distance < nearestDistance) {
+      nearest = marker;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function markerSpacing(markers: ReadonlyArray<SemanticMarker>): number {
+  const gaps = markers
+    .slice(1)
+    .map((marker, index) => Math.abs(marker.position - (markers[index]?.position ?? 0)))
+    .filter((gap) => gap > 0)
+    .toSorted((left, right) => left - right);
+  return gaps[Math.floor(gaps.length / 2)] ?? DEPTH_GAP;
+}
+
+function orderedDepthMarkers(
+  layout: SpatialLayout,
+  orientation: SpatialOrientation,
+): ReadonlyArray<SemanticMarker> {
+  const markers = layout.markers[orientation.depth.axis];
+  return orientation.depth.direction === 1 ? markers : [...markers].toReversed();
+}
+
+function roleDirectionGlyph(role: "horizontal" | "vertical", axis: SignedSemanticAxis): string {
+  if (role === "horizontal") return axis.direction === 1 ? "→" : "←";
+  return axis.direction === 1 ? "↑" : "↓";
+}
+
 export function SpatialSessionScene({
   sessions,
   children,
@@ -231,13 +325,19 @@ export function SpatialSessionScene({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const elementsRef = useRef(new Map<string, HTMLDivElement>());
-  const laneMarkerRefs = useRef(new Map<string, HTMLButtonElement>());
-  const projectMarkerRefs = useRef(new Map<string, HTMLButtonElement>());
-  const stateMarkerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const horizontalMarkerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const verticalMarkerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const depthMarkerRefs = useRef(new Map<string, HTMLButtonElement>());
   const minimapViewportRef = useRef<HTMLDivElement | null>(null);
   const depthLabelRef = useRef<HTMLSpanElement | null>(null);
   const depthRangeRef = useRef<HTMLInputElement | null>(null);
   const controllerRef = useRef<SceneController | null>(null);
+  const orientationRef = useRef<SpatialOrientation>(HOME_SPATIAL_ORIENTATION);
+  const persistentViewRef = useRef<PersistentViewState | null>(null);
+  if (persistentViewRef.current === null) {
+    persistentViewRef.current = { focus: new THREE.Vector3(), zoom: 0.78, initialized: false };
+  }
+  const [orientation, setOrientation] = useState<SpatialOrientation>(HOME_SPATIAL_ORIENTATION);
   const focusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
   const focusRequest = useBoardFocusStore((state) => state.request);
   const layoutKey = useMemo(
@@ -257,7 +357,8 @@ export function SpatialSessionScene({
   useEffect(() => {
     const root = rootRef.current;
     const canvas = canvasRef.current;
-    if (!root || !canvas || layout.cards.length === 0) return;
+    const persistentView = persistentViewRef.current;
+    if (!root || !canvas || !persistentView || layout.cards.length === 0) return;
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -280,7 +381,7 @@ export function SpatialSessionScene({
         material.depthWrite = false;
       }
       scene.add(grid);
-      return { index: state.index, grid, materials };
+      return { grid, materials };
     });
 
     const volumeLeft = layout.bounds.left - 220;
@@ -307,33 +408,53 @@ export function SpatialSessionScene({
     });
     scene.add(new THREE.LineSegments(volumeGeometry, volumeMaterial));
 
-    const maxDepth = Math.max(0, layout.states.length - 1);
     const firstCard = layout.cards[0];
-    const initialDepth = firstCard?.depthIndex ?? 0;
-    const target: CameraPoint = { x: 0, y: 0, depth: initialDepth, zoom: 0.78 };
-    const current: CameraPoint = { ...target };
+    const targetFocus = persistentView.focus.clone();
+    const currentFocus = targetFocus.clone();
+    let targetZoom = persistentView.zoom;
+    let currentZoom = targetZoom;
+    const targetQuaternion = spatialOrientationQuaternion(orientationRef.current);
+    const currentQuaternion = targetQuaternion.clone();
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const projectionPoint = new THREE.Vector3();
-    const projectionRight = new THREE.Vector3();
+    const projectionEdge = new THREE.Vector3();
+    const cameraSpacePoint = new THREE.Vector3();
+    const cardCenter = new THREE.Vector3();
+    const markerPoint = new THREE.Vector3();
+    const cameraRight = new THREE.Vector3();
+    const cameraUp = new THREE.Vector3();
+    const cameraForward = new THREE.Vector3();
+    const panRight = new THREE.Vector3();
+    const panUp = new THREE.Vector3();
+    const depthVector = new THREE.Vector3();
+    const yawQuaternion = new THREE.Quaternion();
+    const pitchQuaternion = new THREE.Quaternion();
     const tanHalfFov = Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV / 2));
     let frame = 0;
     let previousTime = 0;
     let settleDeadline = 0;
     let initialized = false;
     let draggingPointerId: number | null = null;
+    let dragMode: DragMode | null = null;
     let dragX = 0;
     let dragY = 0;
     let dragged = false;
 
-    const clampDepth = (depth: number): number => THREE.MathUtils.clamp(depth, 0, maxDepth);
+    const syncPersistentView = (): void => {
+      persistentView.focus.copy(targetFocus);
+      persistentView.zoom = targetZoom;
+      persistentView.initialized = true;
+    };
 
-    const homeCamera = (): CameraPoint => {
+    const homeView = (): { readonly focus: THREE.Vector3; readonly zoom: number } => {
       const viewportWidth = Math.max(1, root.clientWidth - 190);
       const viewportHeight = Math.max(1, root.clientHeight - 130);
       return {
-        x: (layout.bounds.left + layout.bounds.right) / 2,
-        y: (layout.bounds.top + layout.bounds.bottom) / 2,
-        depth: initialDepth,
+        focus: new THREE.Vector3(
+          (layout.bounds.left + layout.bounds.right) / 2,
+          -(layout.bounds.top + layout.bounds.bottom) / 2,
+          firstCard?.z ?? 0,
+        ),
         zoom: clampZoom(Math.min(viewportWidth / boundsWidth, viewportHeight / boundsHeight, 0.82)),
       };
     };
@@ -349,77 +470,134 @@ export function SpatialSessionScene({
     const updateMinimap = (width: number, height: number): void => {
       const viewport = minimapViewportRef.current;
       if (!viewport) return;
-      const worldWidth = width / current.zoom;
-      const worldHeight = height / current.zoom;
-      const left = ((current.x - worldWidth / 2 - layout.bounds.left) / boundsWidth) * 100;
-      const top = ((current.y - worldHeight / 2 - layout.bounds.top) / boundsHeight) * 100;
+      const worldWidth = width / currentZoom;
+      const worldHeight = height / currentZoom;
+      const projectCoordinate = semanticCoordinate(currentFocus, "project");
+      const left = ((currentFocus.x - worldWidth / 2 - layout.bounds.left) / boundsWidth) * 100;
+      const top = ((projectCoordinate - worldHeight / 2 - layout.bounds.top) / boundsHeight) * 100;
       viewport.style.left = `${left}%`;
       viewport.style.top = `${top}%`;
       viewport.style.width = `${Math.min(100, (worldWidth / boundsWidth) * 100)}%`;
       viewport.style.height = `${Math.min(100, (worldHeight / boundsHeight) * 100)}%`;
     };
 
+    const projectMarker = (
+      axis: SemanticAxis,
+      marker: SemanticMarker,
+      width: number,
+      height: number,
+    ): { readonly x: number; readonly y: number } => {
+      markerPoint.copy(currentFocus);
+      setSemanticCoordinate(markerPoint, axis, marker.position);
+      markerPoint.project(camera);
+      return {
+        x: (markerPoint.x * 0.5 + 0.5) * width,
+        y: (-markerPoint.y * 0.5 + 0.5) * height,
+      };
+    };
+
     const renderScene = (): void => {
       const width = Math.max(1, root.clientWidth);
       const height = Math.max(1, root.clientHeight);
-      const focalDistance = height / (2 * current.zoom * tanHalfFov);
+      const focalDistance = height / (2 * currentZoom * tanHalfFov);
       camera.aspect = width / height;
-      camera.position.set(current.x, -current.y, planeZ(current.depth) + focalDistance);
+      camera.quaternion.copy(currentQuaternion);
+      cameraForward.set(0, 0, -1).applyQuaternion(currentQuaternion).normalize();
+      cameraRight.set(1, 0, 0).applyQuaternion(currentQuaternion).normalize();
+      camera.position.copy(currentFocus).addScaledVector(cameraForward, -focalDistance);
       camera.updateProjectionMatrix();
       camera.updateMatrixWorld();
-      const activeDepth = Math.round(current.depth);
+
+      const activeAxis = orientationRef.current.depth.axis;
+      const activeMarkers = layout.markers[activeAxis];
+      const activeMarker = nearestMarker(
+        activeMarkers,
+        semanticCoordinate(currentFocus, activeAxis),
+      );
 
       for (const card of layout.cards) {
         const element = elementsRef.current.get(card.key);
         if (!element) continue;
-        const depthDelta = card.depthIndex - current.depth;
-        const cameraDistance = camera.position.z - card.z;
-        const visible = cameraDistance > camera.near && depthDelta > -0.55;
+        cardCenter.set(card.centerX, -card.centerY, card.z);
+        cameraSpacePoint.copy(cardCenter).applyMatrix4(camera.matrixWorldInverse);
+        projectionPoint.copy(cardCenter).project(camera);
+        projectionEdge
+          .copy(cardCenter)
+          .addScaledVector(cameraRight, CARD_WIDTH / 2)
+          .project(camera);
+        const scale =
+          (Math.abs(projectionEdge.x - projectionPoint.x) * width) / Math.max(1, CARD_WIDTH);
+        const screenCenterX = (projectionPoint.x * 0.5 + 0.5) * width;
+        const screenCenterY = (-projectionPoint.y * 0.5 + 0.5) * height;
+        const screenX = screenCenterX - (CARD_WIDTH * scale) / 2;
+        const screenY = screenCenterY - (CARD_HEIGHT * scale) / 2;
+        const visible =
+          cameraSpacePoint.z < -camera.near &&
+          cameraSpacePoint.z > -camera.far &&
+          projectionPoint.z >= -1 &&
+          projectionPoint.z <= 1 &&
+          Number.isFinite(scale) &&
+          scale > 0 &&
+          screenX < width + 240 &&
+          screenX + CARD_WIDTH * scale > -240 &&
+          screenY < height + 240 &&
+          screenY + CARD_HEIGHT * scale > -240;
         if (!visible) {
           element.style.visibility = "hidden";
           element.style.pointerEvents = "none";
           continue;
         }
 
-        projectionPoint.set(card.x, -card.y, card.z).project(camera);
-        projectionRight.set(card.x + CARD_WIDTH, -card.y, card.z).project(camera);
-        const screenX = (projectionPoint.x * 0.5 + 0.5) * width;
-        const screenY = (-projectionPoint.y * 0.5 + 0.5) * height;
-        const scale = ((projectionRight.x - projectionPoint.x) * width * 0.5) / CARD_WIDTH;
+        const active = cardMarkerId(card, activeAxis) === activeMarker?.id;
         element.style.visibility = "visible";
         element.style.transform = `translate3d(${screenX}px, ${screenY}px, 0) scale(${scale})`;
         element.style.opacity = "1";
-        element.style.zIndex = String(2_000 - card.depthIndex);
-        element.style.pointerEvents = card.depthIndex === activeDepth ? "auto" : "none";
-        element.dataset.spatialActive = String(card.depthIndex === activeDepth);
+        element.style.zIndex = String(
+          THREE.MathUtils.clamp(Math.round(100_000 + cameraSpacePoint.z * 10), 1, 99_999),
+        );
+        // Every visible card remains live HTML. Camera-distance z-order resolves
+        // overlaps, so a card does not become mysteriously inert just because
+        // the focal point is currently nearest another semantic plane.
+        element.style.pointerEvents = "auto";
+        element.dataset.spatialActive = String(active);
       }
 
-      for (const marker of layout.lanes) {
-        const element = laneMarkerRefs.current.get(marker.id);
+      const horizontalAxis = orientationRef.current.right.axis;
+      for (const marker of layout.markers[horizontalAxis]) {
+        const element = horizontalMarkerRefs.current.get(marker.id);
         if (!element) continue;
-        const screenX = width / 2 + (marker.position - current.x) * current.zoom;
-        element.style.transform = `translate3d(${screenX}px, 0, 0) translateX(-50%)`;
-        element.style.opacity = screenX < -120 || screenX > width + 120 ? "0" : "1";
+        const screen = projectMarker(horizontalAxis, marker, width, height);
+        element.style.transform = `translate3d(${screen.x}px, 0, 0) translateX(-50%)`;
+        element.style.opacity = screen.x < -120 || screen.x > width + 120 ? "0" : "1";
       }
-      for (const marker of layout.projects) {
-        const element = projectMarkerRefs.current.get(marker.id);
+      const verticalAxis = orientationRef.current.up.axis;
+      for (const marker of layout.markers[verticalAxis]) {
+        const element = verticalMarkerRefs.current.get(marker.id);
         if (!element) continue;
-        const screenY = height / 2 + (marker.position - current.y) * current.zoom;
-        element.style.transform = `translate3d(0, ${screenY}px, 0) translateY(-50%)`;
-        element.style.opacity = screenY < -80 || screenY > height + 80 ? "0" : "1";
+        const screen = projectMarker(verticalAxis, marker, width, height);
+        element.style.transform = `translate3d(0, ${screen.y}px, 0) translateY(-50%)`;
+        element.style.opacity = screen.y < -80 || screen.y > height + 80 ? "0" : "1";
       }
 
-      const activeState = layout.states[activeDepth] ?? layout.states[0];
-      for (const state of layout.states) {
-        const element = stateMarkerRefs.current.get(state.id);
+      const depthMarkers = orderedDepthMarkers(layout, orientationRef.current);
+      const activeDepthIndex = Math.max(
+        0,
+        depthMarkers.findIndex((marker) => marker.id === activeMarker?.id),
+      );
+      for (const marker of depthMarkers) {
+        const element = depthMarkerRefs.current.get(marker.id);
         if (!element) continue;
-        element.dataset.active = String(state.index === activeDepth);
-        element.setAttribute("aria-current", state.index === activeDepth ? "step" : "false");
+        const active = marker.id === activeMarker?.id;
+        element.dataset.active = String(active);
+        element.setAttribute("aria-current", active ? "step" : "false");
       }
-      if (depthLabelRef.current) depthLabelRef.current.textContent = activeState?.label ?? "State";
-      if (depthRangeRef.current) depthRangeRef.current.value = current.depth.toFixed(3);
-      root.dataset.spatialDepth = current.depth.toFixed(3);
-      root.dataset.spatialState = activeState?.id ?? "";
+      if (depthLabelRef.current) depthLabelRef.current.textContent = activeMarker?.label ?? "Depth";
+      if (depthRangeRef.current) depthRangeRef.current.value = String(activeDepthIndex);
+      root.dataset.spatialOrientation = spatialOrientationKey(orientationRef.current);
+      root.dataset.spatialHorizontalAxis = horizontalAxis;
+      root.dataset.spatialVerticalAxis = verticalAxis;
+      root.dataset.spatialDepthAxis = activeAxis;
+      root.dataset.spatialActiveDepth = activeMarker?.id ?? "";
       updateMinimap(width, height);
       renderer.render(scene, camera);
       root.dataset.spatialReady = "true";
@@ -438,28 +616,68 @@ export function SpatialSessionScene({
       previousTime = time;
       const follow =
         prefersReducedMotion || time >= settleDeadline ? 1 : 1 - Math.exp(-dt / CAMERA_TAU_SECONDS);
-      current.x += (target.x - current.x) * follow;
-      current.y += (target.y - current.y) * follow;
-      current.depth += (target.depth - current.depth) * follow;
-      current.zoom += (target.zoom - current.zoom) * follow;
+      currentFocus.lerp(targetFocus, follow);
+      currentZoom += (targetZoom - currentZoom) * follow;
+      currentQuaternion.slerp(targetQuaternion, follow).normalize();
       renderScene();
 
       const unsettled =
-        Math.abs(target.x - current.x) > CAMERA_EPSILON ||
-        Math.abs(target.y - current.y) > CAMERA_EPSILON ||
-        Math.abs(target.depth - current.depth) > DEPTH_EPSILON ||
-        Math.abs(target.zoom - current.zoom) > 0.0002;
+        currentFocus.distanceTo(targetFocus) > CAMERA_EPSILON ||
+        Math.abs(targetZoom - currentZoom) > 0.0002 ||
+        currentQuaternion.angleTo(targetQuaternion) > ORIENTATION_EPSILON;
       if (unsettled) schedule(false);
       else {
-        Object.assign(current, target);
+        currentFocus.copy(targetFocus);
+        currentZoom = targetZoom;
+        currentQuaternion.copy(targetQuaternion);
         renderScene();
         setAnimating(false);
       }
     }
 
-    const setTargetDepth = (depth: number): void => {
-      target.depth = clampDepth(depth);
+    const commitTarget = (): void => {
+      syncPersistentView();
       schedule();
+    };
+
+    const setOrientationTarget = (next: SpatialOrientation): void => {
+      orientationRef.current = next;
+      targetQuaternion.copy(spatialOrientationQuaternion(next));
+      setOrientation(next);
+      schedule();
+    };
+
+    const rotate = (rotation: SpatialRotation): void => {
+      setOrientationTarget(rotateSpatialOrientation(orientationRef.current, rotation));
+    };
+
+    const focusMarker = (axis: SemanticAxis, markerId: string): void => {
+      const marker = layout.markers[axis].find((candidate) => candidate.id === markerId);
+      if (!marker) return;
+      setSemanticCoordinate(targetFocus, axis, marker.position);
+      commitTarget();
+    };
+
+    const depthBy = (amount: number): void => {
+      const markers = orderedDepthMarkers(layout, orientationRef.current);
+      if (markers.length === 0) return;
+      const coordinate = semanticCoordinate(targetFocus, orientationRef.current.depth.axis);
+      const active = nearestMarker(markers, coordinate);
+      const activeIndex = Math.max(
+        0,
+        markers.findIndex((marker) => marker.id === active?.id),
+      );
+      const nextIndex = THREE.MathUtils.clamp(
+        Math.round(activeIndex + amount),
+        0,
+        markers.length - 1,
+      );
+      const marker = markers[nextIndex];
+      if (marker) focusMarker(orientationRef.current.depth.axis, marker.id);
+    };
+
+    const resetOrientation = (): void => {
+      setOrientationTarget(HOME_SPATIAL_ORIENTATION);
     };
 
     const reset = (): void => {
@@ -468,37 +686,32 @@ export function SpatialSessionScene({
         focusStore.clearRequest(focusStore.request.threadKey, focusStore.request.nonce);
       }
       focusStore.setFocused(null);
-      Object.assign(target, homeCamera());
-      schedule();
+      const home = homeView();
+      targetFocus.copy(home.focus);
+      targetZoom = home.zoom;
+      syncPersistentView();
+      setOrientationTarget(HOME_SPATIAL_ORIENTATION);
     };
 
     const focusCard = (cardKey: string): void => {
       const card = layout.byKey.get(cardKey);
       if (!card) return;
-      target.x = card.centerX;
-      target.y = card.centerY;
-      target.depth = card.depthIndex;
-      target.zoom = THREE.MathUtils.clamp(target.zoom, 0.74, 0.86);
-      schedule();
+      targetFocus.set(card.centerX, -card.centerY, card.z);
+      targetZoom = THREE.MathUtils.clamp(targetZoom, 0.74, 0.86);
+      commitTarget();
     };
 
     controllerRef.current = {
       focusCard,
-      focusLane: (laneId) => {
-        const marker = layout.lanes.find((candidate) => candidate.id === laneId);
-        if (!marker) return;
-        target.x = marker.position;
-        schedule();
-      },
-      focusProject: (projectTitle) => {
-        const marker = layout.projects.find((candidate) => candidate.id === projectTitle);
-        if (!marker) return;
-        target.y = marker.position;
-        schedule();
-      },
+      focusMarker,
       reset,
-      setDepth: setTargetDepth,
-      depthBy: (amount) => setTargetDepth(target.depth + amount),
+      resetOrientation,
+      rotate,
+      setDepthIndex: (index) => {
+        const marker = orderedDepthMarkers(layout, orientationRef.current)[Math.round(index)];
+        if (marker) focusMarker(orientationRef.current.depth.axis, marker.id);
+      },
+      depthBy,
     };
 
     const resize = (): void => {
@@ -507,43 +720,58 @@ export function SpatialSessionScene({
       renderer.setSize(width, height, false);
       if (!initialized) {
         initialized = true;
-        Object.assign(
-          target,
-          firstCard
-            ? {
-                x: firstCard.centerX,
-                y: firstCard.centerY,
-                depth: firstCard.depthIndex,
-                zoom: 0.78,
-              }
-            : homeCamera(),
-        );
-        Object.assign(current, target);
+        if (!persistentView.initialized) {
+          if (firstCard) {
+            targetFocus.set(firstCard.centerX, -firstCard.centerY, firstCard.z);
+            targetZoom = 0.78;
+          } else {
+            const home = homeView();
+            targetFocus.copy(home.focus);
+            targetZoom = home.zoom;
+          }
+          syncPersistentView();
+        }
+        currentFocus.copy(targetFocus);
+        currentZoom = targetZoom;
       }
       renderScene();
       setAnimating(false);
     };
 
     const onPointerDown = (event: PointerEvent): void => {
-      if (event.button !== 0 || isHudTarget(event.target)) return;
+      if (event.button !== 0 || isHudTarget(event.target) || isEditableTarget(event.target)) return;
       if (event.target instanceof Element && event.target.closest("[data-spatial-session-card]")) {
         return;
       }
       draggingPointerId = event.pointerId;
+      dragMode = event.altKey ? "rotate" : "pan";
       dragX = event.clientX;
       dragY = event.clientY;
       dragged = false;
       root.setPointerCapture(event.pointerId);
-      root.dataset.spatialDragging = "true";
+      root.dataset.spatialDragging = dragMode;
     };
 
     const onPointerMove = (event: PointerEvent): void => {
-      if (draggingPointerId !== event.pointerId) return;
+      if (draggingPointerId !== event.pointerId || dragMode === null) return;
       const deltaX = event.clientX - dragX;
       const deltaY = event.clientY - dragY;
       if (Math.abs(deltaX) + Math.abs(deltaY) > 4) dragged = true;
-      target.x -= deltaX / current.zoom;
-      target.y -= deltaY / current.zoom;
+      if (dragMode === "pan") {
+        signedSemanticAxisVector(orientationRef.current.right, panRight);
+        signedSemanticAxisVector(orientationRef.current.up, panUp);
+        targetFocus
+          .addScaledVector(panRight, -deltaX / currentZoom)
+          .addScaledVector(panUp, deltaY / currentZoom);
+        syncPersistentView();
+      } else {
+        cameraUp.set(0, 1, 0).applyQuaternion(targetQuaternion).normalize();
+        yawQuaternion.setFromAxisAngle(cameraUp, -deltaX * ROTATE_RADIANS_PER_PIXEL);
+        targetQuaternion.premultiply(yawQuaternion).normalize();
+        cameraRight.set(1, 0, 0).applyQuaternion(targetQuaternion).normalize();
+        pitchQuaternion.setFromAxisAngle(cameraRight, -deltaY * ROTATE_RADIANS_PER_PIXEL);
+        targetQuaternion.premultiply(pitchQuaternion).normalize();
+      }
       dragX = event.clientX;
       dragY = event.clientY;
       schedule();
@@ -551,8 +779,13 @@ export function SpatialSessionScene({
 
     const onPointerUp = (event: PointerEvent): void => {
       if (draggingPointerId !== event.pointerId) return;
-      if (!dragged) useBoardFocusStore.getState().setFocused(null);
+      if (dragMode === "rotate") {
+        setOrientationTarget(nearestSpatialOrientation(targetQuaternion));
+      } else if (!dragged) {
+        useBoardFocusStore.getState().setFocused(null);
+      }
       draggingPointerId = null;
+      dragMode = null;
       delete root.dataset.spatialDragging;
       if (root.hasPointerCapture(event.pointerId)) root.releasePointerCapture(event.pointerId);
     };
@@ -567,14 +800,31 @@ export function SpatialSessionScene({
       event.preventDefault();
       const delta = normalizedWheelDelta(event);
       if (event.ctrlKey) {
-        setTargetDepth(target.depth - delta.y * PINCH_DEPTH_PER_PIXEL);
+        const depthAxis = orientationRef.current.depth;
+        const markers = layout.markers[depthAxis.axis];
+        if (markers.length === 0) return;
+        const stride = markerSpacing(markers);
+        signedSemanticAxisVector(depthAxis, depthVector);
+        targetFocus.addScaledVector(depthVector, -delta.y * PINCH_DEPTH_PER_PIXEL * stride);
+        const minimum = Math.min(...markers.map((marker) => marker.position));
+        const maximum = Math.max(...markers.map((marker) => marker.position));
+        const coordinate = THREE.MathUtils.clamp(
+          semanticCoordinate(targetFocus, depthAxis.axis),
+          minimum,
+          maximum,
+        );
+        setSemanticCoordinate(targetFocus, depthAxis.axis, coordinate);
+        commitTarget();
         return;
       }
       const horizontal = event.shiftKey && Math.abs(delta.x) < 0.5 ? delta.y : delta.x;
       const vertical = event.shiftKey && Math.abs(delta.x) < 0.5 ? 0 : delta.y;
-      target.x += horizontal / current.zoom;
-      target.y += vertical / current.zoom;
-      schedule();
+      signedSemanticAxisVector(orientationRef.current.right, panRight);
+      signedSemanticAxisVector(orientationRef.current.up, panUp);
+      targetFocus
+        .addScaledVector(panRight, horizontal / currentZoom)
+        .addScaledVector(panUp, -vertical / currentZoom);
+      commitTarget();
     };
 
     const onDoubleClick = (event: MouseEvent): void => {
@@ -592,6 +842,13 @@ export function SpatialSessionScene({
       useBoardFocusStore.getState().setExpanded({ kind: "thread", threadKey: cardKey });
     };
 
+    const panByKey = (horizontal: number, vertical: number): void => {
+      signedSemanticAxisVector(orientationRef.current.right, panRight);
+      signedSemanticAxisVector(orientationRef.current.up, panUp);
+      targetFocus.addScaledVector(panRight, horizontal).addScaledVector(panUp, vertical);
+      commitTarget();
+    };
+
     const onKeyDown = (event: KeyboardEvent): void => {
       if (isEditableTarget(event.target)) return;
       const activeCard =
@@ -607,17 +864,19 @@ export function SpatialSessionScene({
         const store = useBoardFocusStore.getState();
         if (store.expandedTarget) store.setExpanded(null);
         else store.setFocused(null);
-      } else if (event.key === "Home" || event.key === "0") reset();
-      else if (event.key === "+" || event.key === "=" || event.key === "PageDown") {
-        setTargetDepth(Math.round(target.depth + 1));
-      } else if (event.key === "-" || event.key === "_" || event.key === "PageUp") {
-        setTargetDepth(Math.round(target.depth - 1));
-      } else if (event.key.toLowerCase() === "e") setTargetDepth(Math.round(target.depth + 1));
-      else if (event.key.toLowerCase() === "q") setTargetDepth(Math.round(target.depth - 1));
-      else if (event.key === "ArrowLeft") target.x -= event.shiftKey ? 320 : 110;
-      else if (event.key === "ArrowRight") target.x += event.shiftKey ? 320 : 110;
-      else if (event.key === "ArrowUp") target.y -= event.shiftKey ? 320 : 110;
-      else if (event.key === "ArrowDown") target.y += event.shiftKey ? 320 : 110;
+      } else if (event.altKey && event.key === "ArrowLeft") rotate("yaw-left");
+      else if (event.altKey && event.key === "ArrowRight") rotate("yaw-right");
+      else if (event.altKey && event.key === "ArrowUp") rotate("pitch-up");
+      else if (event.altKey && event.key === "ArrowDown") rotate("pitch-down");
+      else if (event.key === "Home" || event.key === "0") reset();
+      else if (event.key === "+" || event.key === "=" || event.key === "PageDown") depthBy(1);
+      else if (event.key === "-" || event.key === "_" || event.key === "PageUp") depthBy(-1);
+      else if (event.key.toLowerCase() === "e") depthBy(1);
+      else if (event.key.toLowerCase() === "q") depthBy(-1);
+      else if (event.key === "ArrowLeft") panByKey(event.shiftKey ? -320 : -110, 0);
+      else if (event.key === "ArrowRight") panByKey(event.shiftKey ? 320 : 110, 0);
+      else if (event.key === "ArrowUp") panByKey(0, event.shiftKey ? 320 : 110);
+      else if (event.key === "ArrowDown") panByKey(0, event.shiftKey ? -320 : -110);
       else return;
       event.preventDefault();
       schedule();
@@ -635,6 +894,7 @@ export function SpatialSessionScene({
     resize();
 
     return () => {
+      syncPersistentView();
       if (frame !== 0) window.cancelAnimationFrame(frame);
       observer.disconnect();
       root.removeEventListener("pointerdown", onPointerDown);
@@ -648,8 +908,11 @@ export function SpatialSessionScene({
       delete root.dataset.spatialReady;
       delete root.dataset.spatialAnimating;
       delete root.dataset.spatialDragging;
-      delete root.dataset.spatialDepth;
-      delete root.dataset.spatialState;
+      delete root.dataset.spatialOrientation;
+      delete root.dataset.spatialHorizontalAxis;
+      delete root.dataset.spatialVerticalAxis;
+      delete root.dataset.spatialDepthAxis;
+      delete root.dataset.spatialActiveDepth;
       for (const depthGrid of depthGrids) {
         depthGrid.grid.geometry.dispose();
         for (const material of depthGrid.materials) material.dispose();
@@ -662,7 +925,9 @@ export function SpatialSessionScene({
         element.style.removeProperty("opacity");
         element.style.removeProperty("visibility");
         element.style.removeProperty("pointer-events");
+        element.style.removeProperty("z-index");
         element.style.removeProperty("will-change");
+        delete element.dataset.spatialActive;
       }
     };
   }, [layout]);
@@ -694,18 +959,22 @@ export function SpatialSessionScene({
     );
   }, [layout]);
 
+  const horizontalMarkers = layout.markers[orientation.right.axis];
+  const verticalMarkers = layout.markers[orientation.up.axis];
+  const depthMarkers = orderedDepthMarkers(layout, orientation);
+
   return (
     <div
       ref={rootRef}
       data-spatial-scene
-      className="relative isolate min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_50%_42%,color-mix(in_srgb,var(--muted)_52%,transparent),var(--background)_68%)] outline-none data-[spatial-dragging=true]:cursor-grabbing"
+      className="relative isolate min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_50%_42%,color-mix(in_srgb,var(--muted)_52%,transparent),var(--background)_68%)] outline-none data-[spatial-dragging=pan]:cursor-grabbing data-[spatial-dragging=rotate]:cursor-move"
     >
       <canvas
         ref={canvasRef}
         className="pointer-events-none absolute inset-0 block h-full w-full"
       />
 
-      <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0 z-10 overflow-hidden">
         {sessions.map((session) => (
           <div
             key={session.cardKey}
@@ -726,77 +995,92 @@ export function SpatialSessionScene({
       <div
         data-spatial-hud
         className="pointer-events-none absolute inset-x-0 top-0 z-30 h-9 overflow-hidden border-b border-border/70 bg-background/88 pl-24 shadow-sm backdrop-blur"
-        aria-label="Workflow axis"
+        aria-label={`${semanticAxisLabel(orientation.right.axis)} horizontal axis`}
       >
-        {layout.lanes.map((lane) => (
+        {horizontalMarkers.map((marker) => (
           <button
-            key={lane.id}
+            key={marker.id}
             ref={(element) => {
-              if (element) laneMarkerRefs.current.set(lane.id, element);
-              else laneMarkerRefs.current.delete(lane.id);
+              if (element) horizontalMarkerRefs.current.set(marker.id, element);
+              else horizontalMarkerRefs.current.delete(marker.id);
             }}
             type="button"
             className="pointer-events-auto absolute top-1/2 max-w-40 -translate-y-1/2 truncate rounded-md border border-border/70 bg-background px-2 py-1 text-[10px] font-medium shadow-sm transition-colors hover:bg-accent"
-            onClick={() => controllerRef.current?.focusLane(lane.id)}
-            title={`Workflow: ${lane.label}`}
+            onClick={() => controllerRef.current?.focusMarker(orientation.right.axis, marker.id)}
+            title={`${semanticAxisLabel(orientation.right.axis)}: ${marker.label}`}
           >
-            {lane.label}
+            {marker.label}
           </button>
         ))}
         <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          Workflow →
+          {semanticAxisLabel(orientation.right.axis)}{" "}
+          {roleDirectionGlyph("horizontal", orientation.right)}
         </span>
       </div>
 
       <div
         data-spatial-hud
         className="pointer-events-none absolute inset-y-9 left-0 z-30 w-24 overflow-hidden border-r border-border/70 bg-background/88 shadow-sm backdrop-blur"
-        aria-label="Project axis"
+        aria-label={`${semanticAxisLabel(orientation.up.axis)} vertical axis`}
       >
-        {layout.projects.map((project) => (
+        {verticalMarkers.map((marker) => (
           <button
-            key={project.id}
+            key={marker.id}
             ref={(element) => {
-              if (element) projectMarkerRefs.current.set(project.id, element);
-              else projectMarkerRefs.current.delete(project.id);
+              if (element) verticalMarkerRefs.current.set(marker.id, element);
+              else verticalMarkerRefs.current.delete(marker.id);
             }}
             type="button"
             className="pointer-events-auto absolute left-1 w-[5.5rem] truncate rounded-md border border-border/70 bg-background px-1.5 py-1 text-left text-[9px] font-medium shadow-sm transition-colors hover:bg-accent"
-            onClick={() => controllerRef.current?.focusProject(project.id)}
-            title={`Project: ${project.label}`}
+            onClick={() => controllerRef.current?.focusMarker(orientation.up.axis, marker.id)}
+            title={`${semanticAxisLabel(orientation.up.axis)}: ${marker.label}`}
           >
-            {project.label}
+            {marker.label}
           </button>
         ))}
         <span className="absolute bottom-2 left-1/2 -translate-x-1/2 -rotate-90 whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-          Project ↓
+          {semanticAxisLabel(orientation.up.axis)} {roleDirectionGlyph("vertical", orientation.up)}
         </span>
+      </div>
+
+      <div className="absolute left-28 top-12 z-50">
+        <SpatialOrientationHud
+          orientation={orientation}
+          onRotateLeft={() => controllerRef.current?.rotate("yaw-left")}
+          onRotateRight={() => controllerRef.current?.rotate("yaw-right")}
+          onRotateUp={() => controllerRef.current?.rotate("pitch-up")}
+          onRotateDown={() => controllerRef.current?.rotate("pitch-down")}
+          onResetOrientation={() => controllerRef.current?.resetOrientation()}
+        />
       </div>
 
       <div
         data-spatial-hud
-        className="absolute right-4 top-1/2 z-40 w-32 -translate-y-1/2 rounded-xl border border-border bg-background/92 p-2 shadow-lg backdrop-blur"
-        aria-label="State depth axis"
+        className="absolute right-4 top-1/2 z-40 w-36 -translate-y-1/2 rounded-xl border border-border bg-background/92 p-2 shadow-lg backdrop-blur"
+        aria-label={`${semanticAxisLabel(orientation.depth.axis)} depth axis`}
       >
         <div className="mb-1.5 flex items-center text-[9px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-          State · Z<span className="ml-auto normal-case tracking-normal">near → far</span>
+          {semanticAxisLabel(orientation.depth.axis)} · Depth
+          <span className="ml-auto normal-case tracking-normal">
+            {orientation.depth.direction === 1 ? "near → far" : "far ← near"}
+          </span>
         </div>
         <div className="relative space-y-1 before:absolute before:bottom-3 before:left-[7px] before:top-3 before:w-px before:bg-border">
-          {layout.states.map((state) => (
+          {depthMarkers.map((marker) => (
             <button
-              key={state.id}
+              key={marker.id}
               ref={(element) => {
-                if (element) stateMarkerRefs.current.set(state.id, element);
-                else stateMarkerRefs.current.delete(state.id);
+                if (element) depthMarkerRefs.current.set(marker.id, element);
+                else depthMarkerRefs.current.delete(marker.id);
               }}
               type="button"
               data-active="false"
               className="relative flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-[9px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[active=true]:bg-primary/10 data-[active=true]:font-medium data-[active=true]:text-foreground"
-              onClick={() => controllerRef.current?.setDepth(state.index)}
+              onClick={() => controllerRef.current?.focusMarker(orientation.depth.axis, marker.id)}
             >
               <span className="relative z-10 size-2 rounded-full border border-border bg-background" />
-              <span className="min-w-0 flex-1 truncate">{state.label}</span>
-              <span className="tabular-nums opacity-65">{state.count}</span>
+              <span className="min-w-0 flex-1 truncate">{marker.label}</span>
+              <span className="tabular-nums opacity-65">{marker.count}</span>
             </button>
           ))}
         </div>
@@ -807,17 +1091,17 @@ export function SpatialSessionScene({
         className="absolute bottom-4 right-4 z-40 w-44 rounded-xl border border-border bg-background/92 p-2 shadow-lg backdrop-blur"
       >
         <div className="mb-2 flex items-center gap-1">
-          <span className="text-[10px] font-medium">Board map</span>
+          <span className="text-[10px] font-medium">Workflow × project map</span>
           <span
             ref={depthLabelRef}
-            className="ml-auto text-[10px] font-medium text-muted-foreground"
+            className="ml-auto max-w-16 truncate text-[10px] font-medium text-muted-foreground"
           >
-            State
+            Depth
           </span>
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Move toward earlier state"
+            aria-label="Move toward nearer depth marker"
             onClick={() => controllerRef.current?.depthBy(-1)}
           >
             <MinusIcon className="size-3" />
@@ -825,7 +1109,7 @@ export function SpatialSessionScene({
           <Button
             size="icon-xs"
             variant="ghost"
-            aria-label="Move toward later state"
+            aria-label="Move toward farther depth marker"
             onClick={() => controllerRef.current?.depthBy(1)}
           >
             <PlusIcon className="size-3" />
@@ -857,23 +1141,25 @@ export function SpatialSessionScene({
           className="mt-2 h-1 w-full accent-primary"
           type="range"
           min={0}
-          max={Math.max(0, layout.states.length - 1)}
-          step={0.01}
+          max={Math.max(0, depthMarkers.length - 1)}
+          step={1}
           defaultValue={0}
-          aria-label="Board state depth"
-          onInput={(event) => controllerRef.current?.setDepth(Number(event.currentTarget.value))}
+          aria-label={`${semanticAxisLabel(orientation.depth.axis)} depth`}
+          onInput={(event) =>
+            controllerRef.current?.setDepthIndex(Number(event.currentTarget.value))
+          }
         />
         <div className="mt-1 flex justify-between text-[8px] uppercase tracking-wide text-muted-foreground">
           <span>Near</span>
-          <span>State depth</span>
+          <span>{semanticAxisLabel(orientation.depth.axis)} depth</span>
           <span>Far</span>
         </div>
       </div>
 
       <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center pr-48">
         <div className="rounded-full border border-border bg-background/88 px-3 py-1.5 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
-          Scroll X/Y · pinch through state depth · drag empty space · Q/E change state ·
-          double-click a card to open
+          Scroll X/Y · pinch depth · drag empty to pan · Alt-drag empty to rotate · double-click a
+          card to open
         </div>
       </div>
     </div>

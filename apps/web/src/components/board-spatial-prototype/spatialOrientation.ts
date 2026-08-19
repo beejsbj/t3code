@@ -120,7 +120,7 @@ export function spatialOrientationQuaternion(
 export function nearestSpatialOrientation(quaternion: THREE.Quaternion): SpatialOrientation {
   const normalized = quaternion.clone().normalize();
   const candidate = new THREE.Quaternion();
-  let best = ALL_SPATIAL_ORIENTATIONS[0];
+  let best: SpatialOrientation = HOME_SPATIAL_ORIENTATION;
   let bestSimilarity = -1;
   for (const orientation of ALL_SPATIAL_ORIENTATIONS) {
     spatialOrientationQuaternion(orientation, candidate);
