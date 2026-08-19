@@ -8,6 +8,7 @@
 import { DndContext } from "@dnd-kit/core";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import { LayoutGridIcon, Maximize2Icon } from "lucide-react";
 import { useMemo } from "react";
 
 import {
@@ -30,6 +31,7 @@ import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { BoardSessionCard } from "../board/BoardSessionCard.tsx";
 import { resolveBoardThreadVisibility } from "../board/SessionBoard.logic.ts";
 import { SidebarInset } from "../ui/sidebar.tsx";
+import { Toggle, ToggleGroup } from "../ui/toggle-group.tsx";
 import { SpatialSessionScene } from "./SpatialSessionScene.tsx";
 
 interface SpatialBoardSession {
@@ -44,6 +46,45 @@ interface SpatialBoardSession {
   readonly projectTitle: string;
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
+}
+
+function SpatialViewModeToggle(props: {
+  readonly mode: "cards" | "expanded";
+  readonly placement: "board" | "modal";
+  readonly disabled: boolean;
+  readonly onModeChange: (mode: "cards" | "expanded") => void;
+}): React.JSX.Element {
+  return (
+    <ToggleGroup
+      data-spatial-view-toggle={props.placement}
+      className={
+        props.placement === "board"
+          ? "absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-0.5 shadow-md"
+          : "shrink-0 rounded-lg border border-border bg-background p-0.5"
+      }
+      size="xs"
+      variant="ghost"
+      value={[props.mode]}
+      onValueChange={(value) => {
+        const next = value[0];
+        if (next === "cards" || next === "expanded") props.onModeChange(next);
+      }}
+    >
+      <Toggle value="cards" aria-label="Board cards view" className="gap-1.5 px-2">
+        <LayoutGridIcon className="size-3" />
+        Cards
+      </Toggle>
+      <Toggle
+        value="expanded"
+        aria-label="Expanded session view"
+        className="gap-1.5 px-2"
+        disabled={props.disabled}
+      >
+        <Maximize2Icon className="size-3" />
+        Expanded
+      </Toggle>
+    </ToggleGroup>
+  );
 }
 
 function useRealBoardSessions(): ReadonlyArray<SpatialBoardSession> {
@@ -125,7 +166,23 @@ function useRealBoardSessions(): ReadonlyArray<SpatialBoardSession> {
 export function SpatialBoardPrototype(): React.JSX.Element {
   const sessions = useRealBoardSessions();
   const focusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
+  const expandedTarget = useBoardFocusStore((state) => state.expandedTarget);
+  const setExpanded = useBoardFocusStore((state) => state.setExpanded);
+  const setFocused = useBoardFocusStore((state) => state.setFocused);
   const focusedSession = sessions.find((session) => session.cardKey === focusedThreadKey) ?? null;
+  const viewMode = expandedTarget?.kind === "thread" ? "expanded" : "cards";
+
+  const setViewMode = (mode: "cards" | "expanded") => {
+    if (mode === "cards") {
+      setExpanded(null);
+      return;
+    }
+
+    const session = focusedSession ?? sessions[0];
+    if (!session) return;
+    setFocused(session.cardKey);
+    setExpanded({ kind: "thread", threadKey: session.cardKey });
+  };
 
   return (
     <SidebarInset className="relative h-dvh min-h-0 overflow-hidden bg-background text-foreground">
@@ -142,6 +199,12 @@ export function SpatialBoardPrototype(): React.JSX.Element {
             ? ` › ${focusedSession.workflowLabel} › ${focusedSession.projectTitle} › ${focusedSession.boardStateLabel} › ${focusedSession.thread.title}`
             : " › Overview"}
         </p>
+        <SpatialViewModeToggle
+          mode={viewMode}
+          placement="board"
+          disabled={sessions.length === 0}
+          onModeChange={setViewMode}
+        />
       </header>
 
       <DndContext>
@@ -163,6 +226,14 @@ export function SpatialBoardPrototype(): React.JSX.Element {
               isDragging={false}
               changeRequestState={null}
               showLifecycleBody
+              expandedHeaderAccessory={
+                <SpatialViewModeToggle
+                  mode="expanded"
+                  placement="modal"
+                  disabled={false}
+                  onModeChange={setViewMode}
+                />
+              }
             />
           )}
         </SpatialSessionScene>

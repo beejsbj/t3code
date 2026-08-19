@@ -38,6 +38,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   isAtomCommandInterrupted,
@@ -132,6 +133,8 @@ export interface BoardSessionCardProps {
   readonly changeRequestState: ChangeRequestStateLike | null;
   /** Spatial views keep lifecycle sessions readable instead of collapsing them to headers. */
   readonly showLifecycleBody?: boolean;
+  /** Optional prototype control rendered in the expanded sheet header. */
+  readonly expandedHeaderAccessory?: ReactNode;
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
@@ -678,6 +681,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
         target={{ kind: "thread", threadRef, title: thread.title }}
         open={expanded}
         onOpenChange={setExpanded}
+        headerAccessory={props.expandedHeaderAccessory}
       />
     </div>
   );

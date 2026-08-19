@@ -1,6 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { Maximize2Icon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { Button } from "~/components/ui/button";
 import type { DraftId } from "../../composerDraftStore.ts";
@@ -25,6 +26,7 @@ export interface BoardCardExpandedSheetProps {
   readonly target: BoardExpandedSheetTarget;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  readonly headerAccessory?: ReactNode;
 }
 
 export function BoardCardExpandedSheet(props: BoardCardExpandedSheetProps) {
@@ -41,6 +43,7 @@ export function BoardCardExpandedSheet(props: BoardCardExpandedSheetProps) {
           <p className="min-w-0 flex-1 truncate text-sm font-medium" title={target.title}>
             {target.title}
           </p>
+          {props.headerAccessory}
           <Button
             size="sm"
             variant="outline"
