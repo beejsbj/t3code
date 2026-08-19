@@ -162,6 +162,7 @@ export function SpatialBoardPrototype(): React.JSX.Element {
               environmentConnection={session.environmentConnection}
               isDragging={false}
               changeRequestState={null}
+              showLifecycleBody
             />
           )}
         </SpatialSessionScene>

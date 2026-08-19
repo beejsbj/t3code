@@ -130,6 +130,8 @@ export interface BoardSessionCardProps {
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly isDragging: boolean;
   readonly changeRequestState: ChangeRequestStateLike | null;
+  /** Spatial views keep lifecycle sessions readable instead of collapsing them to headers. */
+  readonly showLifecycleBody?: boolean;
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
@@ -209,6 +211,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   );
   const showSnoozeButton = snoozeSupported && canSnooze(thread, { now: new Date().toISOString() });
   const isLifecycleState = isBoardLifecycleLaneId(boardStateId);
+  const isCompactLifecycleState = isLifecycleState && props.showLifecycleBody !== true;
   const isSnoozedState = boardStateId === SNOOZED_BOARD_LANE_ID;
   const isSettledState = boardStateId === SETTLED_BOARD_LANE_ID;
 
@@ -485,7 +488,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           isFocused && "ring-1 ring-primary/40",
           (isDraggingSelf || props.isDragging) && "opacity-60",
         )}
-        style={isLifecycleState ? undefined : { height: `${effectiveHeight}px` }}
+        style={isCompactLifecycleState ? undefined : { height: `${effectiveHeight}px` }}
         onContextMenu={handleContextMenu}
       >
         <header className="flex shrink-0 items-start gap-1.5 border-b border-border/60 px-2 py-1.5">
@@ -636,7 +639,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           </Button>
         </header>
 
-        {isLifecycleState ? null : (
+        {isCompactLifecycleState ? null : (
           <>
             {(isNearViewport || isFocused) && !expanded ? (
               <BoardCardChatSurface
