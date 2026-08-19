@@ -117,7 +117,10 @@ export function SpatialSessionScene({
     delete canvas.dataset.spatialReady;
     canvas.dataset.spatialVariant = variant;
     canvas.setAttribute("layoutsubtree", "");
-    installHtmlInCanvasPolyfill();
+    // Chrome's current experimental native API rejects the Element value that
+    // Three's HTMLTexture uploads. Keep this prototype on the compatible path
+    // until the browser and Three agree on the native ElementImage contract.
+    installHtmlInCanvasPolyfill({ force: true });
     const polyfillHost = document.querySelector<HTMLElement>(
       '[data-host-of="spatial-session-canvas"]',
     );
