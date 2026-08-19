@@ -133,13 +133,13 @@ export function SpatialBoardPrototype(): React.JSX.Element {
         <div className="min-w-0">
           <h1 className="text-sm font-medium">Spatial session board</h1>
           <p className="truncate text-[11px] text-muted-foreground">
-            {sessions.length} real sessions · projects across · workflow down · depth is zoom
+            {sessions.length} real sessions · workflow across · projects down · state through depth
           </p>
         </div>
         <p className="ml-auto max-w-[55%] truncate text-[11px] text-muted-foreground">
           Board
           {focusedSession
-            ? ` › ${focusedSession.workflowLabel} › ${focusedSession.projectTitle} › ${focusedSession.thread.title}`
+            ? ` › ${focusedSession.workflowLabel} › ${focusedSession.projectTitle} › ${focusedSession.boardStateLabel} › ${focusedSession.thread.title}`
             : " › Overview"}
         </p>
       </header>
