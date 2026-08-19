@@ -1,15 +1,14 @@
 /**
- * PROTOTYPE — real T3 board sessions placed in a navigable HTML-in-canvas scene.
+ * PROTOTYPE — real T3 board sessions placed in a navigable spatial scene.
  *
- * Three spatial arrangements are switchable with `?variant=orbit|lanes|depth`.
- * The session cards themselves are the production BoardSessionCard component;
- * only their world-space placement and the camera are experimental.
+ * WebGL draws the field while cards remain live React DOM. This keeps native
+ * card interaction intact while the spatial camera remains experimental.
  */
 
 import { DndContext } from "@dnd-kit/core";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { useCallback, useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import {
   selectBoardPlacement,
@@ -27,11 +26,11 @@ import { useClientSettings } from "../../hooks/useSettings.ts";
 import { useEnvironments } from "../../state/environments.ts";
 import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
+import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { BoardSessionCard } from "../board/BoardSessionCard.tsx";
 import { resolveBoardThreadVisibility } from "../board/SessionBoard.logic.ts";
-import { Button } from "../ui/button.tsx";
 import { SidebarInset } from "../ui/sidebar.tsx";
-import { SpatialSessionScene, type SpatialVariant } from "./SpatialSessionScene.tsx";
+import { SpatialSessionScene } from "./SpatialSessionScene.tsx";
 
 interface SpatialBoardSession {
   readonly cardKey: string;
@@ -45,23 +44,6 @@ interface SpatialBoardSession {
   readonly projectTitle: string;
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
-}
-
-const VARIANTS: ReadonlyArray<{ readonly id: SpatialVariant; readonly label: string }> = [
-  { id: "orbit", label: "Orbit" },
-  { id: "lanes", label: "Lane rooms" },
-  { id: "depth", label: "Depth stacks" },
-];
-
-const VARIANT_AXES: Record<SpatialVariant, string> = {
-  orbit: "around: project · height: workflow · depth: state",
-  lanes: "around: workflow · height: project · depth: state",
-  depth: "across: project · height: session · depth: recency",
-};
-
-function readVariant(): SpatialVariant {
-  const value = new URLSearchParams(window.location.search).get("variant");
-  return value === "lanes" || value === "depth" ? value : "orbit";
 }
 
 function useRealBoardSessions(): ReadonlyArray<SpatialBoardSession> {
@@ -142,14 +124,8 @@ function useRealBoardSessions(): ReadonlyArray<SpatialBoardSession> {
 
 export function SpatialBoardPrototype(): React.JSX.Element {
   const sessions = useRealBoardSessions();
-  const [variant, setVariantState] = useState<SpatialVariant>(readVariant);
-
-  const setVariant = useCallback((next: SpatialVariant) => {
-    const url = new URL(window.location.href);
-    url.searchParams.set("variant", next);
-    window.history.replaceState(null, "", url);
-    setVariantState(next);
-  }, []);
+  const focusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
+  const focusedSession = sessions.find((session) => session.cardKey === focusedThreadKey) ?? null;
 
   return (
     <SidebarInset className="relative h-dvh min-h-0 overflow-hidden bg-background text-foreground">
@@ -157,25 +133,19 @@ export function SpatialBoardPrototype(): React.JSX.Element {
         <div className="min-w-0">
           <h1 className="text-sm font-medium">Spatial session board</h1>
           <p className="truncate text-[11px] text-muted-foreground">
-            {sessions.length} real sessions · {VARIANT_AXES[variant]}
+            {sessions.length} real sessions · projects across · workflow down · depth is zoom
           </p>
         </div>
-        <div className="ml-auto flex items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
-          {VARIANTS.map((option) => (
-            <Button
-              key={option.id}
-              size="xs"
-              variant={variant === option.id ? "secondary" : "ghost"}
-              onClick={() => setVariant(option.id)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
+        <p className="ml-auto max-w-[55%] truncate text-[11px] text-muted-foreground">
+          Board
+          {focusedSession
+            ? ` › ${focusedSession.workflowLabel} › ${focusedSession.projectTitle} › ${focusedSession.thread.title}`
+            : " › Overview"}
+        </p>
       </header>
 
       <DndContext>
-        <SpatialSessionScene variant={variant} sessions={sessions}>
+        <SpatialSessionScene sessions={sessions}>
           {(session) => (
             <BoardSessionCard
               cardKey={session.cardKey}

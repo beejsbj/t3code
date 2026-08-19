@@ -1,335 +1,595 @@
+import { LocateFixedIcon, MinusIcon, PlusIcon } from "lucide-react";
 import * as THREE from "three";
-import { InteractionManager } from "three/addons/interaction/InteractionManager.js";
-import { installHtmlInCanvasPolyfill } from "three-html-render/polyfill";
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 
+import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
+import { Button } from "../ui/button.tsx";
 import type { SpatialBoardSession } from "./SpatialBoardPrototype.tsx";
 
-export type SpatialVariant = "orbit" | "lanes" | "depth";
-
-declare global {
-  interface HTMLCanvasElement {
-    onpaint: ((event: Event & { readonly changedElements?: readonly Element[] }) => void) | null;
-    requestPaint?(): void;
-  }
-}
-
 interface SpatialSessionSceneProps {
-  readonly variant: SpatialVariant;
   readonly sessions: ReadonlyArray<SpatialBoardSession>;
   readonly children: (session: SpatialBoardSession) => ReactNode;
 }
 
-interface SceneCard {
-  readonly element: HTMLDivElement;
-  readonly mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
-  readonly texture: THREE.HTMLTexture;
+interface LayoutCard {
+  readonly key: string;
+  readonly x: number;
+  readonly y: number;
+  readonly centerX: number;
+  readonly centerY: number;
 }
 
-const STATE_RADIUS: Record<SpatialBoardSession["boardStateId"], number> = {
-  draft: 8.5,
-  approval: 9,
-  input: 9,
-  failed: 9.5,
-  working: 10,
-  idle: 11,
-  snoozed: 12.5,
-  settled: 14,
-};
-
-function projectIndex(sessions: ReadonlyArray<SpatialBoardSession>, projectTitle: string): number {
-  return [...new Set(sessions.map((session) => session.projectTitle))].indexOf(projectTitle);
+interface AxisMarker {
+  readonly id: string;
+  readonly label: string;
+  readonly position: number;
 }
 
-function laneIndex(sessions: ReadonlyArray<SpatialBoardSession>, laneId: string): number {
-  return [...new Set(sessions.map((session) => session.laneId))].indexOf(laneId as never);
+interface SpatialLayout {
+  readonly key: string;
+  readonly cards: ReadonlyArray<LayoutCard>;
+  readonly byKey: ReadonlyMap<string, LayoutCard>;
+  readonly lanes: ReadonlyArray<AxisMarker>;
+  readonly projects: ReadonlyArray<AxisMarker>;
+  readonly bounds: {
+    readonly left: number;
+    readonly top: number;
+    readonly right: number;
+    readonly bottom: number;
+  };
 }
 
-function positionFor(
-  session: SpatialBoardSession,
-  sessions: ReadonlyArray<SpatialBoardSession>,
-  variant: SpatialVariant,
-): THREE.Vector3 {
-  const project = projectIndex(sessions, session.projectTitle);
-  const lane = laneIndex(sessions, session.laneId);
+interface SceneController {
+  readonly focusCard: (cardKey: string) => void;
+  readonly focusLane: (laneId: string) => void;
+  readonly focusProject: (projectTitle: string) => void;
+  readonly reset: () => void;
+  readonly setZoom: (zoom: number) => void;
+  readonly zoomBy: (factor: number) => void;
+}
 
-  if (variant === "lanes") {
-    const laneCount = Math.max(1, new Set(sessions.map((entry) => entry.laneId)).size);
-    const projectCount = Math.max(1, new Set(sessions.map((entry) => entry.projectTitle)).size);
-    const laneAngle = (lane / laneCount) * Math.PI * 2;
-    const peers = sessions.filter((entry) => entry.laneId === session.laneId);
-    const peerIndex = peers.findIndex((entry) => entry.cardKey === session.cardKey);
-    const spread = (peerIndex - (peers.length - 1) / 2) * 0.12;
-    const radius = STATE_RADIUS[session.boardStateId];
-    return new THREE.Vector3(
-      Math.sin(laneAngle + spread) * radius,
-      (project - (projectCount - 1) / 2) * 1.1,
-      -Math.cos(laneAngle + spread) * radius,
-    );
+interface CameraPoint {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+const CARD_WIDTH = 380;
+const CARD_HEIGHT = 560;
+const COLUMN_GAP = 52;
+const ROW_GAP = 76;
+const CELL_CARD_GAP = 20;
+const MIN_ZOOM = 0.22;
+const MAX_ZOOM = 1.4;
+const CAMERA_TAU_SECONDS = 0.06;
+const CAMERA_EPSILON = 0.12;
+
+function buildLayout(sessions: ReadonlyArray<SpatialBoardSession>): SpatialLayout {
+  const lanes = [
+    ...new Map(sessions.map((session) => [session.laneId, session.workflowLabel])).entries(),
+  ];
+  const projects = [...new Set(sessions.map((session) => session.projectTitle))];
+  const cellSessions = new Map<string, SpatialBoardSession[]>();
+
+  for (const session of sessions) {
+    const cellKey = `${session.projectTitle}\u0000${session.laneId}`;
+    const entries = cellSessions.get(cellKey) ?? [];
+    entries.push(session);
+    cellSessions.set(cellKey, entries);
   }
 
-  if (variant === "depth") {
-    const projects = [...new Set(sessions.map((entry) => entry.projectTitle))];
-    const peers = sessions.filter((entry) => entry.projectTitle === session.projectTitle);
-    const peerIndex = peers.findIndex((entry) => entry.cardKey === session.cardKey);
-    return new THREE.Vector3(
-      (project - (projects.length - 1) / 2) * 3.8,
-      ((peerIndex % 3) - 1) * 3.1,
-      -5.5 - Math.floor(peerIndex / 3) * 3.6,
+  const rowHeights = lanes.map(([laneId]) => {
+    const largestCell = Math.max(
+      1,
+      ...projects.map((project) => cellSessions.get(`${project}\u0000${laneId}`)?.length ?? 0),
     );
+    return largestCell * CARD_HEIGHT + Math.max(0, largestCell - 1) * CELL_CARD_GAP;
+  });
+  const rowTops: number[] = [];
+  let nextTop = 0;
+  for (const rowHeight of rowHeights) {
+    rowTops.push(nextTop);
+    nextTop += rowHeight + ROW_GAP;
   }
 
-  const projects = [...new Set(sessions.map((entry) => entry.projectTitle))];
-  const lanes = [...new Set(sessions.map((entry) => entry.laneId))];
-  const peers = sessions.filter(
-    (entry) =>
-      entry.projectTitle === session.projectTitle &&
-      entry.laneId === session.laneId &&
-      entry.boardStateId === session.boardStateId,
+  const columnStride = CARD_WIDTH + COLUMN_GAP;
+  const cards: LayoutCard[] = [];
+  for (const session of sessions) {
+    const columnIndex = projects.indexOf(session.projectTitle);
+    const rowIndex = lanes.findIndex(([laneId]) => laneId === session.laneId);
+    const peers = cellSessions.get(`${session.projectTitle}\u0000${session.laneId}`) ?? [];
+    const peerIndex = peers.findIndex((peer) => peer.cardKey === session.cardKey);
+    const x = columnIndex * columnStride;
+    const y = (rowTops[rowIndex] ?? 0) + peerIndex * (CARD_HEIGHT + CELL_CARD_GAP);
+    cards.push({
+      key: session.cardKey,
+      x,
+      y,
+      centerX: x + CARD_WIDTH / 2,
+      centerY: y + CARD_HEIGHT / 2,
+    });
+  }
+
+  const width = Math.max(CARD_WIDTH, projects.length * columnStride - COLUMN_GAP);
+  const height = Math.max(CARD_HEIGHT, nextTop - ROW_GAP);
+  const laneMarkers = lanes.map(([id, label], index) => ({
+    id,
+    label,
+    position: (rowTops[index] ?? 0) + (rowHeights[index] ?? CARD_HEIGHT) / 2,
+  }));
+  const projectMarkers = projects.map((project, index) => ({
+    id: project,
+    label: project,
+    position: index * columnStride + CARD_WIDTH / 2,
+  }));
+
+  return {
+    key: sessions
+      .map((session) => `${session.cardKey}:${session.laneId}:${session.projectTitle}`)
+      .join("\u0001"),
+    cards,
+    byKey: new Map(cards.map((card) => [card.key, card])),
+    lanes: laneMarkers,
+    projects: projectMarkers,
+    bounds: { left: 0, top: 0, right: width, bottom: height },
+  };
+}
+
+function normalizedWheelDelta(event: WheelEvent): { readonly x: number; readonly y: number } {
+  const multiplier =
+    event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        ? window.innerHeight
+        : 1;
+  return { x: event.deltaX * multiplier, y: event.deltaY * multiplier };
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
   );
-  const peerIndex = peers.findIndex((entry) => entry.cardKey === session.cardKey);
-  const peerSpread = (peerIndex - (peers.length - 1) / 2) * 0.16;
-  const angle = (project / Math.max(1, projects.length)) * Math.PI * 2 + peerSpread;
-  const radius = STATE_RADIUS[session.boardStateId];
-  return new THREE.Vector3(
-    Math.sin(angle) * radius,
-    (lane - (lanes.length - 1) / 2) * 1.7,
-    -Math.cos(angle) * radius,
-  );
+}
+
+function isHudTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest("[data-spatial-hud]") !== null;
+}
+
+function scrollableAncestor(target: EventTarget | null, card: Element): HTMLElement | null {
+  let node = target instanceof HTMLElement ? target : null;
+  while (node && node !== card) {
+    const style = window.getComputedStyle(node);
+    if (
+      (style.overflowY === "auto" || style.overflowY === "scroll") &&
+      node.scrollHeight > node.clientHeight + 1
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+function clampZoom(zoom: number): number {
+  return THREE.MathUtils.clamp(zoom, MIN_ZOOM, MAX_ZOOM);
 }
 
 export function SpatialSessionScene({
-  variant,
   sessions,
   children,
 }: SpatialSessionSceneProps): React.JSX.Element {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const elementsRef = useRef(new Map<string, HTMLDivElement>());
-  const sessionKey = useMemo(
-    () => sessions.map((session) => session.cardKey).join("\u0000"),
+  const laneMarkerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const projectMarkerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const minimapViewportRef = useRef<HTMLDivElement | null>(null);
+  const zoomLabelRef = useRef<HTMLSpanElement | null>(null);
+  const zoomRangeRef = useRef<HTMLInputElement | null>(null);
+  const controllerRef = useRef<SceneController | null>(null);
+  const focusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
+  const focusRequest = useBoardFocusStore((state) => state.request);
+  const layoutKey = useMemo(
+    () =>
+      sessions
+        .map((session) => `${session.cardKey}:${session.laneId}:${session.projectTitle}`)
+        .join("\u0001"),
     [sessions],
   );
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const layout = useMemo(() => buildLayout(sessionsRef.current), [layoutKey]);
 
   useEffect(() => {
+    const root = rootRef.current;
     const canvas = canvasRef.current;
-    if (!canvas || sessions.length === 0) return;
-
-    delete canvas.dataset.spatialReady;
-    canvas.dataset.spatialVariant = variant;
-    canvas.setAttribute("layoutsubtree", "");
-    // Chrome's current experimental native API rejects the Element value that
-    // Three's HTMLTexture uploads. Keep this prototype on the compatible path
-    // until the browser and Three agree on the native ElementImage contract.
-    installHtmlInCanvasPolyfill({ force: true });
-    const polyfillHost = document.querySelector<HTMLElement>(
-      '[data-host-of="spatial-session-canvas"]',
-    );
-    if (polyfillHost) {
-      polyfillHost.style.zIndex = "0";
-      polyfillHost.style.overflow = "hidden";
-      polyfillHost.style.isolation = "isolate";
-    }
+    if (!root || !canvas || layout.cards.length === 0) return;
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setClearColor(0x000000, 0);
 
     const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x101114, 0.028);
-    const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 100);
-    camera.rotation.order = "YXZ";
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 2_000);
+    camera.position.z = 1_000;
 
-    const grid = new THREE.GridHelper(36, 36, 0x5b6472, 0x2a3038);
-    const gridMaterial = grid.material as THREE.LineBasicMaterial;
-    gridMaterial.transparent = true;
-    gridMaterial.opacity = 0.24;
-    grid.position.y = -4.2;
+    const boundsWidth = layout.bounds.right - layout.bounds.left;
+    const boundsHeight = layout.bounds.bottom - layout.bounds.top;
+    const gridSize = Math.max(boundsWidth, boundsHeight) + 2_400;
+    const gridDivisions = Math.max(12, Math.min(120, Math.round(gridSize / 120)));
+    const grid = new THREE.GridHelper(gridSize, gridDivisions, 0x94a3b8, 0xcbd5e1);
+    grid.rotation.x = Math.PI / 2;
+    grid.position.set(boundsWidth / 2, -boundsHeight / 2, -10);
+    const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material];
+    for (const material of gridMaterials) {
+      material.transparent = true;
+      material.opacity = 0.2;
+    }
     scene.add(grid);
 
-    const interactions = new InteractionManager();
-    interactions.connect(renderer, camera);
-    const cards: SceneCard[] = [];
-
-    sessions.forEach((session) => {
-      const element = elementsRef.current.get(session.cardKey);
-      if (!element || element.offsetWidth === 0 || element.offsetHeight === 0) return;
-
-      const width = 3.2;
-      const aspect = THREE.MathUtils.clamp(element.offsetHeight / element.offsetWidth, 0.28, 1.4);
-      const height = width * aspect;
-      const texture = new THREE.HTMLTexture(element);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      const material = new THREE.MeshBasicMaterial({
-        map: texture,
-        transparent: true,
-        side: THREE.DoubleSide,
-        fog: false,
-      });
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), material);
-      mesh.position.copy(positionFor(session, sessions, variant));
-      scene.add(mesh);
-      interactions.add(mesh);
-      cards.push({ element, mesh, texture });
-    });
-
-    let yaw = 0;
-    let pitch = 0;
+    const target: CameraPoint = { x: 0, y: 0, zoom: 1 };
+    const current: CameraPoint = { x: 0, y: 0, zoom: 1 };
+    const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let frame = 0;
-    let hasPainted = false;
-    let needsInteractionUpdate = true;
-    let dragging = false;
-    let lastX = 0;
-    let lastY = 0;
+    let previousTime = 0;
+    let settleDeadline = 0;
+    let initialized = false;
+    let draggingPointerId: number | null = null;
+    let dragX = 0;
+    let dragY = 0;
+    let dragged = false;
 
-    const render = (): void => {
-      frame = 0;
-      camera.rotation.set(pitch, yaw, 0);
-      camera.updateMatrixWorld();
-      if (needsInteractionUpdate) {
-        needsInteractionUpdate = false;
-        for (const card of cards) {
-          card.mesh.quaternion.copy(camera.quaternion);
-          card.mesh.updateMatrixWorld();
-          const distance = card.mesh.position.distanceTo(camera.position);
-          const zIndex = String(Math.max(1, 10_000 - Math.round(distance * 100)));
-          if (card.element.style.zIndex !== zIndex) card.element.style.zIndex = zIndex;
-        }
-        interactions.update();
-      }
-      renderer.render(scene, camera);
-      if (hasPainted) canvas.dataset.spatialReady = "true";
+    const homeCamera = (): CameraPoint => {
+      const viewportWidth = Math.max(1, root.clientWidth - 150);
+      const viewportHeight = Math.max(1, root.clientHeight - 110);
+      return {
+        x: (layout.bounds.left + layout.bounds.right) / 2,
+        y: (layout.bounds.top + layout.bounds.bottom) / 2,
+        zoom: clampZoom(Math.min(viewportWidth / boundsWidth, viewportHeight / boundsHeight, 0.9)),
+      };
     };
 
-    const schedule = (updateInteractions = false): void => {
-      if (updateInteractions) needsInteractionUpdate = true;
-      if (frame === 0) frame = window.requestAnimationFrame(render);
+    const setAnimating = (animating: boolean): void => {
+      root.dataset.spatialAnimating = String(animating);
+      for (const element of elementsRef.current.values()) {
+        if (animating) element.style.willChange = "transform";
+        else element.style.removeProperty("will-change");
+      }
+    };
+
+    const updateMinimap = (width: number, height: number): void => {
+      const viewport = minimapViewportRef.current;
+      if (!viewport) return;
+      const worldWidth = width / current.zoom;
+      const worldHeight = height / current.zoom;
+      const left = ((current.x - worldWidth / 2 - layout.bounds.left) / boundsWidth) * 100;
+      const top = ((current.y - worldHeight / 2 - layout.bounds.top) / boundsHeight) * 100;
+      viewport.style.left = `${left}%`;
+      viewport.style.top = `${top}%`;
+      viewport.style.width = `${Math.min(100, (worldWidth / boundsWidth) * 100)}%`;
+      viewport.style.height = `${Math.min(100, (worldHeight / boundsHeight) * 100)}%`;
+    };
+
+    const renderScene = (): void => {
+      const width = Math.max(1, root.clientWidth);
+      const height = Math.max(1, root.clientHeight);
+      const halfWidth = width / current.zoom / 2;
+      const halfHeight = height / current.zoom / 2;
+      camera.left = -halfWidth;
+      camera.right = halfWidth;
+      camera.top = halfHeight;
+      camera.bottom = -halfHeight;
+      camera.position.set(current.x, -current.y, 1_000);
+      camera.updateProjectionMatrix();
+      camera.updateMatrixWorld();
+
+      for (const card of layout.cards) {
+        const element = elementsRef.current.get(card.key);
+        if (!element) continue;
+        const screenX = width / 2 + (card.x - current.x) * current.zoom;
+        const screenY = height / 2 + (card.y - current.y) * current.zoom;
+        element.style.transform = `translate3d(${screenX}px, ${screenY}px, 0) scale(${current.zoom})`;
+      }
+
+      for (const marker of layout.projects) {
+        const element = projectMarkerRefs.current.get(marker.id);
+        if (!element) continue;
+        const screenX = width / 2 + (marker.position - current.x) * current.zoom;
+        element.style.transform = `translate3d(${screenX}px, 0, 0) translateX(-50%)`;
+        element.style.opacity = screenX < -120 || screenX > width + 120 ? "0" : "1";
+      }
+      for (const marker of layout.lanes) {
+        const element = laneMarkerRefs.current.get(marker.id);
+        if (!element) continue;
+        const screenY = height / 2 + (marker.position - current.y) * current.zoom;
+        element.style.transform = `translate3d(0, ${screenY}px, 0) translateY(-50%)`;
+        element.style.opacity = screenY < -80 || screenY > height + 80 ? "0" : "1";
+      }
+
+      const zoomPercent = Math.round(current.zoom * 100);
+      if (zoomLabelRef.current) zoomLabelRef.current.textContent = `${zoomPercent}%`;
+      if (zoomRangeRef.current) zoomRangeRef.current.value = String(zoomPercent);
+      updateMinimap(width, height);
+      renderer.render(scene, camera);
+      root.dataset.spatialReady = "true";
+    };
+
+    const schedule = (fromInput = true): void => {
+      if (fromInput) settleDeadline = performance.now() + 700;
+      if (frame !== 0) return;
+      if (root.dataset.spatialAnimating !== "true") setAnimating(true);
+      frame = window.requestAnimationFrame(tick);
+    };
+
+    function tick(time: number): void {
+      frame = 0;
+      const dt = Math.min(0.1, Math.max(0.001, (time - (previousTime || time - 16)) / 1_000));
+      previousTime = time;
+      const follow =
+        prefersReducedMotion || time >= settleDeadline ? 1 : 1 - Math.exp(-dt / CAMERA_TAU_SECONDS);
+      current.x += (target.x - current.x) * follow;
+      current.y += (target.y - current.y) * follow;
+      current.zoom += (target.zoom - current.zoom) * follow;
+      renderScene();
+
+      const unsettled =
+        Math.abs(target.x - current.x) > CAMERA_EPSILON ||
+        Math.abs(target.y - current.y) > CAMERA_EPSILON ||
+        Math.abs(target.zoom - current.zoom) > 0.0002;
+      if (unsettled) schedule(false);
+      else {
+        current.x = target.x;
+        current.y = target.y;
+        current.zoom = target.zoom;
+        renderScene();
+        setAnimating(false);
+      }
+    }
+
+    const setTargetZoom = (
+      nextZoom: number,
+      anchorX = root.clientWidth / 2,
+      anchorY = root.clientHeight / 2,
+    ) => {
+      const zoom = clampZoom(nextZoom);
+      const offsetX = anchorX - root.clientWidth / 2;
+      const offsetY = anchorY - root.clientHeight / 2;
+      const worldX = target.x + offsetX / target.zoom;
+      const worldY = target.y + offsetY / target.zoom;
+      target.zoom = zoom;
+      target.x = worldX - offsetX / zoom;
+      target.y = worldY - offsetY / zoom;
+      schedule();
+    };
+
+    const reset = (): void => {
+      const focusStore = useBoardFocusStore.getState();
+      if (focusStore.request) {
+        focusStore.clearRequest(focusStore.request.threadKey, focusStore.request.nonce);
+      }
+      focusStore.setFocused(null);
+      Object.assign(target, homeCamera());
+      schedule();
+    };
+
+    const focusCard = (cardKey: string): void => {
+      const card = layout.byKey.get(cardKey);
+      if (!card) return;
+      target.x = card.centerX;
+      target.y = card.centerY;
+      target.zoom = THREE.MathUtils.clamp(target.zoom, 0.78, 0.92);
+      schedule();
+    };
+
+    controllerRef.current = {
+      focusCard,
+      focusLane: (laneId) => {
+        const marker = layout.lanes.find((candidate) => candidate.id === laneId);
+        if (!marker) return;
+        target.y = marker.position;
+        schedule();
+      },
+      focusProject: (projectTitle) => {
+        const marker = layout.projects.find((candidate) => candidate.id === projectTitle);
+        if (!marker) return;
+        target.x = marker.position;
+        schedule();
+      },
+      reset,
+      setZoom: (zoom) => setTargetZoom(zoom),
+      zoomBy: (factor) => setTargetZoom(target.zoom * factor),
     };
 
     const resize = (): void => {
-      const width = Math.max(1, canvas.clientWidth);
-      const height = Math.max(1, canvas.clientHeight);
+      const width = Math.max(1, root.clientWidth);
+      const height = Math.max(1, root.clientHeight);
       renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      if (hasPainted) schedule(true);
-    };
-
-    const moveCamera = (
-      forwardAmount: number,
-      rightAmount: number,
-      verticalAmount: number,
-    ): void => {
-      const forward = new THREE.Vector3();
-      camera.getWorldDirection(forward);
-      const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
-      camera.position.addScaledVector(forward, forwardAmount);
-      camera.position.addScaledVector(right, rightAmount);
-      camera.position.y += verticalAmount;
-      schedule(true);
+      if (!initialized) {
+        initialized = true;
+        const firstCard = layout.cards[0];
+        Object.assign(
+          target,
+          firstCard ? { x: firstCard.centerX, y: firstCard.centerY, zoom: 0.78 } : homeCamera(),
+        );
+        Object.assign(current, target);
+      }
+      renderScene();
+      setAnimating(false);
     };
 
     const onPointerDown = (event: PointerEvent): void => {
-      if (event.target !== canvas) return;
-      dragging = true;
-      lastX = event.clientX;
-      lastY = event.clientY;
-      canvas.setPointerCapture(event.pointerId);
-    };
-    const onPointerMove = (event: PointerEvent): void => {
-      if (!dragging) return;
-      yaw -= (event.clientX - lastX) * 0.004;
-      pitch = Math.max(-1.35, Math.min(1.35, pitch - (event.clientY - lastY) * 0.004));
-      lastX = event.clientX;
-      lastY = event.clientY;
-      schedule(true);
-    };
-    const onPointerUp = (event: PointerEvent): void => {
-      dragging = false;
-      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-    };
-    const onWheel = (event: WheelEvent): void => {
-      if (event.target !== canvas) return;
-      event.preventDefault();
-      moveCamera(event.deltaY * 0.003, 0, 0);
-    };
-    const onKeyDown = (event: KeyboardEvent): void => {
-      const target = event.target;
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        (target instanceof HTMLElement && target.isContentEditable)
-      ) {
+      if (event.button !== 0 || isHudTarget(event.target)) return;
+      if (event.target instanceof Element && event.target.closest("[data-spatial-session-card]")) {
         return;
       }
-      const step = event.shiftKey ? 1.2 : 0.55;
-      if (event.code === "KeyW" || event.code === "ArrowUp") moveCamera(step, 0, 0);
-      else if (event.code === "KeyS" || event.code === "ArrowDown") moveCamera(-step, 0, 0);
-      else if (event.code === "KeyA" || event.code === "ArrowLeft") moveCamera(0, -step, 0);
-      else if (event.code === "KeyD" || event.code === "ArrowRight") moveCamera(0, step, 0);
-      else if (event.code === "KeyQ" || event.code === "PageDown") moveCamera(0, 0, -step);
-      else if (event.code === "KeyE" || event.code === "PageUp") moveCamera(0, 0, step);
-      else if (event.code === "Home" || event.code === "Digit0") {
-        camera.position.set(0, 0, 0);
-        yaw = 0;
-        pitch = 0;
-        schedule(true);
-      } else return;
+      draggingPointerId = event.pointerId;
+      dragX = event.clientX;
+      dragY = event.clientY;
+      dragged = false;
+      root.setPointerCapture(event.pointerId);
+      root.dataset.spatialDragging = "true";
+    };
+
+    const onPointerMove = (event: PointerEvent): void => {
+      if (draggingPointerId !== event.pointerId) return;
+      const deltaX = event.clientX - dragX;
+      const deltaY = event.clientY - dragY;
+      if (Math.abs(deltaX) + Math.abs(deltaY) > 4) dragged = true;
+      target.x -= deltaX / current.zoom;
+      target.y -= deltaY / current.zoom;
+      dragX = event.clientX;
+      dragY = event.clientY;
+      schedule();
+    };
+
+    const onPointerUp = (event: PointerEvent): void => {
+      if (draggingPointerId !== event.pointerId) return;
+      if (!dragged) useBoardFocusStore.getState().setFocused(null);
+      draggingPointerId = null;
+      delete root.dataset.spatialDragging;
+      if (root.hasPointerCapture(event.pointerId)) root.releasePointerCapture(event.pointerId);
+    };
+
+    const onWheel = (event: WheelEvent): void => {
+      if (isHudTarget(event.target)) return;
+      const card =
+        event.target instanceof Element
+          ? event.target.closest("[data-spatial-session-card]")
+          : null;
+      if (card && !event.ctrlKey && scrollableAncestor(event.target, card)) return;
       event.preventDefault();
+      const delta = normalizedWheelDelta(event);
+      if (event.ctrlKey) {
+        setTargetZoom(target.zoom * Math.exp(-delta.y * 0.008), event.clientX, event.clientY);
+        return;
+      }
+      const horizontal = event.shiftKey && Math.abs(delta.x) < 0.5 ? delta.y : delta.x;
+      const vertical = event.shiftKey && Math.abs(delta.x) < 0.5 ? 0 : delta.y;
+      target.x += horizontal / target.zoom;
+      target.y += vertical / target.zoom;
+      schedule();
+    };
+
+    const onDoubleClick = (event: MouseEvent): void => {
+      if (isHudTarget(event.target)) return;
+      const interactive =
+        event.target instanceof Element &&
+        event.target.closest("button, a, input, textarea, select, [contenteditable='true']");
+      if (interactive) return;
+      const card =
+        event.target instanceof Element
+          ? event.target.closest<HTMLElement>("[data-spatial-session-card]")
+          : null;
+      const cardKey = card?.dataset.spatialSessionCard;
+      if (!cardKey) return;
+      useBoardFocusStore.getState().setExpanded({ kind: "thread", threadKey: cardKey });
+    };
+
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (isEditableTarget(event.target)) return;
+      const activeCard =
+        document.activeElement instanceof Element
+          ? document.activeElement.closest<HTMLElement>("[data-spatial-session-card]")
+          : null;
+      if (event.key === "Enter" && activeCard?.dataset.spatialSessionCard) {
+        useBoardFocusStore.getState().setExpanded({
+          kind: "thread",
+          threadKey: activeCard.dataset.spatialSessionCard,
+        });
+      } else if (event.key === "Escape") {
+        const store = useBoardFocusStore.getState();
+        if (store.expandedTarget) store.setExpanded(null);
+        else store.setFocused(null);
+      } else if (event.key === "Home" || event.key === "0") reset();
+      else if (event.key === "+" || event.key === "=") setTargetZoom(target.zoom * 1.18);
+      else if (event.key === "-" || event.key === "_") setTargetZoom(target.zoom / 1.18);
+      else if (event.key === "PageUp") setTargetZoom(target.zoom * 1.18);
+      else if (event.key === "PageDown") setTargetZoom(target.zoom / 1.18);
+      else if (event.key === "ArrowLeft") target.x -= event.shiftKey ? 320 : 110;
+      else if (event.key === "ArrowRight") target.x += event.shiftKey ? 320 : 110;
+      else if (event.key === "ArrowUp") target.y -= event.shiftKey ? 320 : 110;
+      else if (event.key === "ArrowDown") target.y += event.shiftKey ? 320 : 110;
+      else return;
+      event.preventDefault();
+      schedule();
     };
 
     const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
-    canvas.addEventListener("pointerdown", onPointerDown);
-    canvas.addEventListener("pointermove", onPointerMove);
-    canvas.addEventListener("pointerup", onPointerUp);
-    canvas.addEventListener("pointercancel", onPointerUp);
-    canvas.addEventListener("wheel", onWheel, { passive: false });
-    window.addEventListener("keydown", onKeyDown);
-
-    canvas.onpaint = () => {
-      for (const card of cards) card.texture.needsUpdate = true;
-      const firstPaint = !hasPainted;
-      hasPainted = true;
-      schedule(firstPaint);
-    };
+    observer.observe(root);
+    root.addEventListener("pointerdown", onPointerDown);
+    root.addEventListener("pointermove", onPointerMove);
+    root.addEventListener("pointerup", onPointerUp);
+    root.addEventListener("pointercancel", onPointerUp);
+    root.addEventListener("wheel", onWheel, { passive: false });
+    root.addEventListener("dblclick", onDoubleClick);
+    window.addEventListener("keydown", onKeyDown, { capture: true });
     resize();
-    canvas.requestPaint?.();
 
     return () => {
       if (frame !== 0) window.cancelAnimationFrame(frame);
       observer.disconnect();
-      canvas.removeEventListener("pointerdown", onPointerDown);
-      canvas.removeEventListener("pointermove", onPointerMove);
-      canvas.removeEventListener("pointerup", onPointerUp);
-      canvas.removeEventListener("pointercancel", onPointerUp);
-      canvas.removeEventListener("wheel", onWheel);
-      window.removeEventListener("keydown", onKeyDown);
-      canvas.onpaint = null;
-      delete canvas.dataset.spatialReady;
-      delete canvas.dataset.spatialVariant;
-      interactions.disconnect();
-      for (const card of cards) {
-        card.element.style.removeProperty("position");
-        card.element.style.removeProperty("left");
-        card.element.style.removeProperty("top");
-        card.element.style.removeProperty("transform");
-        card.element.style.removeProperty("transform-origin");
-        card.element.style.removeProperty("z-index");
-        card.texture.dispose();
-        card.mesh.geometry.dispose();
-        card.mesh.material.dispose();
-      }
+      root.removeEventListener("pointerdown", onPointerDown);
+      root.removeEventListener("pointermove", onPointerMove);
+      root.removeEventListener("pointerup", onPointerUp);
+      root.removeEventListener("pointercancel", onPointerUp);
+      root.removeEventListener("wheel", onWheel);
+      root.removeEventListener("dblclick", onDoubleClick);
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+      controllerRef.current = null;
+      delete root.dataset.spatialReady;
+      delete root.dataset.spatialAnimating;
+      delete root.dataset.spatialDragging;
+      grid.geometry.dispose();
+      for (const material of gridMaterials) material.dispose();
       renderer.dispose();
+      for (const element of elementsRef.current.values()) {
+        element.style.removeProperty("transform");
+        element.style.removeProperty("will-change");
+      }
     };
-  }, [sessionKey, sessions, variant]);
+  }, [layout]);
+
+  useEffect(() => {
+    if (focusedThreadKey) controllerRef.current?.focusCard(focusedThreadKey);
+  }, [focusedThreadKey]);
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    useBoardFocusStore.getState().setFocused(focusRequest.threadKey);
+    controllerRef.current?.focusCard(focusRequest.threadKey);
+  }, [focusRequest]);
+
+  const minimapCardStyles = useMemo(() => {
+    const width = layout.bounds.right - layout.bounds.left;
+    const height = layout.bounds.bottom - layout.bounds.top;
+    return new Map<string, CSSProperties>(
+      layout.cards.map((card) => [
+        card.key,
+        {
+          left: `${((card.x - layout.bounds.left) / width) * 100}%`,
+          top: `${((card.y - layout.bounds.top) / height) * 100}%`,
+          width: `${Math.max(1.5, (CARD_WIDTH / width) * 100)}%`,
+          height: `${Math.max(1.5, (CARD_HEIGHT / height) * 100)}%`,
+        },
+      ]),
+    );
+  }, [layout]);
 
   return (
-    <div className="relative isolate min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_center,var(--muted),var(--background)_62%)]">
+    <div
+      ref={rootRef}
+      data-spatial-scene
+      className="relative isolate min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_50%_42%,color-mix(in_srgb,var(--muted)_52%,transparent),var(--background)_68%)] outline-none data-[spatial-dragging=true]:cursor-grabbing"
+    >
       <canvas
-        id="spatial-session-canvas"
         ref={canvasRef}
-        className="block h-full w-full cursor-move outline-none"
-      >
+        className="pointer-events-none absolute inset-0 block h-full w-full"
+      />
+
+      <div className="absolute inset-0 overflow-hidden">
         {sessions.map((session) => (
           <div
             key={session.cardKey}
@@ -337,18 +597,137 @@ export function SpatialSessionScene({
               if (element) elementsRef.current.set(session.cardKey, element);
               else elementsRef.current.delete(session.cardKey);
             }}
-            data-spatial-session={session.cardKey}
-            className="w-[380px]"
+            data-spatial-session-card={session.cardKey}
+            className="absolute left-0 top-0 w-[380px] origin-top-left transform-gpu contain-layout contain-paint"
           >
             {children(session)}
           </div>
         ))}
-      </canvas>
+      </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center">
-        <div className="rounded-full border border-border bg-background/85 px-3 py-1.5 text-[11px] text-muted-foreground shadow-sm backdrop-blur">
-          Drag empty space to look · wheel/WASD move · Q/E rise · Home returns to center · cards
-          remain live HTML
+      <div
+        data-spatial-hud
+        className="pointer-events-none absolute inset-x-0 top-0 z-30 h-9 overflow-hidden border-b border-border/70 bg-background/88 pl-24 shadow-sm backdrop-blur"
+        aria-label="Project axis"
+      >
+        {layout.projects.map((project) => (
+          <button
+            key={project.id}
+            ref={(element) => {
+              if (element) projectMarkerRefs.current.set(project.id, element);
+              else projectMarkerRefs.current.delete(project.id);
+            }}
+            type="button"
+            className="pointer-events-auto absolute top-1/2 max-w-40 -translate-y-1/2 truncate rounded-md border border-border/70 bg-background px-2 py-1 text-[10px] font-medium shadow-sm transition-colors hover:bg-accent"
+            onClick={() => controllerRef.current?.focusProject(project.id)}
+            title={`Project: ${project.label}`}
+          >
+            {project.label}
+          </button>
+        ))}
+        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+          Project →
+        </span>
+      </div>
+
+      <div
+        data-spatial-hud
+        className="pointer-events-none absolute inset-y-9 left-0 z-30 w-24 overflow-hidden border-r border-border/70 bg-background/88 shadow-sm backdrop-blur"
+        aria-label="Workflow axis"
+      >
+        {layout.lanes.map((lane) => (
+          <button
+            key={lane.id}
+            ref={(element) => {
+              if (element) laneMarkerRefs.current.set(lane.id, element);
+              else laneMarkerRefs.current.delete(lane.id);
+            }}
+            type="button"
+            className="pointer-events-auto absolute left-1 w-[5.5rem] truncate rounded-md border border-border/70 bg-background px-1.5 py-1 text-left text-[9px] font-medium shadow-sm transition-colors hover:bg-accent"
+            onClick={() => controllerRef.current?.focusLane(lane.id)}
+            title={`Workflow: ${lane.label}`}
+          >
+            {lane.label}
+          </button>
+        ))}
+        <span className="absolute bottom-2 left-1/2 -translate-x-1/2 -rotate-90 whitespace-nowrap text-[9px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+          Workflow ↓
+        </span>
+      </div>
+
+      <div
+        data-spatial-hud
+        className="absolute bottom-4 right-4 z-40 w-44 rounded-xl border border-border bg-background/92 p-2 shadow-lg backdrop-blur"
+      >
+        <div className="mb-2 flex items-center gap-1">
+          <span className="text-[10px] font-medium">Board map</span>
+          <span
+            ref={zoomLabelRef}
+            className="ml-auto text-[10px] tabular-nums text-muted-foreground"
+          >
+            100%
+          </span>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Zoom out"
+            onClick={() => controllerRef.current?.zoomBy(1 / 1.18)}
+          >
+            <MinusIcon className="size-3" />
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Zoom in"
+            onClick={() => controllerRef.current?.zoomBy(1.18)}
+          >
+            <PlusIcon className="size-3" />
+          </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Fit board"
+            onClick={() => controllerRef.current?.reset()}
+          >
+            <LocateFixedIcon className="size-3" />
+          </Button>
+        </div>
+        <div className="relative h-20 overflow-hidden rounded-md border border-border/70 bg-muted/45">
+          {layout.cards.map((card) => (
+            <div
+              key={card.key}
+              className="absolute rounded-[1px] bg-foreground/20"
+              style={minimapCardStyles.get(card.key)}
+            />
+          ))}
+          <div
+            ref={minimapViewportRef}
+            className="absolute min-h-2 min-w-2 rounded-[2px] border border-primary bg-primary/10"
+          />
+        </div>
+        <input
+          ref={zoomRangeRef}
+          className="mt-2 h-1 w-full accent-primary"
+          type="range"
+          min={Math.round(MIN_ZOOM * 100)}
+          max={Math.round(MAX_ZOOM * 100)}
+          defaultValue={100}
+          aria-label="Board depth zoom"
+          onInput={(event) =>
+            controllerRef.current?.setZoom(Number(event.currentTarget.value) / 100)
+          }
+        />
+        <div className="mt-1 flex justify-between text-[8px] uppercase tracking-wide text-muted-foreground">
+          <span>Out</span>
+          <span>Depth</span>
+          <span>In</span>
+        </div>
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center pr-48">
+        <div className="rounded-full border border-border bg-background/88 px-3 py-1.5 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
+          Scroll in any direction · pinch to move in/out · drag empty space · double-click a card to
+          open · target icon fits board
         </div>
       </div>
     </div>

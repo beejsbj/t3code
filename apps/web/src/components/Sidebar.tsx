@@ -1810,7 +1810,11 @@ export default function Sidebar() {
   // the command was in flight, completing it must not yank them away.
   const routeThreadKeyRef = useRef(routeThreadKey);
   routeThreadKeyRef.current = routeThreadKey;
-  const isBoardRoute = useRouterState({ select: (state) => state.location.pathname === "/board" });
+  const isBoardRoute = useRouterState({
+    select: (state) =>
+      state.location.pathname === "/board" ||
+      state.location.pathname === "/board-spatial-prototype",
+  });
   const isBoardRouteRef = useRef(isBoardRoute);
   isBoardRouteRef.current = isBoardRoute;
   const boardFocusedThreadKey = useBoardFocusStore((state) => state.focusedThreadKey);
