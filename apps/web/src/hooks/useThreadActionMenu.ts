@@ -11,8 +11,8 @@ import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
 import {
-  boardLaneForPlacementAction,
-  buildBoardPlacementContextMenuItems,
+  boardLaneForMoveAction,
+  buildBoardLaneMoveContextMenuItems,
 } from "../board/boardPlacementMenu.ts";
 import { boardLaneController } from "../board/boardLaneController.ts";
 import type { BoardLane } from "../board/boardLaneStore.ts";
@@ -71,7 +71,7 @@ export function useThreadActionMenu(input: {
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
-  /** Board surfaces append lane placement to the otherwise shared menu. */
+  /** Board surfaces append lane moves to the otherwise shared menu. */
   readonly boardLanes?: ReadonlyArray<BoardLane>;
 }) {
   const { threadRef, projectCwd, onStartRename, boardLanes } = input;
@@ -208,7 +208,10 @@ export function useThreadActionMenu(input: {
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
         const isSnoozed = supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() });
-        const isSettled = supports.settlement && thread.settledOverride === "settled";
+        // Snooze owns the visible lifecycle while it is active, matching the
+        // sidebar partition.
+        const isSettled =
+          !isSnoozed && supports.settlement && thread.settledOverride === "settled";
         const items = [
           ...buildThreadActionMenuItems({
             branch: thread.branch ?? null,
@@ -221,20 +224,15 @@ export function useThreadActionMenu(input: {
             supports,
             snoozePresets,
           }),
-          ...(boardLanes ? buildBoardPlacementContextMenuItems(boardLanes) : []),
+          ...(boardLanes ? buildBoardLaneMoveContextMenuItems(boardLanes) : []),
         ];
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
-        const laneId = boardLanes
-          ? boardLaneForPlacementAction(clicked.value, boardLanes)
-          : undefined;
+        const laneId = boardLanes ? boardLaneForMoveAction(clicked.value, boardLanes) : undefined;
         if (laneId !== undefined) {
-          // Lifecycle is server-owned. Moving a parked thread back to a
-          // workflow lane performs the same reverse actions as the sidebar
-          // before saving its client-local spatial placement.
-          if (isSnoozed && !(await unsnooze())) return;
-          if (isSettled && !(await unsettle())) return;
-          boardLaneController.placeInLane(threadRef, laneId);
+          // Lane overrides are independent of server-owned lifecycle. Parked
+          // threads remain parked and use this lane only if they become active.
+          boardLaneController.moveToLane(threadRef, laneId);
           return;
         }
         const action = clicked.value as ThreadActionMenuId;

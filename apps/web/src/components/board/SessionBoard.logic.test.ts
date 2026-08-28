@@ -31,6 +31,7 @@ import {
   resolveBoardViewport,
   resolveBoardThreadVisibility,
   scheduleBoardRevealDisconnectCleanup,
+  isThreadOnBoard,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
@@ -84,6 +85,13 @@ const lifecycleOptions = {
 } as const;
 
 describe("resolveBoardThreadVisibility", () => {
+  it("includes every active thread and excludes lifecycle-hidden threads", () => {
+    expect(isThreadOnBoard("visible")).toBe(true);
+    expect(isThreadOnBoard("archived")).toBe(false);
+    expect(isThreadOnBoard("snoozed")).toBe(false);
+    expect(isThreadOnBoard("settled")).toBe(false);
+  });
+
   it("hides archived threads and classifies snoozed and settled threads", () => {
     expect(
       resolveBoardThreadVisibility(

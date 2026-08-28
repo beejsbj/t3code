@@ -45,7 +45,7 @@ export type ComposerCommandItem =
   | {
       id: string;
       type: "local-lane";
-      laneId: string | null;
+      laneId: string;
       label: string;
       description: string;
     }

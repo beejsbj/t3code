@@ -46,7 +46,7 @@ const FIXED_BOARD_LANES = Object.freeze({
   [TRIAGE_BOARD_LANE_ID]: {
     id: TRIAGE_BOARD_LANE_ID,
     name: "Triage",
-    description: "New and unplaced sessions start here",
+    description: "Every active thread starts here until moved elsewhere",
     order: 0,
   },
   [SNOOZED_BOARD_LANE_ID]: {
@@ -176,10 +176,10 @@ export const DEFAULT_BOARD_ORGANIZATION: BoardOrganization = Object.freeze({
 interface BoardLaneStoreState {
   readonly lanes: ReadonlyArray<BoardLane>;
   /**
-   * `undefined` means a session has never been placed and therefore falls
-   * into Triage. Lifecycle lanes are derived from server state and are never
-   * persisted here. Keys are scoped so two environments may both contribute
-   * `thread-1`.
+   * Sparse workflow-lane overrides. `undefined` means the thread resolves to
+   * Triage; it never means the thread is absent from the board. Lifecycle
+   * lanes are derived from server state and are never persisted here. Keys
+   * are scoped so two environments may both contribute `thread-1`.
    */
   readonly placementByThreadKey: Record<string, BoardLaneId>;
   /** Displayed lane arrivals, including derived lifecycle transitions. */

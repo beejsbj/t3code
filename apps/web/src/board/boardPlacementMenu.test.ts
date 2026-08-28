@@ -2,8 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { BoardLane } from "./boardLaneStore.ts";
 import {
-  boardLaneForPlacementAction,
-  buildBoardPlacementContextMenuItems,
+  boardLaneForMoveAction,
+  buildBoardLaneMoveContextMenuItems,
 } from "./boardPlacementMenu.ts";
 
 const LANES: ReadonlyArray<BoardLane> = [
@@ -16,29 +16,29 @@ const LANES: ReadonlyArray<BoardLane> = [
 
 const WORKFLOW_LANES = [LANES[1]!, LANES[2]!, LANES[3]!];
 
-describe("board placement context menu", () => {
+describe("board lane move context menu", () => {
   it("offers ordered workflow lanes without lifecycle or removal actions", () => {
-    expect(buildBoardPlacementContextMenuItems(LANES)).toEqual([
+    expect(buildBoardLaneMoveContextMenuItems(LANES)).toEqual([
       {
-        id: "place-in-lane",
-        label: "Place in lane…",
+        id: "move-to-lane",
+        label: "Move to lane…",
         children: WORKFLOW_LANES.map((lane) => ({
-          id: `place-in-lane:${lane.id}`,
+          id: `move-to-lane:${lane.id}`,
           label: lane.name,
         })),
       },
     ]);
   });
 
-  it.each(WORKFLOW_LANES)("maps the $id placement action to its local lane", (lane) => {
-    expect(boardLaneForPlacementAction(`place-in-lane:${lane.id}`, LANES)).toBe(lane.id);
+  it.each(WORKFLOW_LANES)("maps the $id move action to its local lane", (lane) => {
+    expect(boardLaneForMoveAction(`move-to-lane:${lane.id}`, LANES)).toBe(lane.id);
   });
 
   it("ignores lifecycle, removed, stale, and unrelated actions", () => {
-    expect(boardLaneForPlacementAction("remove-from-board", LANES)).toBeUndefined();
-    expect(boardLaneForPlacementAction("place-in-lane:snoozed", LANES)).toBeUndefined();
-    expect(boardLaneForPlacementAction("place-in-lane:settled", LANES)).toBeUndefined();
-    expect(boardLaneForPlacementAction("rename", LANES)).toBeUndefined();
-    expect(boardLaneForPlacementAction("place-in-lane:retired", LANES)).toBeUndefined();
+    expect(boardLaneForMoveAction("remove-from-board", LANES)).toBeUndefined();
+    expect(boardLaneForMoveAction("move-to-lane:snoozed", LANES)).toBeUndefined();
+    expect(boardLaneForMoveAction("move-to-lane:settled", LANES)).toBeUndefined();
+    expect(boardLaneForMoveAction("rename", LANES)).toBeUndefined();
+    expect(boardLaneForMoveAction("move-to-lane:retired", LANES)).toBeUndefined();
   });
 });

@@ -252,11 +252,11 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     Effect.gen(function* () {
       const { output } = yield* captureStdout(runCliWithRuntime(["board", "--help"]));
 
-      assert.include(output, "originating client's local board placement");
+      assert.include(output, "originating client's board");
       assert.include(output, "lanes");
-      assert.include(output, "placement");
-      assert.include(output, "place");
-      assert.include(output, "unplace");
+      assert.include(output, "lane");
+      assert.include(output, "move");
+      assert.notInclude(output, "unplace");
     }),
   );
 

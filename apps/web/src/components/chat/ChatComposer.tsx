@@ -1922,22 +1922,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (composerTrigger.kind === "slash-command") {
       const laneQuery = localLaneChoiceQuery(composerTrigger.query);
       if (laneQuery !== null) {
-        const choices: ComposerCommandItem[] = [
-          ...workflowBoardLanes(boardLanes).map((lane) => ({
-            id: `local-lane:${lane.id}`,
-            type: "local-lane" as const,
-            laneId: lane.id,
-            label: lane.name,
-            description: `Place this thread in ${lane.name} (${lane.id})`,
-          })),
-          {
-            id: "local-lane:unplace",
-            type: "local-lane" as const,
-            laneId: null,
-            label: "Unplace",
-            description: "Remove explicit placement and return to Triage",
-          },
-        ];
+        const choices: ComposerCommandItem[] = workflowBoardLanes(boardLanes).map((lane) => ({
+          id: `local-lane:${lane.id}`,
+          type: "local-lane" as const,
+          laneId: lane.id,
+          label: lane.name,
+          description: `Move this thread to ${lane.name} (${lane.id})`,
+        }));
         if (!laneQuery) return choices;
         return choices.filter((item) =>
           `${item.label} ${item.description}`.toLocaleLowerCase().includes(laneQuery),
@@ -2226,27 +2217,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         toastManager.add({
           type: "warning",
           title: "Could not run local board command",
-          description: "Open an existing thread before placing it in a board lane.",
+          description: "Open an existing thread before moving it to a board lane.",
         });
         return;
       }
       clearLocalCommandPrompt();
-      if (command.type === "unplace") {
-        boardLaneController.unplace(routeThreadRef);
-        toastManager.add({
-          type: "success",
-          title: "Board placement removed",
-          description: "This thread now uses the default Triage placement.",
-        });
-        return;
-      }
-      boardLaneController.placeInLane(routeThreadRef, command.laneId);
+      boardLaneController.moveToLane(routeThreadRef, command.laneId);
       const laneName =
         boardLanes.find((lane) => lane.id === command.laneId)?.name ?? command.laneId;
       toastManager.add({
         type: "success",
         title: `Moved to ${laneName}`,
-        description: "Placement was updated on this client only.",
+        description: "Lane was updated on this client only.",
       });
     },
     [boardLanes, clearLocalCommandPrompt, navigate, routeKind, routeThreadRef],
@@ -2818,9 +2800,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "local-lane") {
-        executeLocalBoardCommand(
-          item.laneId === null ? { type: "unplace" } : { type: "place", laneId: item.laneId },
-        );
+        executeLocalBoardCommand({ type: "move", laneId: item.laneId });
         return;
       }
       if (item.type === "provider-slash-command") {
