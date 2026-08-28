@@ -67,7 +67,7 @@ it.effect("keeps the binding on disconnect and never falls back to another clien
       yield* acceptOrigin(broker, 1, "disconnect");
       yield* Fiber.interrupt(aFiber);
 
-      const result = yield* Effect.flip(broker.invoke(threadId, { type: "placement" }));
+      const result = yield* Effect.flip(broker.invoke(threadId, { type: "lane" }));
       expect(result.message).toContain("not connected");
       expect(yield* Ref.get(bRequests)).toBe(0);
     }),

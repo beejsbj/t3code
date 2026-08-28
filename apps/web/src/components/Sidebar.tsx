@@ -77,8 +77,8 @@ import {
 import { requestBoardFocus, useBoardFocusStore } from "../board/boardFocusStore";
 import { boardLaneController } from "../board/boardLaneController";
 import {
-  buildBoardPlacementContextMenuItems,
-  boardLaneForPlacementAction,
+  buildBoardLaneMoveContextMenuItems,
+  boardLaneForMoveAction,
 } from "../board/boardPlacementMenu";
 import { useBoardLaneStore } from "../board/boardLaneStore";
 import { isElectron } from "../env";
@@ -3172,24 +3172,6 @@ export default function Sidebar() {
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
-        const snapshot = changeRequestSnapshotByKey.get(threadKey);
-        const changeRequest =
-          snapshot != null &&
-          (thread.linkedPullRequest == null
-            ? thread.worktreePath === null || snapshot.branch === thread.branch
-            : snapshot.linkedPullRequest?.projectId === thread.linkedPullRequest.projectId &&
-              snapshot.linkedPullRequest.repository === thread.linkedPullRequest.repository &&
-              snapshot.linkedPullRequest.number === thread.linkedPullRequest.number)
-            ? snapshot.pr
-            : null;
-        const isEffectivelySettled =
-          supportsSettlement &&
-          effectiveSettled(thread, {
-            now: `${nowMinute}:00.000Z`,
-            autoSettleAfterDays,
-            autoSettleOnMerge,
-            changeRequest,
-          });
         const isPinned = thread.pinnedAt != null;
         // Presets resolve at menu-open time (same as the popover).
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
@@ -3213,49 +3195,17 @@ export default function Sidebar() {
                 },
                 snoozePresets,
               }),
-              ...buildBoardPlacementContextMenuItems(boardLanes),
+              ...buildBoardLaneMoveContextMenuItems(boardLanes),
             ],
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
-        const laneId = boardLaneForPlacementAction(clicked.value, boardLanes);
+        const laneId = boardLaneForMoveAction(clicked.value, boardLanes);
         if (laneId !== undefined) {
-          // Board workflow placement is an active lifecycle choice. Match the
-          // card menu: wake and/or un-settle first, then save the spatial lane.
-          if (isSnoozed) {
-            const result = await unsnoozeThread(threadRef);
-            if (result._tag === "Failure") {
-              if (!isAtomCommandInterrupted(result)) {
-                const error = squashAtomCommandFailure(result);
-                toastManager.add(
-                  stackedThreadToast({
-                    type: "error",
-                    title: "Failed to wake thread",
-                    description: error instanceof Error ? error.message : "An error occurred.",
-                  }),
-                );
-              }
-              return;
-            }
-          }
-          if (isEffectivelySettled) {
-            const result = await unsettleThread(threadRef);
-            if (result._tag === "Failure") {
-              if (!isAtomCommandInterrupted(result)) {
-                const error = squashAtomCommandFailure(result);
-                toastManager.add(
-                  stackedThreadToast({
-                    type: "error",
-                    title: "Failed to un-settle thread",
-                    description: error instanceof Error ? error.message : "An error occurred.",
-                  }),
-                );
-              }
-              return;
-            }
-          }
-          boardLaneController.placeInLane(threadRef, laneId);
+          // Lane overrides are orthogonal to lifecycle. A snoozed or settled
+          // thread keeps that lifecycle and uses this lane if it becomes active.
+          boardLaneController.moveToLane(threadRef, laneId);
           return;
         }
         if (clicked.value?.startsWith("snooze:")) {

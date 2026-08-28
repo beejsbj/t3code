@@ -77,9 +77,8 @@ export function orderBoardLanes(lanes: ReadonlyArray<BoardLane>): ReadonlyArray<
 }
 
 /**
- * Resolves a local board placement. Environment snapshots deliberately do not
- * participate: a session can be visible from any connected environment, but
- * its position is a preference of the surface currently showing this board.
+ * Resolves a thread's effective workflow lane. Missing local override state
+ * means Triage; it never means the thread is absent from the board.
  */
 export function resolveBoardLane(
   placement: BoardLaneId | undefined,

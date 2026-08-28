@@ -2,15 +2,7 @@ import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
 
-export type BoardStateId =
-  | "draft"
-  | "approval"
-  | "input"
-  | "failed"
-  | "working"
-  | "idle"
-  | "snoozed"
-  | "settled";
+export type BoardStateId = "draft" | "approval" | "input" | "failed" | "working" | "idle";
 
 export interface BoardStateDescriptor {
   readonly id: BoardStateId;
@@ -25,8 +17,6 @@ export const BOARD_STATE_BY_ID = Object.freeze({
   failed: { id: "failed", label: "Failed", order: 3 },
   working: { id: "working", label: "Working", order: 4 },
   idle: { id: "idle", label: "Idle", order: 5 },
-  snoozed: { id: "snoozed", label: "Snoozed", order: 6 },
-  settled: { id: "settled", label: "Settled", order: 7 },
 } satisfies Record<BoardStateId, BoardStateDescriptor>);
 
 /** Stable presentation order shared by state columns and state rows. */
@@ -49,8 +39,7 @@ export function resolveBoardThreadState(
   thread: OrchestrationThreadShell,
   lifecycle: BoardThreadLifecycle,
 ): BoardStateId | null {
-  if (lifecycle === "archived") return null;
-  if (lifecycle === "snoozed" || lifecycle === "settled") return lifecycle;
+  if (lifecycle !== "visible") return null;
 
   const runtime = resolveThreadRuntimeState(thread);
   switch (runtime) {

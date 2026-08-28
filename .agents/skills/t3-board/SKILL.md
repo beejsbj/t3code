@@ -1,20 +1,19 @@
 ---
 name: t3-board
-description: Operate the current T3 Code thread's client-local board placement with `t3 board`. Use only when the user explicitly asks to inspect or change board placement.
+description: Inspect or move the current T3 Code thread on the client-local board with `t3 board`. Use only when the user explicitly asks about the board or a thread's lane.
 ---
 
 # T3 Board
 
-Use this skill only after an explicit user request about the T3 Code board or the current thread's lane placement.
+Use this skill only after an explicit user request about the T3 Code board or the current thread's lane.
 
-The board is client-local. The T3 client that started the current turn owns the persisted lane registry and placement. These commands ask that exact connected client to run the same store transitions used by drag/drop, placement menus, and `/lane`. They do not create or synchronize server-side board state.
+The board is client-local. Every active sidebar thread is already on the board; snoozed and settled threads are excluded. The T3 client that started the current turn owns the persisted lane registry and sparse lane overrides. These commands ask that exact connected client to run the same move transition used by drag/drop, lane menus, and `/lane`. They do not create board membership or synchronize server-side board state.
 
 ## Commands
 
 - `t3 board lanes` lists current workflow lanes with their stable IDs, live names, and descriptions.
-- `t3 board placement` reports whether the current thread has an explicit placement and its effective lane.
-- `t3 board place <lane-id-or-exact-name>` places the current thread. Prefer a stable lane ID after listing lanes; an exact unambiguous live name also works.
-- `t3 board unplace` removes the explicit placement. The receipt may still report Triage as the effective lane because unplaced threads resolve there implicitly.
+- `t3 board lane` reports the current thread's effective lane and whether it uses a local override.
+- `t3 board move <lane-id-or-exact-name>` moves the current thread. Prefer a stable lane ID after listing lanes; an exact unambiguous live name also works. Moving to Triage clears the override because Triage is the default lane.
 
 Run one command at a time and report its receipt faithfully. Do not infer success from an exit code if the command printed an error.
 

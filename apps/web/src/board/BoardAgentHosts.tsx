@@ -25,15 +25,13 @@ function executeBoardCommand(
   switch (request.command.type) {
     case "lanes":
       return { type: "lanes", lanes: boardLaneController.list() };
-    case "placement":
-      return { type: "placement", placement: boardLaneController.placement(ref) };
-    case "place": {
-      const result = boardLaneController.place(ref, request.command.lane);
+    case "lane":
+      return { type: "lane", state: boardLaneController.current(ref) };
+    case "move": {
+      const result = boardLaneController.move(ref, request.command.lane);
       if (result.type === "error") throw new Error(result.message);
-      return { type: "place", placement: result.placement };
+      return { type: "move", state: result.state };
     }
-    case "unplace":
-      return { type: "unplace", placement: boardLaneController.unplace(ref) };
   }
 }
 

@@ -55,7 +55,7 @@ function threadShell(overrides: Partial<OrchestrationThreadShell> = {}): Orchest
 }
 
 describe("resolveBoardThreadState", () => {
-  it("lets the board lifecycle projection override runtime presentation", () => {
+  it("excludes lifecycle-hidden threads from board presentation", () => {
     const working = threadShell({
       session: {
         threadId: ThreadId.make("thread-1"),
@@ -68,8 +68,8 @@ describe("resolveBoardThreadState", () => {
       },
     });
 
-    expect(resolveBoardThreadState(working, "snoozed")).toBe("snoozed");
-    expect(resolveBoardThreadState(working, "settled")).toBe("settled");
+    expect(resolveBoardThreadState(working, "snoozed")).toBeNull();
+    expect(resolveBoardThreadState(working, "settled")).toBeNull();
     expect(resolveBoardThreadState(working, "archived")).toBeNull();
   });
 
@@ -167,8 +167,6 @@ describe("buildBoardRows", () => {
       "failed",
       "working",
       "idle",
-      "snoozed",
-      "settled",
     ]);
     expect(BOARD_STATES.map((state) => state.id)).toEqual([
       "draft",
@@ -177,8 +175,6 @@ describe("buildBoardRows", () => {
       "failed",
       "working",
       "idle",
-      "snoozed",
-      "settled",
     ]);
   });
 
