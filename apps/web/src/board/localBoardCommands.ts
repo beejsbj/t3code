@@ -5,15 +5,12 @@ import { resolveWorkflowBoardLane } from "./boardLanes.ts";
 
 export type LocalBoardCommand =
   | { readonly type: "open-board" }
-  | { readonly type: "place"; readonly laneId: BoardLaneId }
-  | { readonly type: "unplace" };
+  | { readonly type: "move"; readonly laneId: BoardLaneId };
 
 export type LocalBoardCommandResult =
   | { readonly type: "not-local" }
   | { readonly type: "error"; readonly message: string }
   | { readonly type: "command"; readonly command: LocalBoardCommand };
-
-const UNPLACE_ARGUMENTS = new Set(["none", "remove", "unplace", "unplaced"]);
 
 /**
  * Local commands deliberately require the whole composer value. Anything
@@ -34,7 +31,7 @@ export function resolveLocalBoardCommand(
   if (threadRef === null) {
     return {
       type: "error",
-      message: "Open an existing thread before placing it in a board lane.",
+      message: "Open an existing thread before moving it to a board lane.",
     };
   }
 
@@ -46,15 +43,11 @@ export function resolveLocalBoardCommand(
     };
   }
 
-  const normalizedArgument = argument.toLocaleLowerCase();
-  if (UNPLACE_ARGUMENTS.has(normalizedArgument)) {
-    return { type: "command", command: { type: "unplace" } };
-  }
   const resolved = resolveWorkflowBoardLane(lanes, argument);
   if (resolved.type === "error") return resolved;
   return {
     type: "command",
-    command: { type: "place", laneId: resolved.lane.id },
+    command: { type: "move", laneId: resolved.lane.id },
   };
 }
 

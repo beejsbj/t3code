@@ -130,6 +130,7 @@ import {
   resolveBoardViewport,
   resolveBoardThreadVisibility,
   scheduleBoardRevealDisconnectCleanup,
+  isThreadOnBoard,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
 
@@ -497,11 +498,11 @@ export function SessionBoard() {
             supportsSnooze: capabilities?.threadSnooze === true,
             changeRequest: changeRequestForThread(key),
           });
-          if (visibility === "archived") return null;
           if (visibility === "snoozed" && thread.snoozedUntil != null) {
             const wakeAtMs = Date.parse(thread.snoozedUntil);
             if (!Number.isNaN(wakeAtMs)) nextWakeAtMs = Math.min(nextWakeAtMs, wakeAtMs);
           }
+          if (!isThreadOnBoard(visibility)) return null;
           const workflowLaneId = resolveBoardLane(
             selectBoardPlacement(placementByThreadKey, ref),
             lanes,
@@ -951,7 +952,7 @@ export function SessionBoard() {
             insertAfter,
           });
           if (entry.laneId !== targetLaneId) {
-            boardLaneController.placeInLane(entry.ref, targetLaneId);
+            boardLaneController.moveToLane(entry.ref, targetLaneId);
           }
 
           // Persist a complete lane order. When grouped, preserve the other
@@ -971,12 +972,12 @@ export function SessionBoard() {
       }
 
       if (entry.laneId !== targetLaneId) {
-        boardLaneController.placeInLane(entry.ref, targetLaneId);
+        boardLaneController.moveToLane(entry.ref, targetLaneId);
         return;
       }
 
       // Dropping on the current lane header is an explicit new lane entry:
-      // place it at the top without involving activity timestamps.
+      // move it to the top without involving activity timestamps.
       const laneOrder = orderedPlaced
         .filter((candidate) => candidate.laneId === targetLaneId && candidate.key !== entry.key)
         .map((candidate) => candidate.key);
@@ -1525,8 +1526,6 @@ function StateHeaderCell(props: {
       className={cn(
         "relative flex min-w-0 flex-col justify-center px-3 py-2",
         BOARD_COLUMN_RULE_CLASS,
-        (props.stateId === "snoozed" || props.stateId === "settled") &&
-          "bg-muted/45 text-muted-foreground",
       )}
     >
       <div className="flex items-center gap-2">
@@ -1663,14 +1662,7 @@ function LaneDropCell({
     <div
       ref={setNodeRef}
       data-board-column={column.key}
-      className={cn(
-        "min-h-16 min-w-0 p-2",
-        BOARD_COLUMN_RULE_CLASS,
-        column.kind === "state" &&
-          (column.stateId === "snoozed" || column.stateId === "settled") &&
-          "bg-muted/25",
-        isOver && "bg-accent/40",
-      )}
+      className={cn("min-h-16 min-w-0 p-2", BOARD_COLUMN_RULE_CLASS, isOver && "bg-accent/40")}
     >
       <div
         className="grid min-w-0 justify-items-start gap-2"

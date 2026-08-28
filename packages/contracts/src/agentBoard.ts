@@ -10,25 +10,23 @@ export const AgentBoardLane = Schema.Struct({
 });
 export type AgentBoardLane = typeof AgentBoardLane.Type;
 
-export const AgentBoardPlacement = Schema.Struct({
-  explicit: Schema.Boolean,
+export const AgentBoardLaneState = Schema.Struct({
+  overridden: Schema.Boolean,
   lane: Schema.NullOr(AgentBoardLane),
 });
-export type AgentBoardPlacement = typeof AgentBoardPlacement.Type;
+export type AgentBoardLaneState = typeof AgentBoardLaneState.Type;
 
 export const AgentBoardCommand = Schema.Union([
   Schema.Struct({ type: Schema.Literal("lanes") }),
-  Schema.Struct({ type: Schema.Literal("placement") }),
-  Schema.Struct({ type: Schema.Literal("place"), lane: TrimmedNonEmptyString }),
-  Schema.Struct({ type: Schema.Literal("unplace") }),
+  Schema.Struct({ type: Schema.Literal("lane") }),
+  Schema.Struct({ type: Schema.Literal("move"), lane: TrimmedNonEmptyString }),
 ]);
 export type AgentBoardCommand = typeof AgentBoardCommand.Type;
 
 export const AgentBoardResult = Schema.Union([
   Schema.Struct({ type: Schema.Literal("lanes"), lanes: Schema.Array(AgentBoardLane) }),
-  Schema.Struct({ type: Schema.Literal("placement"), placement: AgentBoardPlacement }),
-  Schema.Struct({ type: Schema.Literal("place"), placement: AgentBoardPlacement }),
-  Schema.Struct({ type: Schema.Literal("unplace"), placement: AgentBoardPlacement }),
+  Schema.Struct({ type: Schema.Literal("lane"), state: AgentBoardLaneState }),
+  Schema.Struct({ type: Schema.Literal("move"), state: AgentBoardLaneState }),
 ]);
 export type AgentBoardResult = typeof AgentBoardResult.Type;
 

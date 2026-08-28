@@ -8,13 +8,13 @@ import {
 } from "./boardLaneStore.ts";
 import { resolveBoardLane, resolveWorkflowBoardLane, workflowBoardLanes } from "./boardLanes.ts";
 
-export interface BoardLanePlacement {
-  readonly explicit: boolean;
+export interface BoardLaneState {
+  readonly overridden: boolean;
   readonly lane: BoardLane | null;
 }
 
-export type BoardLanePlacementResult =
-  | { readonly type: "placed"; readonly placement: BoardLanePlacement }
+export type BoardLaneMoveResult =
+  | { readonly type: "moved"; readonly state: BoardLaneState }
   | { readonly type: "error"; readonly message: string };
 
 type BoardLaneStoreApi = Pick<typeof useBoardLaneStore, "getState">;
@@ -22,32 +22,30 @@ type BoardLaneStoreApi = Pick<typeof useBoardLaneStore, "getState">;
 export function createBoardLaneController(store: BoardLaneStoreApi) {
   const list = (): ReadonlyArray<BoardLane> => workflowBoardLanes(store.getState().lanes);
 
-  const placement = (ref: ScopedThreadRef): BoardLanePlacement => {
+  const current = (ref: ScopedThreadRef): BoardLaneState => {
     const state = store.getState();
-    const explicitLaneId = selectBoardPlacement(state.placementByThreadKey, ref);
-    const effectiveLaneId = resolveBoardLane(explicitLaneId, state.lanes);
+    const laneOverride = selectBoardPlacement(state.placementByThreadKey, ref);
+    const effectiveLaneId = resolveBoardLane(laneOverride, state.lanes);
     return {
-      explicit: explicitLaneId !== undefined,
+      overridden: laneOverride !== undefined,
       lane: state.lanes.find((lane) => lane.id === effectiveLaneId) ?? null,
     };
   };
 
-  const place = (ref: ScopedThreadRef, laneIdOrExactName: string): BoardLanePlacementResult => {
-    const resolved = resolveWorkflowBoardLane(store.getState().lanes, laneIdOrExactName);
+  const move = (ref: ScopedThreadRef, laneIdOrExactName: string): BoardLaneMoveResult => {
+    const state = store.getState();
+    const resolved = resolveWorkflowBoardLane(state.lanes, laneIdOrExactName);
     if (resolved.type === "error") return resolved;
-    store.getState().setPlacement(ref, resolved.lane.id);
-    return { type: "placed", placement: placement(ref) };
+    const defaultLaneId = resolveBoardLane(undefined, state.lanes);
+    if (resolved.lane.id === defaultLaneId) state.clearPlacement(ref);
+    else state.setPlacement(ref, resolved.lane.id);
+    return { type: "moved", state: current(ref) };
   };
 
-  const placeInLane = (ref: ScopedThreadRef, laneId: BoardLaneId): BoardLanePlacementResult =>
-    place(ref, laneId);
+  const moveToLane = (ref: ScopedThreadRef, laneId: BoardLaneId): BoardLaneMoveResult =>
+    move(ref, laneId);
 
-  const unplace = (ref: ScopedThreadRef): BoardLanePlacement => {
-    store.getState().clearPlacement(ref);
-    return placement(ref);
-  };
-
-  return { list, placement, place, placeInLane, unplace } as const;
+  return { list, current, move, moveToLane } as const;
 }
 
 /** One client-local API shared by board UI, composer commands, and agent requests. */
