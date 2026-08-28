@@ -110,6 +110,7 @@ import { BoardDraftCard } from "./BoardDraftCard.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { threadHasStarted } from "../ChatView.logic.ts";
 import {
+  coordinateBoardReveal,
   boardLaneGridTemplateColumns,
   boardLaneHeaderDroppableId,
   boardProjectKey,
@@ -811,9 +812,8 @@ export function SessionBoard() {
         acknowledgedFocus?.threadKey === entry.key ? acknowledgedFocus.requestNonce : null,
     });
 
-    setFocusedThreadKey(entry.key);
-
     if (action === "open") {
+      setFocusedThreadKey(entry.key);
       clearFocusRequest(entry.key, focusRequest.nonce);
       setExpandedThread({ kind: "thread", threadKey: entry.key });
       return;
@@ -829,13 +829,27 @@ export function SessionBoard() {
         scrollTop: scroller.scrollTop,
         scrollLeft: scroller.scrollLeft,
       });
-      scroller.scrollTo({
-        ...target,
+      setFocusedThreadKey(null);
+      return coordinateBoardReveal({
+        scroller,
+        target,
         behavior: resolveBoardScrollBehavior(
           window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
         ),
+        onSettled: () => {
+          const currentRequest = useBoardFocusStore.getState().request;
+          if (
+            currentRequest?.threadKey !== entry.key ||
+            currentRequest.nonce !== focusRequest.nonce
+          ) {
+            return;
+          }
+          setFocusedThreadKey(entry.key);
+        },
       });
     }
+
+    setFocusedThreadKey(entry.key);
   }, [
     clearFocusRequest,
     boardRows,

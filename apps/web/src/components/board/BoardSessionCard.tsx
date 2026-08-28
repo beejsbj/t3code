@@ -54,7 +54,10 @@ import {
 import type { BoardLane, BoardLaneId } from "../../board/boardLaneStore.ts";
 import { SETTLED_BOARD_LANE_ID, SNOOZED_BOARD_LANE_ID } from "../../board/boardLaneStore.ts";
 import { isBoardLifecycleLaneId } from "../../board/boardLanes.ts";
-import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
+import {
+  selectBoardCardFocusRequestNonce,
+  useBoardFocusStore,
+} from "../../board/boardFocusStore.ts";
 import { useDiffPanelStore } from "../../diffPanelStore.ts";
 import { useRightPanelStore } from "../../rightPanelStore.ts";
 import { useTheme } from "../../hooks/useTheme.ts";
@@ -299,7 +302,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   );
   const isFocused = useBoardFocusStore((state) => state.focusedThreadKey === cardKey);
   const focusRequestNonce = useBoardFocusStore((state) =>
-    state.request?.threadKey === cardKey ? state.request.nonce : null,
+    selectBoardCardFocusRequestNonce(state, cardKey),
   );
   const setExpandedKey = useBoardFocusStore((state) => state.setExpanded);
   const setFocusedKey = useBoardFocusStore((state) => state.setFocused);
