@@ -43,6 +43,13 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "local-lane";
+      laneId: string | null;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "provider-slash-command";
       provider: ProviderDriverKind;
       command: ServerProviderSlashCommand;
