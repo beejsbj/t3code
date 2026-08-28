@@ -113,6 +113,16 @@ describe("detectComposerTrigger", () => {
     expect(trigger).toBeNull();
   });
 
+  it("keeps the local /lane chooser active while typing a lane name", () => {
+    const text = "/lane In Progress";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: "lane In Progress",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects non-model slash commands while typing", () => {
     const text = "/pl";
     const trigger = detectComposerTrigger(text, text.length);
