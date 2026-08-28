@@ -88,3 +88,8 @@ classic full-screen route flow. Returning to **Board** always closes any old exp
 The responsive web board remains available at phone-sized browser widths. Adaptive multi-card
 packing is intended for desktop-width web and the desktop app. A dedicated React Native board is not
 included yet.
+
+From a web or desktop thread composer, `/board` opens this board and `/lane` lists the current
+workflow lanes. Choosing a lane updates only that scoped environment and thread on the current
+client. `/lane unplace` removes the explicit placement and returns the card to Triage. These local
+commands are not registered by the React Native app while it has no dedicated board.

@@ -15,6 +15,18 @@ the composer or paste them into a message.
 Type `/` to open the command menu. Type `$` to find and add a skill. Skill rows show their source,
 such as System, Personal, Project, or App.
 
+On web and desktop, `/board` opens the live session board. Use `/lane` from an existing thread to
+choose one of this client's current workflow lanes, or enter `/lane <lane name>` as a standalone
+command. `/lane unplace` removes the explicit placement and returns the thread to the default Triage
+placement. These commands update only the client displaying the board and are never sent to the
+provider. Lane choices update when lanes are created, renamed, or archived; each lane does not become
+a separate slash command.
+
+The React Native mobile app does not currently include the session board or register these two local
+commands. Slash text entered there continues through the normal provider path. On web and desktop,
+local commands act only when they are standalone and have no attachments or added context; otherwise
+the composer preserves the message as ordinary provider input.
+
 By default, the `/` menu includes skills. To keep this menu command-only, turn off **Show skills in
 slash menu** in **Settings → General**. Skill results use the `/skill:Skill Name` label and add the
 same `$name` skill token to your message. The original skill name remains searchable. If the provider
