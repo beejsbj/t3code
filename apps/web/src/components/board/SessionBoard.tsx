@@ -16,7 +16,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import type { ChangeRequestStateLike } from "@t3tools/client-runtime/state/thread-settled";
+import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
@@ -208,7 +208,7 @@ export function SessionBoard() {
   const [changeRequestResolutionByKey, setChangeRequestResolutionByKey] = useState<
     ReadonlyMap<
       string,
-      { readonly sourceKey: string; readonly state: ChangeRequestStateLike | null }
+      { readonly sourceKey: string; readonly changeRequest: ChangeRequestSettleSource | null }
     >
   >(() => new Map());
   const [collapsedProjectKeys, setCollapsedProjectKeys] = useState<ReadonlySet<string>>(
@@ -394,13 +394,19 @@ export function SessionBoard() {
     [archiveLane],
   );
 
-  const handleChangeRequestState = useCallback(
-    (threadKey: string, sourceKey: string, state: ChangeRequestStateLike | null) => {
+  const handleChangeRequest = useCallback(
+    (threadKey: string, sourceKey: string, changeRequest: ChangeRequestSettleSource | null) => {
       setChangeRequestResolutionByKey((current) => {
         const existing = current.get(threadKey);
-        if (existing?.sourceKey === sourceKey && existing.state === state) return current;
+        if (
+          existing?.sourceKey === sourceKey &&
+          existing.changeRequest?.state === changeRequest?.state &&
+          (existing.changeRequest?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null)
+        ) {
+          return current;
+        }
         const next = new Map(current);
-        next.set(threadKey, { sourceKey, state });
+        next.set(threadKey, { sourceKey, changeRequest });
         return next;
       });
     },
@@ -450,12 +456,12 @@ export function SessionBoard() {
     };
   }, [projectByPhysicalKey, serverConfigs, threads]);
 
-  const changeRequestStateForThread = useCallback(
-    (threadKey: string): ChangeRequestStateLike | null => {
+  const changeRequestForThread = useCallback(
+    (threadKey: string): ChangeRequestSettleSource | null => {
       const expectedSourceKey = changeRequestSourceKeyByThreadKey.get(threadKey);
       const resolution = changeRequestResolutionByKey.get(threadKey);
       return expectedSourceKey !== undefined && resolution?.sourceKey === expectedSourceKey
-        ? resolution.state
+        ? resolution.changeRequest
         : null;
     },
     [changeRequestResolutionByKey, changeRequestSourceKeyByThreadKey],
@@ -484,7 +490,7 @@ export function SessionBoard() {
             autoSettleOnMerge,
             supportsSettlement: capabilities?.threadSettlement === true,
             supportsSnooze: capabilities?.threadSnooze === true,
-            changeRequestState: changeRequestStateForThread(key),
+            changeRequest: changeRequestForThread(key),
           });
           if (visibility === "archived") return null;
           if (visibility === "snoozed" && thread.snoozedUntil != null) {
@@ -533,7 +539,7 @@ export function SessionBoard() {
   }, [
     autoSettleAfterDays,
     autoSettleOnMerge,
-    changeRequestStateForThread,
+    changeRequestForThread,
     environmentById,
     lanes,
     organization.columns,
@@ -997,7 +1003,7 @@ export function SessionBoard() {
           environmentId={group.environmentId}
           workspacePath={group.workspacePath}
           threads={group.threads}
-          onChangeRequestState={handleChangeRequestState}
+          onChangeRequest={handleChangeRequest}
         />
       ))}
       {draftPromotionPairs.map((pair) => (
@@ -1173,7 +1179,7 @@ export function SessionBoard() {
                           entries={byRowColumn.get(column.key) ?? []}
                           draggingKey={draggingKey}
                           draggable={organization.columns === "workflow"}
-                          changeRequestStateForThread={changeRequestStateForThread}
+                          changeRequestForThread={changeRequestForThread}
                           onExpandDraft={(draftId) => setExpandedTarget({ kind: "draft", draftId })}
                           onDiscardDraft={clearDraftThread}
                         />
@@ -1622,7 +1628,7 @@ function LaneDropCell({
   entries,
   draggingKey,
   draggable,
-  changeRequestStateForThread,
+  changeRequestForThread,
   onExpandDraft,
   onDiscardDraft,
 }: {
@@ -1632,7 +1638,7 @@ function LaneDropCell({
   readonly entries: ReadonlyArray<PlacedEntry>;
   readonly draggingKey: string | null;
   readonly draggable: boolean;
-  readonly changeRequestStateForThread: (threadKey: string) => ChangeRequestStateLike | null;
+  readonly changeRequestForThread: (threadKey: string) => ChangeRequestSettleSource | null;
   readonly onExpandDraft: (draftId: DraftId) => void;
   readonly onDiscardDraft: (draftId: DraftId) => void;
 }) {
@@ -1678,7 +1684,7 @@ function LaneDropCell({
                   environmentLabel={entry.environmentLabel}
                   environmentConnection={entry.environmentConnection}
                   isDragging={draggingKey === entry.key}
-                  changeRequestState={changeRequestStateForThread(entry.key)}
+                  changeRequest={changeRequestForThread(entry.key)}
                 />
               ) : (
                 <BoardDraftCard

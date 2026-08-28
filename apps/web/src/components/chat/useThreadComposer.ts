@@ -245,6 +245,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const settings = useEnvironmentSettings(environmentId);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const serverConfigs = useServerConfigs();
+  const environmentConfig = serverConfigs.get(environmentId);
 
   const composerRef = useRef<import("./ChatComposer.tsx").ChatComposerHandle | null>(null);
   const promptRef = useRef("");
@@ -794,6 +795,9 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       composerRef,
       composerDraftTarget: threadRef,
       environmentId,
+      attachmentUploadsCapabilityKnown: environmentConfig !== undefined,
+      supportsAttachmentUploads:
+        environmentConfig?.environment.capabilities.attachmentUploads === true,
       routeKind: "server",
       routeThreadRef: threadRef,
       draftId: null,
@@ -811,6 +815,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       // detail, so there is no loading gate to report here.
       sendDisabledReason: null,
       isPreparingWorktree: false,
+      externalDrawerAttached: false,
       environmentUnavailable:
         environmentConnection.phase === "connected"
           ? null
@@ -826,17 +831,17 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       respondingRequestIds: EMPTY_RESPONDING_REQUEST_IDS,
       showPlanFollowUpPrompt: false,
       activeProposedPlan: null,
-      activePlan: null,
-      sidebarProposedPlan: null,
-      planSidebarLabel: "",
-      planSidebarOpen: false,
+      activeTasksProgress: null,
+      activeTaskSteps: null,
       runtimeMode,
       interactionMode,
       lockedProvider,
       providerStatuses,
       activeProjectDefaultModelSelection: project?.defaultModelSelection,
       activeThreadModelSelection: summary.modelSelection,
-      activeThreadActivities: thread?.activities,
+      activeContextWindow: null,
+      compactDisabled: false,
+      compactDisabledReason: null,
       resolvedTheme,
       settings,
       keybindings,
@@ -859,7 +864,6 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       toggleInteractionMode,
       handleRuntimeModeChange,
       handleInteractionModeChange,
-      togglePlanSidebar: NOOP,
       focusComposer,
       scheduleComposerFocus: focusComposer,
       setThreadError: NOOP,
@@ -870,6 +874,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       composerRef,
       threadRef,
       environmentId,
+      environmentConfig,
       thread,
       phase,
       isConnecting,
