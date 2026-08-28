@@ -190,6 +190,7 @@ interface BoardLaneStoreState {
   readonly collapsedLifecycleLaneIds: ReadonlyArray<BoardLaneId>;
   readonly organization: BoardOrganization;
   readonly setPlacement: (ref: ScopedThreadRef, laneId: BoardLaneId) => void;
+  readonly clearPlacement: (ref: ScopedThreadRef) => void;
   readonly recordLaneEntry: (ref: ScopedThreadRef, laneId: BoardLaneId, enteredAt?: string) => void;
   readonly setLaneOrder: (laneId: BoardLaneId, orderedThreadKeys: ReadonlyArray<string>) => void;
   readonly createLane: (lane: BoardLane) => void;
@@ -548,6 +549,29 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
               ...state.laneEntryByThreadKey,
               [threadKey]: { laneId, enteredAt: new Date().toISOString() },
             },
+            orderByLaneId: withoutThreadKey(state.orderByLaneId, threadKey),
+          };
+        }),
+      clearPlacement: (ref) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const appearsInOrder = Object.values(state.orderByLaneId).some((order) =>
+            order.includes(threadKey),
+          );
+          if (
+            !(threadKey in state.placementByThreadKey) &&
+            !(threadKey in state.laneEntryByThreadKey) &&
+            !appearsInOrder
+          ) {
+            return state;
+          }
+          const placementByThreadKey = { ...state.placementByThreadKey };
+          const laneEntryByThreadKey = { ...state.laneEntryByThreadKey };
+          delete placementByThreadKey[threadKey];
+          delete laneEntryByThreadKey[threadKey];
+          return {
+            placementByThreadKey,
+            laneEntryByThreadKey,
             orderByLaneId: withoutThreadKey(state.orderByLaneId, threadKey),
           };
         }),
