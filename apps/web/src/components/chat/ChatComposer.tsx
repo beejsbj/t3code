@@ -35,6 +35,7 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "@tanstack/react-router";
 import {
   clampCollapsedComposerCursor,
   type ComposerSubmissionIntent,
@@ -212,6 +213,13 @@ import {
 } from "./composerScrollGesture";
 import { selectionHoldsComposerOpen } from "./composerSelectionHold";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
+import { useBoardLaneStore } from "../../board/boardLaneStore";
+import {
+  localLaneChoiceQuery,
+  resolveLocalBoardCommand,
+  workflowBoardLanes,
+  type LocalBoardCommand,
+} from "../../board/localBoardCommands";
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = useCallback(
@@ -1388,6 +1396,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isEmbeddedCompact = density === "compact";
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
+  const navigate = useNavigate();
   // ------------------------------------------------------------------
   // Store subscriptions (prompt / images / terminal contexts)
   // ------------------------------------------------------------------
@@ -1477,6 +1486,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (store) => store.syncPersistedAttachments,
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
+  const boardLanes = useBoardLaneStore((store) => store.lanes);
+  const setBoardPlacement = useBoardLaneStore((store) => store.setPlacement);
+  const clearBoardPlacement = useBoardLaneStore((store) => store.clearPlacement);
 
   useEffect(() => {
     if (!attachmentUploadsCapabilityKnown) {
@@ -1909,6 +1921,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }));
     }
     if (composerTrigger.kind === "slash-command") {
+      const laneQuery = localLaneChoiceQuery(composerTrigger.query);
+      if (laneQuery !== null) {
+        const choices: ComposerCommandItem[] = [
+          ...workflowBoardLanes(boardLanes).map((lane) => ({
+            id: `local-lane:${lane.id}`,
+            type: "local-lane" as const,
+            laneId: lane.id,
+            label: lane.name,
+            description: `Place this thread in ${lane.name} (${lane.id})`,
+          })),
+          {
+            id: "local-lane:unplace",
+            type: "local-lane" as const,
+            laneId: null,
+            label: "Unplace",
+            description: "Remove explicit placement and return to Triage",
+          },
+        ];
+        if (!laneQuery) return choices;
+        return choices.filter((item) =>
+          `${item.label} ${item.description}`.toLocaleLowerCase().includes(laneQuery),
+        );
+      }
       const builtInSlashCommandItems = [
         {
           id: "slash:model",
@@ -1916,6 +1951,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           command: "model",
           label: "/model",
           description: "Switch response model for this thread",
+        },
+        {
+          id: "slash:board",
+          type: "slash-command",
+          command: "board",
+          label: "/board",
+          description: "Open the live session board",
+        },
+        {
+          id: "slash:lane",
+          type: "slash-command",
+          command: "lane",
+          label: "/lane",
+          description: "Place this thread in a workflow lane",
         },
         ...(planModeUiEnabled
           ? ([
@@ -1988,6 +2037,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return [];
   }, [
     compactSlashCommandAvailable,
+    boardLanes,
     composerTrigger,
     planModeUiEnabled,
     selectedProvider,
@@ -2156,6 +2206,59 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
     },
     [composerDraftTarget, setComposerDraftPrompt],
+  );
+
+  const clearLocalCommandPrompt = useCallback(() => {
+    promptRef.current = "";
+    setPrompt("");
+    setComposerCursor(0);
+    setComposerTrigger(null);
+    setComposerHighlightedItemId(null);
+  }, [promptRef, setPrompt]);
+
+  const executeLocalBoardCommand = useCallback(
+    (command: LocalBoardCommand) => {
+      if (command.type === "open-board") {
+        clearLocalCommandPrompt();
+        void navigate({ to: "/board" });
+        return;
+      }
+      if (routeKind !== "server") {
+        toastManager.add({
+          type: "warning",
+          title: "Could not run local board command",
+          description: "Open an existing thread before placing it in a board lane.",
+        });
+        return;
+      }
+      clearLocalCommandPrompt();
+      if (command.type === "unplace") {
+        clearBoardPlacement(routeThreadRef);
+        toastManager.add({
+          type: "success",
+          title: "Board placement removed",
+          description: "This thread now uses the default Triage placement.",
+        });
+        return;
+      }
+      setBoardPlacement(routeThreadRef, command.laneId);
+      const laneName =
+        boardLanes.find((lane) => lane.id === command.laneId)?.name ?? command.laneId;
+      toastManager.add({
+        type: "success",
+        title: `Moved to ${laneName}`,
+        description: "Placement was updated on this client only.",
+      });
+    },
+    [
+      boardLanes,
+      clearBoardPlacement,
+      clearLocalCommandPrompt,
+      navigate,
+      routeKind,
+      routeThreadRef,
+      setBoardPlacement,
+    ],
   );
 
   const addComposerImage = useCallback(
@@ -2702,6 +2805,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
+        if (item.command === "board") {
+          executeLocalBoardCommand({ type: "open-board" });
+          return;
+        }
+        if (item.command === "lane") {
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "/lane ", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
+          if (applied) setComposerHighlightedItemId(null);
+          return;
+        }
         if (!planModeUiEnabled) return;
         void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
@@ -2710,6 +2824,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (applied) {
           setComposerHighlightedItemId(null);
         }
+        return;
+      }
+      if (item.type === "local-lane") {
+        executeLocalBoardCommand(
+          item.laneId === null ? { type: "unplace" } : { type: "place", laneId: item.laneId },
+        );
         return;
       }
       if (item.type === "provider-slash-command") {
@@ -2751,6 +2871,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     },
     [
       applyPromptReplacement,
+      executeLocalBoardCommand,
       handleInteractionModeChange,
       planModeUiEnabled,
       resolveActiveComposerTrigger,
@@ -2827,6 +2948,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const submitComposer = useCallback(
     (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
+      const canBeLocalCommand =
+        activePendingProgress === null &&
+        composerImages.length === 0 &&
+        composerTerminalContexts.length === 0 &&
+        composerElementContexts.length === 0 &&
+        composerPreviewAnnotations.length === 0 &&
+        composerReviewComments.length === 0;
+      const localCommand = canBeLocalCommand
+        ? resolveLocalBoardCommand(
+            promptRef.current,
+            boardLanes,
+            routeKind === "server" ? routeThreadRef : null,
+          )
+        : { type: "not-local" as const };
+      if (localCommand.type !== "not-local") {
+        event?.preventDefault();
+        if (localCommand.type === "error") {
+          toastManager.add({
+            type: "warning",
+            title: "Could not run local board command",
+            description: localCommand.message,
+          });
+          return;
+        }
+        executeLocalBoardCommand(localCommand.command);
+        return;
+      }
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
         return;
@@ -2865,11 +3013,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activeThreadId,
       activePendingProgress,
+      boardLanes,
       blurMobileComposerAfterSend,
+      composerElementContexts.length,
+      composerImages.length,
+      composerPreviewAnnotations.length,
+      composerReviewComments.length,
+      composerTerminalContexts.length,
+      executeLocalBoardCommand,
       isSendDisabled,
       noProviderAvailable,
       onSend,
       promptRef,
+      routeKind,
+      routeThreadRef,
       shouldBlurMobileComposerOnSubmit,
     ],
   );

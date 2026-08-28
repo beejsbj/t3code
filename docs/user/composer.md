@@ -87,6 +87,18 @@ Show skills in slash menu**. Only skills enabled for the provider are listed.
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
+On web and desktop, `/board` opens the live session board. Use `/lane` from an existing thread to
+choose one of this client's current workflow lanes, or enter `/lane <lane name>` as a standalone
+command. `/lane unplace` removes the explicit placement and returns the thread to the default Triage
+placement. These commands update only the client displaying the board and are never sent to the
+provider. Lane choices update when lanes are created, renamed, or archived; each lane does not become
+a separate slash command.
+
+The React Native mobile app does not currently include the session board or register these two local
+commands. Slash text entered there continues through the normal provider path. On web and desktop,
+local commands act only when they are standalone and have no attachments or added context; otherwise
+the composer preserves the message as ordinary provider input.
+
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
