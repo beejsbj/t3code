@@ -712,12 +712,12 @@ describe("resolveShortcutCommand", () => {
   it("keeps the global board shortcut out of terminal input", () => {
     const keybindings = compile([
       {
-        shortcut: modShortcut("b", { shiftKey: true }),
+        shortcut: modShortcut("b", { altKey: true, shiftKey: true }),
         command: "board.open",
         whenAst: whenNot(whenIdentifier("terminalFocus")),
       },
     ]);
-    const shortcut = event({ key: "b", ctrlKey: true, shiftKey: true });
+    const shortcut = event({ key: "b", ctrlKey: true, altKey: true, shiftKey: true });
 
     assert.strictEqual(
       resolveShortcutCommand(shortcut, keybindings, {
