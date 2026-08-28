@@ -614,16 +614,76 @@ describe("resolveBoardScrollBehavior", () => {
 });
 
 describe("coordinateBoardReveal", () => {
-  it("waits for both smooth board scroll axes to settle before releasing composer focus", () => {
+  it("settles immediately when the browser is already at the reachable boundary", () => {
+    const eventTarget = new EventTarget();
+    const scrollTo = vi.fn();
+    const scroller = {
+      scrollTop: 500,
+      scrollLeft: 900,
+      scrollHeight: 1000,
+      scrollWidth: 1400,
+      clientHeight: 500,
+      clientWidth: 500,
+      scrollTo,
+      addEventListener: (type: "scrollend", listener: EventListener) =>
+        eventTarget.addEventListener(type, listener),
+      removeEventListener: (type: "scrollend", listener: EventListener) =>
+        eventTarget.removeEventListener(type, listener),
+    } as BoardRevealScroller;
+    const onSettled = vi.fn();
+
+    coordinateBoardReveal({
+      scroller,
+      target: { top: 800, left: 1200 },
+      behavior: "smooth",
+      onSettled,
+      onInterrupted: vi.fn(),
+    });
+
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(onSettled).toHaveBeenCalledOnce();
+  });
+
+  it("scrolls to the reachable boundary instead of the ideal centered target", () => {
     const eventTarget = new EventTarget();
     const scrollTo = vi.fn();
     const scroller: BoardRevealScroller = {
-      scrollTop: 0,
-      scrollLeft: 0,
+      scrollTop: 100,
+      scrollLeft: 200,
+      scrollHeight: 1000,
+      scrollWidth: 1400,
+      clientHeight: 500,
+      clientWidth: 500,
       scrollTo,
       addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
       removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
     };
+
+    coordinateBoardReveal({
+      scroller,
+      target: { top: 800, left: 1200 },
+      behavior: "auto",
+      onSettled: vi.fn(),
+      onInterrupted: vi.fn(),
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", top: 500, left: 900 });
+  });
+
+  it("waits for both smooth board scroll axes to settle before releasing composer focus", () => {
+    const eventTarget = new EventTarget();
+    const scrollTo = vi.fn();
+    const scroller = {
+      scrollTop: 0,
+      scrollLeft: 0,
+      scrollHeight: 2000,
+      scrollWidth: 3000,
+      clientHeight: 1000,
+      clientWidth: 1000,
+      scrollTo,
+      addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
+      removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
+    } satisfies BoardRevealScroller;
     const onSettled = vi.fn();
 
     coordinateBoardReveal({
@@ -631,13 +691,53 @@ describe("coordinateBoardReveal", () => {
       target: { top: 531, left: 1517.5 },
       behavior: "smooth",
       onSettled,
+      onInterrupted: vi.fn(),
     });
 
     expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 531, left: 1517.5 });
     expect(onSettled).not.toHaveBeenCalled();
 
+    scroller.scrollTop = 531;
+    scroller.scrollLeft = 1517.5;
     eventTarget.dispatchEvent(new Event("scrollend"));
     expect(onSettled).toHaveBeenCalledOnce();
+  });
+
+  it("cancels composer focus when user input interrupts the smooth reveal", () => {
+    const eventTarget = new EventTarget();
+    let scrollTop = 0;
+    let scrollLeft = 0;
+    const scroller: BoardRevealScroller = {
+      get scrollTop() {
+        return scrollTop;
+      },
+      get scrollLeft() {
+        return scrollLeft;
+      },
+      scrollHeight: 2000,
+      scrollWidth: 3000,
+      clientHeight: 1000,
+      clientWidth: 1000,
+      scrollTo: vi.fn(),
+      addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
+      removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
+    };
+    const onSettled = vi.fn();
+    const onInterrupted = vi.fn();
+
+    coordinateBoardReveal({
+      scroller,
+      target: { top: 531, left: 1517.5 },
+      behavior: "smooth",
+      onSettled,
+      onInterrupted,
+    });
+    scrollTop = 312;
+    scrollLeft = 829.5;
+    eventTarget.dispatchEvent(new Event("scrollend"));
+
+    expect(onSettled).not.toHaveBeenCalled();
+    expect(onInterrupted).toHaveBeenCalledOnce();
   });
 
   it("releases composer focus immediately when the board is already at the target", () => {
@@ -646,6 +746,10 @@ describe("coordinateBoardReveal", () => {
     const scroller: BoardRevealScroller = {
       scrollTop: 531,
       scrollLeft: 1517.5,
+      scrollHeight: 2000,
+      scrollWidth: 3000,
+      clientHeight: 1000,
+      clientWidth: 1000,
       scrollTo,
       addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
       removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
@@ -657,6 +761,7 @@ describe("coordinateBoardReveal", () => {
       target: { top: 531, left: 1517.5 },
       behavior: "smooth",
       onSettled,
+      onInterrupted: vi.fn(),
     });
 
     expect(scrollTo).not.toHaveBeenCalled();
@@ -669,6 +774,10 @@ describe("coordinateBoardReveal", () => {
     const scroller: BoardRevealScroller = {
       scrollTop: 0,
       scrollLeft: 0,
+      scrollHeight: 2000,
+      scrollWidth: 3000,
+      clientHeight: 1000,
+      clientWidth: 1000,
       scrollTo,
       addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
       removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
@@ -680,6 +789,7 @@ describe("coordinateBoardReveal", () => {
       target: { top: 531, left: 1517.5 },
       behavior: "auto",
       onSettled,
+      onInterrupted: vi.fn(),
     });
 
     expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", top: 531, left: 1517.5 });
@@ -691,21 +801,28 @@ describe("coordinateBoardReveal", () => {
     const scroller: BoardRevealScroller = {
       scrollTop: 0,
       scrollLeft: 0,
+      scrollHeight: 2000,
+      scrollWidth: 3000,
+      clientHeight: 1000,
+      clientWidth: 1000,
       scrollTo: vi.fn(),
       addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
       removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
     };
     const onSettled = vi.fn();
+    const onInterrupted = vi.fn();
 
     const cleanup = coordinateBoardReveal({
       scroller,
       target: { top: 531, left: 1517.5 },
       behavior: "smooth",
       onSettled,
+      onInterrupted,
     });
     cleanup();
     eventTarget.dispatchEvent(new Event("scrollend"));
 
     expect(onSettled).not.toHaveBeenCalled();
+    expect(onInterrupted).not.toHaveBeenCalled();
   });
 });
