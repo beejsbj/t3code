@@ -39,6 +39,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 
 import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
+import { boardLaneController } from "../../board/boardLaneController.ts";
 import {
   DraftId,
   composerDraftHasUserContent,
@@ -246,7 +247,6 @@ export function SessionBoard() {
   const placementByThreadKey = useBoardLaneStore((state) => state.placementByThreadKey);
   const laneEntryByThreadKey = useBoardLaneStore((state) => state.laneEntryByThreadKey);
   const orderByLaneId = useBoardLaneStore((state) => state.orderByLaneId);
-  const setPlacement = useBoardLaneStore((state) => state.setPlacement);
   const recordLaneEntry = useBoardLaneStore((state) => state.recordLaneEntry);
   const setLaneOrder = useBoardLaneStore((state) => state.setLaneOrder);
   const createLane = useBoardLaneStore((state) => state.createLane);
@@ -950,7 +950,9 @@ export function SessionBoard() {
             overKey: overEntry.key,
             insertAfter,
           });
-          if (entry.laneId !== targetLaneId) setPlacement(entry.ref, targetLaneId);
+          if (entry.laneId !== targetLaneId) {
+            boardLaneController.placeInLane(entry.ref, targetLaneId);
+          }
 
           // Persist a complete lane order. When grouped, preserve the other
           // alphabetical project slices around the reordered project slice.
@@ -969,7 +971,7 @@ export function SessionBoard() {
       }
 
       if (entry.laneId !== targetLaneId) {
-        setPlacement(entry.ref, targetLaneId);
+        boardLaneController.placeInLane(entry.ref, targetLaneId);
         return;
       }
 
@@ -986,7 +988,6 @@ export function SessionBoard() {
       organization.columns,
       organization.rows,
       setLaneOrder,
-      setPlacement,
       workflowColumns,
     ],
   );

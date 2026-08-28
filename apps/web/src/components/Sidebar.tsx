@@ -75,6 +75,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { requestBoardFocus, useBoardFocusStore } from "../board/boardFocusStore";
+import { boardLaneController } from "../board/boardLaneController";
 import {
   buildBoardPlacementContextMenuItems,
   boardLaneForPlacementAction,
@@ -1759,7 +1760,6 @@ export default function Sidebar() {
     reportFailure: false,
   });
   const boardLanes = useBoardLaneStore((state) => state.lanes);
-  const setBoardPlacement = useBoardLaneStore((state) => state.setPlacement);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({
@@ -3255,7 +3255,7 @@ export default function Sidebar() {
               return;
             }
           }
-          setBoardPlacement(threadRef, laneId);
+          boardLaneController.placeInLane(threadRef, laneId);
           return;
         }
         if (clicked.value?.startsWith("snooze:")) {
@@ -3431,7 +3431,6 @@ export default function Sidebar() {
       projectCwdByKey,
       serverConfigs,
       boardLanes,
-      setBoardPlacement,
       startThreadRename,
       updateThreadMetadata,
       timestampFormat,

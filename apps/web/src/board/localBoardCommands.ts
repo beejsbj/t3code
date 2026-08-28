@@ -1,7 +1,7 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import type { BoardLane, BoardLaneId } from "./boardLaneStore.ts";
-import { isBoardWorkflowLane, orderBoardLanes } from "./boardLanes.ts";
+import { resolveWorkflowBoardLane } from "./boardLanes.ts";
 
 export type LocalBoardCommand =
   | { readonly type: "open-board" }
@@ -14,14 +14,6 @@ export type LocalBoardCommandResult =
   | { readonly type: "command"; readonly command: LocalBoardCommand };
 
 const UNPLACE_ARGUMENTS = new Set(["none", "remove", "unplace", "unplaced"]);
-
-function normalized(value: string): string {
-  return value.trim().toLocaleLowerCase();
-}
-
-export function workflowBoardLanes(lanes: ReadonlyArray<BoardLane>): ReadonlyArray<BoardLane> {
-  return orderBoardLanes(lanes).filter(isBoardWorkflowLane);
-}
 
 /**
  * Local commands deliberately require the whole composer value. Anything
@@ -54,34 +46,15 @@ export function resolveLocalBoardCommand(
     };
   }
 
-  const workflowLanes = workflowBoardLanes(lanes);
-  const normalizedArgument = normalized(argument);
-  const idMatch = workflowLanes.find((lane) => normalized(lane.id) === normalizedArgument);
-  if (idMatch) {
-    return { type: "command", command: { type: "place", laneId: idMatch.id } };
-  }
+  const normalizedArgument = argument.toLocaleLowerCase();
   if (UNPLACE_ARGUMENTS.has(normalizedArgument)) {
     return { type: "command", command: { type: "unplace" } };
   }
-
-  const nameMatches = workflowLanes.filter((lane) => normalized(lane.name) === normalizedArgument);
-  if (nameMatches.length === 1) {
-    return {
-      type: "command",
-      command: { type: "place", laneId: nameMatches[0]!.id },
-    };
-  }
-  if (nameMatches.length > 1) {
-    return {
-      type: "error",
-      message: `More than one lane is named “${argument}”. Use a lane ID: ${nameMatches
-        .map((lane) => lane.id)
-        .join(", ")}.`,
-    };
-  }
+  const resolved = resolveWorkflowBoardLane(lanes, argument);
+  if (resolved.type === "error") return resolved;
   return {
-    type: "error",
-    message: `No workflow lane matches “${argument}”. Type /lane to choose from current lanes.`,
+    type: "command",
+    command: { type: "place", laneId: resolved.lane.id },
   };
 }
 

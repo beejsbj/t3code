@@ -3,11 +3,8 @@ import { ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { BoardLane } from "./boardLaneStore.ts";
-import {
-  localLaneChoiceQuery,
-  resolveLocalBoardCommand,
-  workflowBoardLanes,
-} from "./localBoardCommands.ts";
+import { localLaneChoiceQuery, resolveLocalBoardCommand } from "./localBoardCommands.ts";
+import { workflowBoardLanes } from "./boardLanes.ts";
 
 const threadRef = scopeThreadRef("env-a" as EnvironmentId, ThreadId.make("thread-1"));
 const lanes: ReadonlyArray<BoardLane> = [
