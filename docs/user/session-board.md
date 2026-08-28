@@ -2,7 +2,7 @@
 
 The session board is an alternate workspace for keeping several live coding-agent sessions visible
 at once. Open **Board** from the sidebar, choose **Open session board** in the command palette, or
-press `mod+shift+B`.
+press `mod+alt+shift+B`.
 
 The normal chat workspace remains available at `/`. The board lives at `/board` and uses the same
 sessions, messages, composer, approvals, questions, and provider controls. A server-backed card is

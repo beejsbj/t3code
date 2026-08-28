@@ -58,7 +58,7 @@ a shortcut.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
-`board.open` opens the session board from anywhere and defaults to `mod+shift+b`.
+`board.open` opens the session board from anywhere and defaults to `mod+alt+shift+b`.
 On the board, `board.openFocusedFullscreen` opens the focused real session in its
 full-screen route and defaults to `mod+alt+shift+enter`; draft cards do not have a
 full-screen session route.
