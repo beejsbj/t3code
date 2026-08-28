@@ -74,10 +74,12 @@ Choose **None** for rows to view all sessions directly in each column.
 
 ## Focus and Expand
 
-Selecting a session in the sidebar while `/board` is open smoothly reveals its whole card instead of
-navigating away. Select the focused session again, or use the expand control on its card, to open an
-80%-sized chat over the board. Focusing a card smoothly reveals the matching session in the sidebar.
-Close the expanded view to return to the same spatial workspace.
+Selecting a session in the sidebar while `/board` is open reveals its whole card instead of
+navigating away. The board scrolls in both directions when needed, including for cards packed beside
+each other, and keeps the card below the sticky board headings. The reveal is smooth unless reduced
+motion is enabled. Select the focused session again, or use the expand control on its card, to open
+an 80%-sized chat over the board. Focusing a card smoothly reveals the matching session in the
+sidebar. Close the expanded view to return to the same spatial workspace.
 
 A new thread started from the board opens in that expanded view. Once it contains user content,
 closing the expanded view leaves a Draft card on the board. Project rows have their own new-thread

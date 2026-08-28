@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { DraftId } from "../composerDraftStore.ts";
 import { useBoardFocusStore } from "./boardFocusStore.ts";
@@ -40,6 +42,24 @@ describe("boardFocusStore", () => {
     store.requestFocus("thread-a");
     expect(useBoardFocusStore.getState().request?.nonce).toBe(firstNonce + 1);
     expect(useBoardFocusStore.getState().acknowledgedFocus?.requestNonce).toBe(firstNonce);
+  });
+
+  it("keeps focus acknowledgement scoped to the selected environment", () => {
+    const firstKey = scopedThreadKey(
+      scopeThreadRef(EnvironmentId.make("environment-a"), ThreadId.make("shared-thread")),
+    );
+    const secondKey = scopedThreadKey(
+      scopeThreadRef(EnvironmentId.make("environment-b"), ThreadId.make("shared-thread")),
+    );
+    const store = useBoardFocusStore.getState();
+
+    store.requestFocus(firstKey);
+    store.acknowledgeFocus(firstKey, useBoardFocusStore.getState().request?.nonce ?? 0);
+    store.requestFocus(secondKey);
+
+    expect(secondKey).not.toBe(firstKey);
+    expect(useBoardFocusStore.getState().request?.threadKey).toBe(secondKey);
+    expect(useBoardFocusStore.getState().acknowledgedFocus).toBeNull();
   });
 
   it("clears only the matching pending request", () => {
