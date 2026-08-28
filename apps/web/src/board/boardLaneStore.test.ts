@@ -71,6 +71,21 @@ describe("boardLaneStore", () => {
     ).toBe("triage");
   });
 
+  it("clears only the selected scoped thread placement and manual order", () => {
+    const store = useBoardLaneStore.getState();
+    store.setPlacement(firstThread, "ready");
+    store.setPlacement(sameIdElsewhere, "ready");
+    store.setLaneOrder("ready", ["env-a:thread-1", "env-b:thread-1"]);
+
+    store.clearPlacement(firstThread);
+
+    const state = useBoardLaneStore.getState();
+    expect(selectBoardPlacement(state.placementByThreadKey, firstThread)).toBeUndefined();
+    expect(selectBoardPlacement(state.placementByThreadKey, sameIdElsewhere)).toBe("ready");
+    expect(state.laneEntryByThreadKey["env-a:thread-1"]).toBeUndefined();
+    expect(state.orderByLaneId).toEqual({ ready: ["env-b:thread-1"] });
+  });
+
   it("records a fresh lane-entry time and removes stale manual order on placement", () => {
     useBoardLaneStore.setState({
       orderByLaneId: { triage: ["env-a:thread-1"] },
