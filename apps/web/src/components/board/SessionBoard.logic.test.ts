@@ -22,6 +22,7 @@ import {
   rowKeyFromSwimlaneDroppableId,
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
+  resolveBoardScrollBehavior,
   resolveBoardScrollTarget,
   resolveBoardThreadVisibility,
   shouldHideSwimlaneProjectHeader,
@@ -568,5 +569,23 @@ describe("resolveBoardScrollTarget", () => {
         scrollLeft: 0,
       }),
     ).toEqual({ top: 730, left: 0 });
+  });
+
+  it("reveals a packed card through both board scroll axes below sticky headers", () => {
+    expect(
+      resolveBoardScrollTarget({
+        card: { top: 940, bottom: 1460, left: 820, right: 1200 },
+        viewport: { top: 160, bottom: 760, left: 120, right: 900 },
+        scrollTop: 500,
+        scrollLeft: 300,
+      }),
+    ).toEqual({ top: 1240, left: 800 });
+  });
+});
+
+describe("resolveBoardScrollBehavior", () => {
+  it("reveals immediately when the client requests reduced motion", () => {
+    expect(resolveBoardScrollBehavior(false)).toBe("smooth");
+    expect(resolveBoardScrollBehavior(true)).toBe("auto");
   });
 });
