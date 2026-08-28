@@ -93,6 +93,7 @@ const EMPTY_PENDING_USER_INPUTS: PendingUserInput[] = [];
 const EMPTY_RESPONDING_REQUEST_IDS: ApprovalRequestId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProvider[] = [];
 const EMPTY_CHAT_MESSAGES: ReadonlyArray<ChatMessage> = [];
+const EMPTY_COMPOSER_BANNER_ITEMS = [] as const;
 // Shared no-op for the handful of board composer callbacks that are inert
 // (plan sidebar, focus scheduling, etc. don't apply to embedded cards). A
 // zero-arg function is structurally assignable to every callback prop type
@@ -827,7 +828,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       // detail, so there is no loading gate to report here.
       sendDisabledReason: null,
       isPreparingWorktree: false,
-      externalDrawerAttached: false,
+      bannerItems: EMPTY_COMPOSER_BANNER_ITEMS,
       environmentUnavailable:
         environmentConnection.phase === "connected"
           ? null
@@ -845,6 +846,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       activeProposedPlan: null,
       activeTasksProgress: null,
       activeTaskSteps: null,
+      threadSyncPhase: null,
       runtimeMode,
       interactionMode,
       lockedProvider,

@@ -75,6 +75,11 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "chat.new",
   "chat.newLocal",
   "editor.openFavorite",
+  "board.focusLeft",
+  "board.focusRight",
+  "board.focusUp",
+  "board.focusDown",
+  "board.toggleExpanded",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;

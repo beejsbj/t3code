@@ -745,6 +745,31 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("limits board navigation bindings to the board context", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("arrowleft", { altKey: true }),
+        command: "board.focusLeft",
+        whenAst: whenIdentifier("boardOpen"),
+      },
+    ]);
+    const shortcut = event({ key: "ArrowLeft", ctrlKey: true, altKey: true });
+
+    assert.isNull(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: false },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: true },
+      }),
+      "board.focusLeft",
+    );
+  });
+
   it("returns dynamic script commands", () => {
     const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 
