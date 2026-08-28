@@ -10,6 +10,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { rectSortingStrategy, SortableContext } from "@dnd-kit/sortable";
+import { useAtomValue } from "@effect/atom-react";
 import {
   scopeProjectRef,
   scopeThreadRef,
@@ -40,6 +41,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { boardLaneController } from "../../board/boardLaneController.ts";
+import { onBoardNavigation, type BoardNavigationCommand } from "../../board/boardNavigationBus.ts";
 import {
   DraftId,
   composerDraftHasUserContent,
@@ -91,6 +93,10 @@ import {
 import type { SidebarThreadSummary } from "../../types.ts";
 import { useNowMinute } from "../../hooks/useNowMinute.ts";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread.ts";
+import { isCommandPaletteOpen } from "../../commandPaletteBus.ts";
+import { resolveShortcutCommand } from "../../keybindings.ts";
+import { isTerminalFocused } from "../../lib/terminalFocus.ts";
+import { primaryServerKeybindingsAtom } from "../../state/server.ts";
 import { Button } from "../ui/button.tsx";
 import { Input } from "../ui/input.tsx";
 import {
@@ -128,9 +134,11 @@ import {
   resolveBoardScrollBehavior,
   resolveBoardScrollTarget,
   resolveBoardViewport,
+  resolveSpatialBoardTarget,
   resolveBoardThreadVisibility,
   scheduleBoardRevealDisconnectCleanup,
   isThreadOnBoard,
+  shouldIgnoreBoardKeyboardTarget,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
 
@@ -198,7 +206,17 @@ function findCardNode(scroller: HTMLElement | null, threadKey: string): HTMLElem
   return null;
 }
 
+function readBoardNavigationItems(scroller: HTMLElement | null) {
+  return [...(scroller?.querySelectorAll<HTMLElement>("[data-board-card-key]") ?? [])].flatMap(
+    (node) => {
+      const key = node.dataset.boardCardKey;
+      return key ? [{ key, rect: node.getBoundingClientRect() }] : [];
+    },
+  );
+}
+
 export function SessionBoard() {
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const threads = useThreadShells();
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
@@ -776,6 +794,141 @@ export function SessionBoard() {
   const setExpandedThread = useBoardFocusStore((state) => state.setExpanded);
   const placedRef = useRef(orderedPlaced);
   placedRef.current = orderedPlaced;
+
+  const revealCard = useCallback((cardKey: string) => {
+    const frame = requestAnimationFrame(() => {
+      const scroller = scrollerRef.current;
+      const node = findCardNode(scroller, cardKey);
+      if (scroller === null || node === null) return;
+      const raw = scroller.getBoundingClientRect();
+      const laneHeaderHeight =
+        scroller.querySelector<HTMLElement>("[data-board-lane-header-row]")?.offsetHeight ?? 0;
+      const projectHeaderHeight =
+        scroller.querySelector<HTMLElement>("[data-board-project-header]")?.offsetHeight ?? 0;
+      const target = resolveBoardScrollTarget({
+        card: node.getBoundingClientRect(),
+        viewport: {
+          ...raw,
+          top: Math.min(raw.bottom, raw.top + laneHeaderHeight + projectHeaderHeight),
+        },
+        scrollTop: scroller.scrollTop,
+        scrollLeft: scroller.scrollLeft,
+      });
+      scroller.scrollTo({ ...target, behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const setExpandedEntry = useCallback(
+    (entry: PlacedEntry | null) => {
+      setExpandedThread(
+        entry === null
+          ? null
+          : entry.kind === "thread"
+            ? { kind: "thread", threadKey: entry.key }
+            : { kind: "draft", draftId: entry.draftId },
+      );
+    },
+    [setExpandedThread],
+  );
+
+  const runBoardNavigation = useCallback(
+    (command: BoardNavigationCommand) => {
+      const entries = placedRef.current;
+      const expandedKey =
+        expandedTarget?.kind === "thread"
+          ? expandedTarget.threadKey
+          : expandedTarget?.kind === "draft"
+            ? (entries.find(
+                (entry) => entry.kind === "draft" && entry.draftId === expandedTarget.draftId,
+              )?.key ?? null)
+            : null;
+      const focusedKey = expandedKey ?? useBoardFocusStore.getState().focusedThreadKey;
+      const navigationItems = readBoardNavigationItems(scrollerRef.current);
+
+      if (command === "board.toggleExpanded") {
+        if (expandedTarget !== null) {
+          setExpandedEntry(null);
+          requestAnimationFrame(() =>
+            findCardNode(scrollerRef.current, focusedKey ?? "")?.focus({ preventScroll: true }),
+          );
+          return;
+        }
+        const firstKey = resolveSpatialBoardTarget({
+          items: navigationItems,
+          currentKey: null,
+          direction: "down",
+        })?.key;
+        const mountedFocusedKey = navigationItems.some((item) => item.key === focusedKey)
+          ? focusedKey
+          : null;
+        const entry = entries.find(
+          (candidate) => candidate.key === (mountedFocusedKey ?? firstKey),
+        );
+        if (entry === undefined) return;
+        setFocusedThreadKey(entry.key);
+        setExpandedEntry(entry);
+        revealCard(entry.key);
+        return;
+      }
+
+      const direction =
+        command === "board.focusLeft"
+          ? "left"
+          : command === "board.focusRight"
+            ? "right"
+            : command === "board.focusUp"
+              ? "up"
+              : "down";
+      const target = resolveSpatialBoardTarget({
+        items: navigationItems,
+        currentKey: focusedKey,
+        direction,
+      });
+      if (target === null) return;
+      const entry = entries.find((candidate) => candidate.key === target.key);
+      if (entry === undefined) return;
+      setFocusedThreadKey(entry.key);
+      if (expandedTarget !== null) setExpandedEntry(entry);
+      else findCardNode(scrollerRef.current, entry.key)?.focus({ preventScroll: true });
+      revealCard(entry.key);
+    },
+    [expandedTarget, revealCard, setExpandedEntry, setFocusedThreadKey],
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        isCommandPaletteOpen() ||
+        shouldIgnoreBoardKeyboardTarget(event.target)
+      ) {
+        return;
+      }
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: { boardOpen: true, terminalFocus: isTerminalFocused() },
+      });
+      if (
+        command !== "board.focusLeft" &&
+        command !== "board.focusRight" &&
+        command !== "board.focusUp" &&
+        command !== "board.focusDown" &&
+        command !== "board.toggleExpanded"
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      runBoardNavigation(command);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    const removeBoardNavigationListener = onBoardNavigation(runBoardNavigation);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      removeBoardNavigationListener();
+    };
+  }, [keybindings, runBoardNavigation]);
 
   useEffect(() => {
     if (focusRequest === null) return;

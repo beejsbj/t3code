@@ -82,6 +82,17 @@ motion is enabled. Select the focused session again, or use the expand control o
 an 80%-sized chat over the board. Focusing a card smoothly reveals the matching session in the
 sidebar. Close the expanded view to return to the same spatial workspace.
 
+Use `mod+alt+ArrowLeft`, `mod+alt+ArrowRight`, `mod+alt+ArrowUp`, and
+`mod+alt+ArrowDown` to move to the nearest card in that direction. Movement stops at an edge and
+does not wrap. If no card is focused, the first visible card in reading order is selected.
+`mod+alt+Enter` expands or collapses the focused card. Directional movement while expanded switches
+the sheet to the neighboring session. These commands do not take over input from composers, form
+fields, terminals, menus, dialogs, or resize handles.
+
+All five actions are also available in the command palette while the board is open. Their shortcuts
+can be changed in **Settings** → **Keybindings**; the defaults use the `boardOpen` condition so they
+do not claim those keys elsewhere in the app.
+
 A new thread started from the board opens in that expanded view. Once it contains user content,
 closing the expanded view leaves a Draft card on the board. Project rows have their own new-thread
 button and supply the project automatically. On first send, the Draft card hands off to the real
@@ -90,7 +101,7 @@ classic full-screen route flow. Returning to **Board** always closes any old exp
 
 The responsive web board remains available at phone-sized browser widths. Adaptive multi-card
 packing is intended for desktop-width web and the desktop app. A dedicated React Native board is not
-included yet.
+included yet, including these keyboard commands.
 
 From a web or desktop thread composer, `/board` opens this board and `/lane` lists the current
 workflow lanes. Choosing a lane updates only that scoped environment and thread on the current
