@@ -1,5 +1,6 @@
 import {
   AgentBoardError,
+  type CommandId,
   type AgentBoardCommand,
   type AgentBoardHostResponse,
   type AgentBoardResult,
@@ -21,6 +22,7 @@ interface Host {
 
 interface Pending {
   readonly clientId: number;
+  readonly queue: Host["queue"];
   readonly deferred: Deferred.Deferred<AgentBoardResult, AgentBoardError>;
 }
 
@@ -28,12 +30,21 @@ interface State {
   readonly hosts: ReadonlyMap<number, Host>;
   readonly bindings: ReadonlyMap<ThreadId, number>;
   readonly pending: ReadonlyMap<string, Pending>;
+  readonly turnOrigins: ReadonlyMap<
+    CommandId,
+    { readonly clientId: number; readonly accepted: boolean }
+  >;
 }
 
 export interface BoardAgentBrokerShape {
   readonly connect: (clientId: number) => Effect.Effect<Stream.Stream<AgentBoardStreamEvent>>;
   readonly respond: (clientId: number, response: AgentBoardHostResponse) => Effect.Effect<void>;
-  readonly bind: (threadId: ThreadId, clientId: number) => Effect.Effect<void>;
+  readonly reserveTurnOrigin: (commandId: CommandId, clientId: number) => Effect.Effect<void>;
+  readonly cancelTurnOrigin: (commandId: CommandId, clientId: number) => Effect.Effect<void>;
+  readonly acceptTurnOrigin: (
+    commandId: CommandId | null,
+    threadId: ThreadId,
+  ) => Effect.Effect<void>;
   readonly invoke: (
     threadId: ThreadId,
     command: AgentBoardCommand,
@@ -50,6 +61,7 @@ export const make = Effect.gen(function* () {
     hosts: new Map(),
     bindings: new Map(),
     pending: new Map(),
+    turnOrigins: new Map(),
   });
 
   const disconnect = Effect.fn("BoardAgentBroker.disconnect")(function* (
@@ -64,7 +76,7 @@ export const make = Effect.gen(function* () {
       const pending = new Map(current.pending);
       const failures: Array<Pending> = [];
       for (const [requestId, entry] of current.pending) {
-        if (entry.clientId === clientId) {
+        if (entry.clientId === clientId && entry.queue === queue) {
           pending.delete(requestId);
           failures.push(entry);
         }
@@ -92,13 +104,38 @@ export const make = Effect.gen(function* () {
           Effect.acquireRelease(
             Effect.gen(function* () {
               const queue = yield* Queue.unbounded<AgentBoardStreamEvent>();
-              const previous = yield* SynchronizedRef.modify(state, (current) => {
+              const replaced = yield* SynchronizedRef.modify(state, (current) => {
                 const hosts = new Map(current.hosts);
                 const old = hosts.get(clientId);
                 hosts.set(clientId, { queue });
-                return [old, { ...current, hosts }] as const;
+                const pending = new Map(current.pending);
+                const disconnected: Array<Pending> = [];
+                if (old) {
+                  for (const [requestId, entry] of current.pending) {
+                    if (entry.queue === old.queue) {
+                      pending.delete(requestId);
+                      disconnected.push(entry);
+                    }
+                  }
+                }
+                return [
+                  { old, disconnected },
+                  { ...current, hosts, pending },
+                ] as const;
               });
-              if (previous) yield* Queue.shutdown(previous.queue);
+              yield* Effect.forEach(
+                replaced.disconnected,
+                ({ deferred }) =>
+                  Deferred.fail(
+                    deferred,
+                    new AgentBoardError({
+                      message:
+                        "The client board host was replaced while the command was in flight.",
+                    }),
+                  ),
+                { discard: true },
+              );
+              if (replaced.old) yield* Queue.shutdown(replaced.old.queue);
               yield* Queue.offer(queue, { type: "connected" });
               return queue;
             }),
@@ -129,13 +166,52 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const bind: BoardAgentBrokerShape["bind"] = Effect.fn("BoardAgentBroker.bind")(
-    (threadId, clientId) =>
-      SynchronizedRef.update(state, (current) => {
-        const bindings = new Map(current.bindings);
-        bindings.set(threadId, clientId);
-        return { ...current, bindings };
-      }),
+  const reserveTurnOrigin: BoardAgentBrokerShape["reserveTurnOrigin"] = Effect.fn(
+    "BoardAgentBroker.reserveTurnOrigin",
+  )((commandId, clientId) =>
+    SynchronizedRef.update(state, (current) => {
+      if (current.turnOrigins.has(commandId)) return current;
+      const turnOrigins = new Map(current.turnOrigins);
+      turnOrigins.set(commandId, { clientId, accepted: false });
+      while (turnOrigins.size > 2_048) {
+        const oldest = turnOrigins.keys().next().value;
+        if (oldest === undefined) break;
+        turnOrigins.delete(oldest);
+      }
+      return { ...current, turnOrigins };
+    }),
+  );
+
+  const cancelTurnOrigin: BoardAgentBrokerShape["cancelTurnOrigin"] = Effect.fn(
+    "BoardAgentBroker.cancelTurnOrigin",
+  )((commandId, clientId) =>
+    SynchronizedRef.update(state, (current) => {
+      const origin = current.turnOrigins.get(commandId);
+      if (!origin || origin.accepted || origin.clientId !== clientId) return current;
+      const turnOrigins = new Map(current.turnOrigins);
+      turnOrigins.delete(commandId);
+      return { ...current, turnOrigins };
+    }),
+  );
+
+  const acceptTurnOrigin: BoardAgentBrokerShape["acceptTurnOrigin"] = Effect.fn(
+    "BoardAgentBroker.acceptTurnOrigin",
+  )((commandId, threadId) =>
+    SynchronizedRef.update(state, (current) => {
+      if (commandId === null) return current;
+      const origin = current.turnOrigins.get(commandId);
+      if (!origin || origin.accepted) return current;
+      const bindings = new Map(current.bindings);
+      bindings.set(threadId, origin.clientId);
+      const turnOrigins = new Map(current.turnOrigins);
+      turnOrigins.set(commandId, { ...origin, accepted: true });
+      while (turnOrigins.size > 2_048) {
+        const oldest = turnOrigins.keys().next().value;
+        if (oldest === undefined) break;
+        turnOrigins.delete(oldest);
+      }
+      return { ...current, bindings, turnOrigins };
+    }),
   );
 
   const invoke: BoardAgentBrokerShape["invoke"] = Effect.fn("BoardAgentBroker.invoke")(
@@ -144,10 +220,10 @@ export const make = Effect.gen(function* () {
       const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
       const host = yield* SynchronizedRef.modify(state, (current) => {
         const clientId = current.bindings.get(threadId);
-        const connection = clientId ? current.hosts.get(clientId) : undefined;
-        if (!clientId || !connection) return [undefined, current] as const;
+        const connection = clientId === undefined ? undefined : current.hosts.get(clientId);
+        if (clientId === undefined || !connection) return [undefined, current] as const;
         const pending = new Map(current.pending);
-        pending.set(requestId, { clientId, deferred });
+        pending.set(requestId, { clientId, queue: connection.queue, deferred });
         return [
           { clientId, connection },
           { ...current, pending },
@@ -195,7 +271,14 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  return { connect, respond, bind, invoke } satisfies BoardAgentBrokerShape;
+  return {
+    connect,
+    respond,
+    reserveTurnOrigin,
+    cancelTurnOrigin,
+    acceptTurnOrigin,
+    invoke,
+  } satisfies BoardAgentBrokerShape;
 });
 
 export const layer = Layer.effect(BoardAgentBroker, make);
