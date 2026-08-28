@@ -15,8 +15,8 @@ import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useCallback } from "react";
 
 import {
-  boardLaneForPlacementAction,
-  buildBoardPlacementContextMenuItems,
+  boardLaneForMoveAction,
+  buildBoardLaneMoveContextMenuItems,
 } from "../board/boardPlacementMenu.ts";
 import { boardLaneController } from "../board/boardLaneController.ts";
 import type { BoardLane } from "../board/boardLaneStore.ts";
@@ -69,7 +69,7 @@ export function useThreadActionMenu(input: {
   /** PR feeding auto-settle classification, as resolved by the caller. */
   readonly changeRequest: ChangeRequestSettleSource | null;
   readonly onStartRename: () => void;
-  /** Board surfaces append lane placement to the otherwise shared menu. */
+  /** Board surfaces append lane moves to the otherwise shared menu. */
   readonly boardLanes?: ReadonlyArray<BoardLane>;
 }) {
   const { threadRef, projectCwd, changeRequest, onStartRename, boardLanes } = input;
@@ -207,8 +207,7 @@ export function useThreadActionMenu(input: {
           });
         const isSnoozed = supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() });
         // Snooze owns the visible lifecycle while it is active, matching the
-        // sidebar partition. Any settlement underneath is still reversed if
-        // the user explicitly places the thread back in a workflow lane.
+        // sidebar partition.
         const isSettled = !isSnoozed && isEffectivelySettled;
         const items = [
           ...buildThreadActionMenuItems({
@@ -222,20 +221,15 @@ export function useThreadActionMenu(input: {
             supports,
             snoozePresets,
           }),
-          ...(boardLanes ? buildBoardPlacementContextMenuItems(boardLanes) : []),
+          ...(boardLanes ? buildBoardLaneMoveContextMenuItems(boardLanes) : []),
         ];
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
-        const laneId = boardLanes
-          ? boardLaneForPlacementAction(clicked.value, boardLanes)
-          : undefined;
+        const laneId = boardLanes ? boardLaneForMoveAction(clicked.value, boardLanes) : undefined;
         if (laneId !== undefined) {
-          // Lifecycle is server-owned. Moving a parked thread back to a
-          // workflow lane performs the same reverse actions as the sidebar
-          // before saving its client-local spatial placement.
-          if (isSnoozed && !(await unsnooze())) return;
-          if (isEffectivelySettled && !(await unsettle())) return;
-          boardLaneController.placeInLane(threadRef, laneId);
+          // Lane overrides are independent of server-owned lifecycle. Parked
+          // threads remain parked and use this lane only if they become active.
+          boardLaneController.moveToLane(threadRef, laneId);
           return;
         }
         const action = clicked.value as ThreadActionMenuId;

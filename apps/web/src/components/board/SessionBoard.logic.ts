@@ -13,9 +13,9 @@ export const BOARD_WORKFLOW_COLUMN_WIDTH = 380;
 export type BoardThreadVisibility = "visible" | "archived" | "snoozed" | "settled";
 
 /**
- * Lifecycle state stays server-backed and projects into its fixed board lane,
- * while local workflow placement survives underneath so a woken or
- * re-engaged thread returns to the same spatial slot.
+ * Lifecycle state stays server-backed. The board consumes only `visible`;
+ * preserving the other classifications lets its snooze wake timer restore a
+ * thread without inventing separate board membership.
  */
 export function resolveBoardThreadVisibility(
   thread: OrchestrationThreadShell,
@@ -55,6 +55,11 @@ export function resolveBoardThreadVisibility(
   }
 
   return "visible";
+}
+
+/** The board is the active sidebar projection, not a separately managed set. */
+export function isThreadOnBoard(visibility: BoardThreadVisibility): boolean {
+  return visibility === "visible";
 }
 
 /** Every local lane keeps its chosen width for the whole composed board. */

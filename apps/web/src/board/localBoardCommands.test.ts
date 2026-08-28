@@ -33,18 +33,18 @@ describe("resolveLocalBoardCommand", () => {
   it("resolves lane IDs before names and supports names with spaces", () => {
     expect(resolveLocalBoardCommand("/lane in-progress", lanes, threadRef)).toEqual({
       type: "command",
-      command: { type: "place", laneId: "in-progress" },
+      command: { type: "move", laneId: "in-progress" },
     });
     expect(resolveLocalBoardCommand("/lane In Progress", lanes, threadRef)).toEqual({
       type: "command",
-      command: { type: "place", laneId: "in-progress" },
+      command: { type: "move", laneId: "in-progress" },
     });
   });
 
   it("reports ambiguous and missing names with a deterministic recovery", () => {
     expect(resolveLocalBoardCommand("/lane review", lanes, threadRef)).toEqual({
       type: "command",
-      command: { type: "place", laneId: "review" },
+      command: { type: "move", laneId: "review" },
     });
 
     const duplicateNames = lanes.map((lane) =>
@@ -60,14 +60,18 @@ describe("resolveLocalBoardCommand", () => {
     });
   });
 
-  it("supports unplacing and rejects draft-thread placement", () => {
-    expect(resolveLocalBoardCommand("/lane unplace", lanes, threadRef)).toEqual({
+  it("treats Triage as a move and rejects draft-thread moves", () => {
+    expect(resolveLocalBoardCommand("/lane triage", lanes, threadRef)).toEqual({
       type: "command",
-      command: { type: "unplace" },
+      command: { type: "move", laneId: "triage" },
+    });
+    expect(resolveLocalBoardCommand("/lane unplace", lanes, threadRef)).toEqual({
+      type: "error",
+      message: "No workflow lane matches “unplace”. Type /lane to choose from current lanes.",
     });
     expect(resolveLocalBoardCommand("/lane ready", lanes, null)).toEqual({
       type: "error",
-      message: "Open an existing thread before placing it in a board lane.",
+      message: "Open an existing thread before moving it to a board lane.",
     });
   });
 

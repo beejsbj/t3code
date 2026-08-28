@@ -8,7 +8,7 @@ import {
   DEFAULT_BOARD_ORGANIZATION,
   useBoardLaneStore,
 } from "./boardLaneStore.ts";
-import { boardLaneForPlacementAction } from "./boardPlacementMenu.ts";
+import { boardLaneForMoveAction } from "./boardPlacementMenu.ts";
 import { resolveLocalBoardCommand } from "./localBoardCommands.ts";
 
 const firstThread = scopeThreadRef("env-a" as EnvironmentId, ThreadId.make("thread-1"));
@@ -42,42 +42,49 @@ describe("boardLaneController", () => {
       description: "Ready to start",
       order: 2,
     });
-    expect(controller.place(firstThread, "Queued")).toEqual({
-      type: "placed",
-      placement: {
-        explicit: true,
+    expect(controller.move(firstThread, "Queued")).toEqual({
+      type: "moved",
+      state: {
+        overridden: true,
         lane: expect.objectContaining({ id: "ready", name: "Queued" }),
       },
     });
 
     useBoardLaneStore.getState().archiveLane("ready");
-    expect(controller.place(firstThread, "Queued")).toEqual({
+    expect(controller.move(firstThread, "Queued")).toEqual({
       type: "error",
       message: "No workflow lane matches “Queued”. Type /lane to choose from current lanes.",
     });
   });
 
   it("keeps same-ID threads in different environments scoped", () => {
-    controller.placeInLane(firstThread, "ready");
-    controller.placeInLane(sameIdElsewhere, "review");
+    controller.moveToLane(firstThread, "ready");
+    controller.moveToLane(sameIdElsewhere, "review");
 
-    expect(controller.placement(firstThread).lane?.id).toBe("ready");
-    expect(controller.placement(sameIdElsewhere).lane?.id).toBe("review");
-    expect(controller.unplace(firstThread)).toEqual({
-      explicit: false,
+    expect(controller.current(firstThread).lane?.id).toBe("ready");
+    expect(controller.current(sameIdElsewhere).lane?.id).toBe("review");
+    expect(controller.move(firstThread, "triage")).toEqual({
+      type: "moved",
+      state: {
+        overridden: false,
+        lane: expect.objectContaining({ id: "triage" }),
+      },
+    });
+    expect(controller.current(firstThread)).toEqual({
+      overridden: false,
       lane: expect.objectContaining({ id: "triage" }),
     });
-    expect(controller.placement(sameIdElsewhere).lane?.id).toBe("review");
+    expect(controller.current(sameIdElsewhere).lane?.id).toBe("review");
   });
 
-  it("converges menu, /lane, and agent-style exact-name placement on one transition", () => {
-    const menuLane = boardLaneForPlacementAction(
-      "place-in-lane:in-progress",
+  it("converges menu, /lane, and agent-style exact-name moves on one transition", () => {
+    const menuLane = boardLaneForMoveAction(
+      "move-to-lane:in-progress",
       useBoardLaneStore.getState().lanes,
     );
     expect(menuLane).toBe("in-progress");
-    controller.placeInLane(firstThread, menuLane!);
-    expect(controller.placement(firstThread).lane?.id).toBe("in-progress");
+    controller.moveToLane(firstThread, menuLane!);
+    expect(controller.current(firstThread).lane?.id).toBe("in-progress");
 
     const composer = resolveLocalBoardCommand(
       "/lane Review",
@@ -85,12 +92,12 @@ describe("boardLaneController", () => {
       firstThread,
     );
     expect(composer.type).toBe("command");
-    if (composer.type === "command" && composer.command.type === "place") {
-      controller.placeInLane(firstThread, composer.command.laneId);
+    if (composer.type === "command" && composer.command.type === "move") {
+      controller.moveToLane(firstThread, composer.command.laneId);
     }
-    expect(controller.placement(firstThread).lane?.id).toBe("review");
+    expect(controller.current(firstThread).lane?.id).toBe("review");
 
-    controller.place(firstThread, "ready");
-    expect(controller.placement(firstThread).lane?.id).toBe("ready");
+    controller.move(firstThread, "ready");
+    expect(controller.current(firstThread).lane?.id).toBe("ready");
   });
 });

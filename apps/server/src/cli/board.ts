@@ -1,7 +1,7 @@
 import {
   AgentBoardResult,
   type AgentBoardCommand,
-  type AgentBoardPlacement,
+  type AgentBoardLaneState,
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
@@ -23,11 +23,11 @@ class BoardCliError extends CliError.UserError {
 
 const fail = (message: string) => Effect.fail(new BoardCliError({ cause: message }));
 
-const placementText = (placement: AgentBoardPlacement): string => {
-  if (!placement.lane) return "No board lane is available.";
-  return placement.explicit
-    ? `Placed in ${placement.lane.name} (${placement.lane.id}).`
-    : `Not explicitly placed; effective lane is ${placement.lane.name} (${placement.lane.id}).`;
+const laneText = (state: AgentBoardLaneState): string => {
+  if (!state.lane) return "No board lane is available.";
+  return state.overridden
+    ? `Current lane: ${state.lane.name} (${state.lane.id}); local override stored.`
+    : `Current lane: ${state.lane.name} (${state.lane.id}); using the default lane.`;
 };
 
 const runBoardCommandRaw = Effect.fn("cli.board.run")(function* (command: AgentBoardCommand) {
@@ -67,10 +67,9 @@ const runBoardCommandRaw = Effect.fn("cli.board.run")(function* (command: AgentB
         result.lanes.map((lane) => `${lane.id}\t${lane.name}\t${lane.description}`).join("\n"),
       );
       break;
-    case "placement":
-    case "place":
-    case "unplace":
-      yield* Console.log(placementText(result.placement));
+    case "lane":
+    case "move":
+      yield* Console.log(laneText(result.state));
       break;
   }
 });
@@ -83,22 +82,17 @@ const lanesCommand = Command.make("lanes").pipe(
   Command.withHandler(() => runBoardCommand({ type: "lanes" })),
 );
 
-const placementCommand = Command.make("placement").pipe(
-  Command.withDescription("Show this thread's current local board placement."),
-  Command.withHandler(() => runBoardCommand({ type: "placement" })),
+const laneCommand = Command.make("lane").pipe(
+  Command.withDescription("Show this thread's current board lane."),
+  Command.withHandler(() => runBoardCommand({ type: "lane" })),
 );
 
-const placeCommand = Command.make("place", { lane: Argument.string("lane") }).pipe(
-  Command.withDescription("Place this thread by lane ID or exact lane name."),
-  Command.withHandler(({ lane }) => runBoardCommand({ type: "place", lane })),
-);
-
-const unplaceCommand = Command.make("unplace").pipe(
-  Command.withDescription("Remove this thread's explicit local board placement."),
-  Command.withHandler(() => runBoardCommand({ type: "unplace" })),
+const moveCommand = Command.make("move", { lane: Argument.string("lane") }).pipe(
+  Command.withDescription("Move this thread by lane ID or exact lane name."),
+  Command.withHandler(({ lane }) => runBoardCommand({ type: "move", lane })),
 );
 
 export const boardCommand = Command.make("board").pipe(
-  Command.withDescription("Operate the originating client's local board placement."),
-  Command.withSubcommands([lanesCommand, placementCommand, placeCommand, unplaceCommand]),
+  Command.withDescription("Inspect or move the current thread on the originating client's board."),
+  Command.withSubcommands([lanesCommand, laneCommand, moveCommand]),
 );
