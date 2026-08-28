@@ -54,6 +54,15 @@ interface BoardFocusStoreState {
   readonly setExpanded: (target: BoardExpandedTarget | null) => void;
 }
 
+export function selectBoardCardFocusRequestNonce(
+  state: Pick<BoardFocusStoreState, "request" | "focusedThreadKey">,
+  threadKey: string,
+): number | null {
+  return state.focusedThreadKey === threadKey && state.request?.threadKey === threadKey
+    ? state.request.nonce
+    : null;
+}
+
 export const useBoardFocusStore = create<BoardFocusStoreState>()((set) => ({
   request: null,
   acknowledgedFocus: null,
@@ -67,6 +76,7 @@ export const useBoardFocusStore = create<BoardFocusStoreState>()((set) => ({
       },
       acknowledgedFocus:
         state.acknowledgedFocus?.threadKey === threadKey ? state.acknowledgedFocus : null,
+      focusedThreadKey: null,
     })),
   acknowledgeFocus: (threadKey, requestNonce) =>
     set((state) => {

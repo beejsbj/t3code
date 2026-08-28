@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   ProjectId,
   ProviderInstanceId,
@@ -10,8 +10,10 @@ import {
 import type { BoardLane } from "../../board/boardLaneStore.ts";
 import {
   type BoardRect,
+  type BoardRevealScroller,
   boardLaneGridTemplateColumns,
   buildProjectSwimlanes,
+  coordinateBoardReveal,
   boardLaneHeaderDroppableId,
   groupEntriesByLane,
   laneArchiveIntent,
@@ -608,5 +610,102 @@ describe("resolveBoardScrollBehavior", () => {
   it("reveals immediately when the client requests reduced motion", () => {
     expect(resolveBoardScrollBehavior(false)).toBe("smooth");
     expect(resolveBoardScrollBehavior(true)).toBe("auto");
+  });
+});
+
+describe("coordinateBoardReveal", () => {
+  it("waits for both smooth board scroll axes to settle before releasing composer focus", () => {
+    const eventTarget = new EventTarget();
+    const scrollTo = vi.fn();
+    const scroller: BoardRevealScroller = {
+      scrollTop: 0,
+      scrollLeft: 0,
+      scrollTo,
+      addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
+      removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
+    };
+    const onSettled = vi.fn();
+
+    coordinateBoardReveal({
+      scroller,
+      target: { top: 531, left: 1517.5 },
+      behavior: "smooth",
+      onSettled,
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 531, left: 1517.5 });
+    expect(onSettled).not.toHaveBeenCalled();
+
+    eventTarget.dispatchEvent(new Event("scrollend"));
+    expect(onSettled).toHaveBeenCalledOnce();
+  });
+
+  it("releases composer focus immediately when the board is already at the target", () => {
+    const eventTarget = new EventTarget();
+    const scrollTo = vi.fn();
+    const scroller: BoardRevealScroller = {
+      scrollTop: 531,
+      scrollLeft: 1517.5,
+      scrollTo,
+      addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
+      removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
+    };
+    const onSettled = vi.fn();
+
+    coordinateBoardReveal({
+      scroller,
+      target: { top: 531, left: 1517.5 },
+      behavior: "smooth",
+      onSettled,
+    });
+
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(onSettled).toHaveBeenCalledOnce();
+  });
+
+  it("reveals and releases composer focus synchronously for reduced motion", () => {
+    const eventTarget = new EventTarget();
+    const scrollTo = vi.fn();
+    const scroller: BoardRevealScroller = {
+      scrollTop: 0,
+      scrollLeft: 0,
+      scrollTo,
+      addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
+      removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
+    };
+    const onSettled = vi.fn();
+
+    coordinateBoardReveal({
+      scroller,
+      target: { top: 531, left: 1517.5 },
+      behavior: "auto",
+      onSettled,
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith({ behavior: "auto", top: 531, left: 1517.5 });
+    expect(onSettled).toHaveBeenCalledOnce();
+  });
+
+  it("does not release stale composer focus after reveal cleanup", () => {
+    const eventTarget = new EventTarget();
+    const scroller: BoardRevealScroller = {
+      scrollTop: 0,
+      scrollLeft: 0,
+      scrollTo: vi.fn(),
+      addEventListener: (type, listener) => eventTarget.addEventListener(type, listener),
+      removeEventListener: (type, listener) => eventTarget.removeEventListener(type, listener),
+    };
+    const onSettled = vi.fn();
+
+    const cleanup = coordinateBoardReveal({
+      scroller,
+      target: { top: 531, left: 1517.5 },
+      behavior: "smooth",
+      onSettled,
+    });
+    cleanup();
+    eventTarget.dispatchEvent(new Event("scrollend"));
+
+    expect(onSettled).not.toHaveBeenCalled();
   });
 });
