@@ -1224,6 +1224,12 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
+              if (normalizedCommand.type === "thread.turn.start") {
+                yield* boardAgentBroker.reserveTurnOrigin(
+                  normalizedCommand.commandId,
+                  metadata.client.id,
+                );
+              }
               // Archive and settle both mean "done with this thread", so a
               // live provider session must not keep running background work
               // (PR monitors, dev servers, subagent fleets) after either
@@ -1258,10 +1264,15 @@ const makeWsRpcLayer = (
                 : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
+                Effect.tapError(() =>
+                  normalizedCommand.type === "thread.turn.start"
+                    ? boardAgentBroker.cancelTurnOrigin(
+                        normalizedCommand.commandId,
+                        metadata.client.id,
+                      )
+                    : Effect.void,
+                ),
               );
-              if (normalizedCommand.type === "thread.turn.start") {
-                yield* boardAgentBroker.bind(normalizedCommand.threadId, metadata.client.id);
-              }
               yield* recordClientCommandAnalytics(normalizedCommand);
               if (parkingCommand) {
                 const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";

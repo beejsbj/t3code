@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ThreadId, type AgentBoardResult } from "@t3tools/contracts";
+import { CommandId, ThreadId, type AgentBoardResult } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -12,6 +12,16 @@ import * as BoardAgentBroker from "./BoardAgentBroker.ts";
 const makeBroker = BoardAgentBroker.make.pipe(Effect.provide(NodeServices.layer));
 const threadId = ThreadId.make("thread-1");
 const lanesResult: AgentBoardResult = { type: "lanes", lanes: [] };
+const acceptOrigin = (
+  broker: BoardAgentBroker.BoardAgentBrokerShape,
+  clientId: number,
+  suffix: string,
+) => {
+  const commandId = CommandId.make(`command-${suffix}`);
+  return broker
+    .reserveTurnOrigin(commandId, clientId)
+    .pipe(Effect.andThen(broker.acceptTurnOrigin(commandId, threadId)));
+};
 
 it.effect("routes only to the exact client bound by the accepted turn", () =>
   Effect.scoped(
@@ -30,7 +40,7 @@ it.effect("routes only to the exact client bound by the accepted turn", () =>
       }).pipe(Effect.forkScoped);
       yield* Deferred.await(aReady);
       yield* Deferred.await(bReady);
-      yield* broker.bind(threadId, 1);
+      yield* acceptOrigin(broker, 1, "routes");
 
       expect(yield* broker.invoke(threadId, { type: "lanes" })).toEqual(lanesResult);
       expect(yield* Ref.get(bRequests)).toBe(0);
@@ -54,7 +64,7 @@ it.effect("keeps the binding on disconnect and never falls back to another clien
       }).pipe(Effect.forkScoped);
       yield* Deferred.await(aReady);
       yield* Deferred.await(bReady);
-      yield* broker.bind(threadId, 1);
+      yield* acceptOrigin(broker, 1, "disconnect");
       yield* Fiber.interrupt(aFiber);
 
       const result = yield* Effect.flip(broker.invoke(threadId, { type: "placement" }));
@@ -82,10 +92,71 @@ it.effect("ignores a response sent by a different websocket client", () =>
           );
       }).pipe(Effect.forkScoped);
       yield* Deferred.await(connected);
-      yield* broker.bind(threadId, 1);
+      yield* acceptOrigin(broker, 1, "spoof");
 
       expect(yield* broker.invoke(threadId, { type: "lanes" })).toEqual(lanesResult);
       yield* Deferred.await(requestSeen);
+    }),
+  ),
+);
+
+it.effect("does not move an active binding until the queued turn is accepted", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const aReady = yield* Deferred.make<void>();
+      const bReady = yield* Deferred.make<void>();
+      const routedTo = yield* Ref.make<ReadonlyArray<number>>([]);
+      for (const [clientId, ready] of [
+        [1, aReady],
+        [2, bReady],
+      ] as const) {
+        yield* Stream.runForEach(yield* broker.connect(clientId), (event) => {
+          if (event.type === "connected") return Deferred.succeed(ready, undefined);
+          return Ref.update(routedTo, (clients) => [...clients, clientId]).pipe(
+            Effect.andThen(
+              broker.respond(clientId, {
+                requestId: event.request.requestId,
+                result: lanesResult,
+              }),
+            ),
+          );
+        }).pipe(Effect.forkScoped);
+      }
+      yield* Deferred.await(aReady);
+      yield* Deferred.await(bReady);
+      yield* acceptOrigin(broker, 1, "active-a");
+      const queuedCommandId = CommandId.make("command-queued-b");
+      yield* broker.reserveTurnOrigin(queuedCommandId, 2);
+
+      yield* broker.invoke(threadId, { type: "lanes" });
+      yield* broker.acceptTurnOrigin(queuedCommandId, threadId);
+      yield* broker.invoke(threadId, { type: "lanes" });
+
+      expect(yield* Ref.get(routedTo)).toEqual([1, 2]);
+    }),
+  ),
+);
+
+it.effect("fails in-flight commands when the same client replaces its host stream", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const connected = yield* Deferred.make<void>();
+      const requestSeen = yield* Deferred.make<void>();
+      yield* Stream.runForEach(yield* broker.connect(1), (event) =>
+        event.type === "connected"
+          ? Deferred.succeed(connected, undefined)
+          : Deferred.succeed(requestSeen, undefined),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+      yield* acceptOrigin(broker, 1, "replacement");
+      const invocation = yield* broker.invoke(threadId, { type: "lanes" }).pipe(Effect.forkScoped);
+      yield* Deferred.await(requestSeen);
+      yield* Stream.runDrain(yield* broker.connect(1)).pipe(Effect.forkScoped);
+
+      const error = yield* Fiber.join(invocation).pipe(Effect.flip);
+      expect(error.message).toContain("replaced");
     }),
   ),
 );

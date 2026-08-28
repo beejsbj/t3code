@@ -19,3 +19,5 @@ The board is client-local. The T3 client that started the current turn owns the 
 Run one command at a time and report its receipt faithfully. Do not infer success from an exit code if the command printed an error.
 
 If the originating client is disconnected, too old to host board commands, or did not answer, explain that the operation was not performed. Never retry against another client or suggest that server state was updated.
+
+This command is unavailable to agents running on an external OpenCode server because that server does not inherit the scoped T3 process environment. Do not work around that by targeting another client or endpoint.
