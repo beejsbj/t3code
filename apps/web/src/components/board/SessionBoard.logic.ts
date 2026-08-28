@@ -219,6 +219,53 @@ export interface BoardScrollTarget {
   readonly left: number;
 }
 
+export interface BoardRevealScroller {
+  readonly scrollTop: number;
+  readonly scrollLeft: number;
+  readonly scrollTo: (options: ScrollToOptions) => void;
+  readonly addEventListener: (type: "scrollend", listener: EventListener) => void;
+  readonly removeEventListener: (type: "scrollend", listener: EventListener) => void;
+}
+
+const BOARD_SCROLL_POSITION_EPSILON = 0.5;
+
+/** Releases composer focus only after native board movement settles. */
+export function coordinateBoardReveal(input: {
+  readonly scroller: BoardRevealScroller;
+  readonly target: BoardScrollTarget;
+  readonly behavior: ScrollBehavior;
+  readonly onSettled: () => void;
+}): () => void {
+  const alreadyAtTarget =
+    Math.abs(input.scroller.scrollTop - input.target.top) <= BOARD_SCROLL_POSITION_EPSILON &&
+    Math.abs(input.scroller.scrollLeft - input.target.left) <= BOARD_SCROLL_POSITION_EPSILON;
+  if (alreadyAtTarget) {
+    input.onSettled();
+    return () => {};
+  }
+
+  if (input.behavior !== "smooth") {
+    input.scroller.scrollTo({ ...input.target, behavior: input.behavior });
+    input.onSettled();
+    return () => {};
+  }
+
+  let active = true;
+  const handleScrollEnd = () => {
+    if (!active) return;
+    active = false;
+    input.scroller.removeEventListener("scrollend", handleScrollEnd);
+    input.onSettled();
+  };
+  input.scroller.addEventListener("scrollend", handleScrollEnd);
+  input.scroller.scrollTo({ ...input.target, behavior: input.behavior });
+  return () => {
+    if (!active) return;
+    active = false;
+    input.scroller.removeEventListener("scrollend", handleScrollEnd);
+  };
+}
+
 /** DOMRect coordinates are non-enumerable, so copy each usable edge explicitly. */
 export function resolveBoardViewport(
   rawViewport: BoardRect,
