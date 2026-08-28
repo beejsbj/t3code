@@ -222,6 +222,10 @@ export interface BoardScrollTarget {
 export interface BoardRevealScroller {
   readonly scrollTop: number;
   readonly scrollLeft: number;
+  readonly scrollHeight: number;
+  readonly scrollWidth: number;
+  readonly clientHeight: number;
+  readonly clientWidth: number;
   readonly scrollTo: (options: ScrollToOptions) => void;
   readonly addEventListener: (type: "scrollend", listener: EventListener) => void;
   readonly removeEventListener: (type: "scrollend", listener: EventListener) => void;
@@ -235,17 +239,28 @@ export function coordinateBoardReveal(input: {
   readonly target: BoardScrollTarget;
   readonly behavior: ScrollBehavior;
   readonly onSettled: () => void;
+  readonly onInterrupted: () => void;
 }): () => void {
-  const alreadyAtTarget =
-    Math.abs(input.scroller.scrollTop - input.target.top) <= BOARD_SCROLL_POSITION_EPSILON &&
-    Math.abs(input.scroller.scrollLeft - input.target.left) <= BOARD_SCROLL_POSITION_EPSILON;
-  if (alreadyAtTarget) {
+  const target = {
+    top: Math.min(
+      Math.max(0, input.target.top),
+      Math.max(0, input.scroller.scrollHeight - input.scroller.clientHeight),
+    ),
+    left: Math.min(
+      Math.max(0, input.target.left),
+      Math.max(0, input.scroller.scrollWidth - input.scroller.clientWidth),
+    ),
+  };
+  const reachedTarget = () =>
+    Math.abs(input.scroller.scrollTop - target.top) <= BOARD_SCROLL_POSITION_EPSILON &&
+    Math.abs(input.scroller.scrollLeft - target.left) <= BOARD_SCROLL_POSITION_EPSILON;
+  if (reachedTarget()) {
     input.onSettled();
     return () => {};
   }
 
   if (input.behavior !== "smooth") {
-    input.scroller.scrollTo({ ...input.target, behavior: input.behavior });
+    input.scroller.scrollTo({ ...target, behavior: input.behavior });
     input.onSettled();
     return () => {};
   }
@@ -255,10 +270,14 @@ export function coordinateBoardReveal(input: {
     if (!active) return;
     active = false;
     input.scroller.removeEventListener("scrollend", handleScrollEnd);
-    input.onSettled();
+    if (reachedTarget()) {
+      input.onSettled();
+    } else {
+      input.onInterrupted();
+    }
   };
   input.scroller.addEventListener("scrollend", handleScrollEnd);
-  input.scroller.scrollTo({ ...input.target, behavior: input.behavior });
+  input.scroller.scrollTo({ ...target, behavior: input.behavior });
   return () => {
     if (!active) return;
     active = false;
