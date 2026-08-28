@@ -54,6 +54,7 @@ import {
 } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
+import { BoardAgentBroker } from "../../agentBoard/BoardAgentBroker.ts";
 const isProviderAdapterRequestError = Schema.is(ProviderAdapterRequestError);
 const isProviderAdapterValidationError = Schema.is(ProviderAdapterValidationError);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
@@ -320,6 +321,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerAuthService = yield* ProviderAuthService;
   const providerService = yield* ProviderService;
+  const boardAgentBroker = yield* BoardAgentBroker;
   const providerRegistry = yield* ProviderRegistry;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1434,9 +1436,12 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.tap(() => boardAgentBroker.acceptTurnOrigin(event.commandId, event.payload.threadId)),
+      Effect.asVoid,
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (

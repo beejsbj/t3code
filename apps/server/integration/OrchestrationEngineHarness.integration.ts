@@ -26,6 +26,7 @@ import * as Tracer from "effect/Tracer";
 
 import * as CheckpointStore from "../src/checkpointing/CheckpointStore.ts";
 import { TextGeneration } from "../src/textGeneration/TextGeneration.ts";
+import * as BoardAgentBroker from "../src/agentBoard/BoardAgentBroker.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepositoryLive } from "../src/persistence/Layers/ProjectionCheckpoints.ts";
@@ -344,6 +345,7 @@ export const makeOrchestrationIntegrationHarness = (
           tryHandlePromptCommand: () => Effect.succeed(false),
         }),
       ),
+      Layer.provide(BoardAgentBroker.layer),
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),

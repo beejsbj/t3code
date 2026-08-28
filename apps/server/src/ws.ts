@@ -1267,6 +1267,12 @@ const makeWsRpcLayer = (
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
               const normalizedCommand = yield* normalizeDispatchCommand(command);
+              if (normalizedCommand.type === "thread.turn.start") {
+                yield* boardAgentBroker.reserveTurnOrigin(
+                  normalizedCommand.commandId,
+                  metadata.client.id,
+                );
+              }
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.
               // Settlement cleanup is driven by thread.settled events in the
@@ -1295,10 +1301,15 @@ const makeWsRpcLayer = (
                 : false;
               const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
+                Effect.tapError(() =>
+                  normalizedCommand.type === "thread.turn.start"
+                    ? boardAgentBroker.cancelTurnOrigin(
+                        normalizedCommand.commandId,
+                        metadata.client.id,
+                      )
+                    : Effect.void,
+                ),
               );
-              if (normalizedCommand.type === "thread.turn.start") {
-                yield* boardAgentBroker.bind(normalizedCommand.threadId, metadata.client.id);
-              }
               yield* recordClientCommandAnalytics(normalizedCommand);
               if (archiveCommand) {
                 if (shouldStopSessionAfterCommand) {

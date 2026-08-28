@@ -61,6 +61,7 @@ import {
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
 } from "./ProviderCommandReactor.ts";
+import * as BoardAgentBroker from "../../agentBoard/BoardAgentBroker.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -447,6 +448,7 @@ describe("ProviderCommandReactor", () => {
       }),
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
+      Layer.provide(BoardAgentBroker.layer),
       Layer.provideMerge(reactorOrchestrationLayer),
       Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
