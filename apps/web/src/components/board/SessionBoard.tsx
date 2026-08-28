@@ -122,6 +122,7 @@ import {
   reorderBoardLaneKeys,
   rowKeyFromSwimlaneDroppableId,
   resolveBoardFocusAction,
+  resolveBoardScrollBehavior,
   resolveBoardScrollTarget,
   resolveBoardThreadVisibility,
   swimlaneColumnDroppableId,
@@ -820,33 +821,23 @@ export function SessionBoard() {
       return;
     }
 
-    // Scroll only once the reveal above has laid out.
-    const frame = requestAnimationFrame(() => {
-      const currentScroller = scrollerRef.current;
-      const currentNode = findCardNode(currentScroller, entry.key);
-      if (currentScroller === null || currentNode === null) return;
-      const raw = currentScroller.getBoundingClientRect();
-      const laneHeaderHeight =
-        currentScroller.querySelector<HTMLElement>("[data-board-lane-header-row]")?.offsetHeight ??
-        0;
-      const projectHeaderHeight =
-        currentScroller.querySelector<HTMLElement>("[data-board-project-header]")?.offsetHeight ??
-        0;
+    // Start both board scroll axes before the card's composer acknowledges
+    // focus. Waiting one frame lets that acknowledgement clear this effect
+    // and cancel the pending reveal, leaving a packed card clipped.
+    if (scroller !== null && node !== null) {
       const target = resolveBoardScrollTarget({
-        card: currentNode.getBoundingClientRect(),
-        viewport: {
-          ...raw,
-          top: Math.min(raw.bottom, raw.top + laneHeaderHeight + projectHeaderHeight),
-        },
-        scrollTop: currentScroller.scrollTop,
-        scrollLeft: currentScroller.scrollLeft,
+        card: node.getBoundingClientRect(),
+        viewport,
+        scrollTop: scroller.scrollTop,
+        scrollLeft: scroller.scrollLeft,
       });
-      currentScroller.scrollTo({
+      scroller.scrollTo({
         ...target,
-        behavior: "smooth",
+        behavior: resolveBoardScrollBehavior(
+          window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+        ),
       });
-    });
-    return () => cancelAnimationFrame(frame);
+    }
   }, [
     clearFocusRequest,
     boardRows,

@@ -246,6 +246,10 @@ export function resolveBoardScrollTarget(input: {
   return { top: Math.max(0, top), left: Math.max(0, left) };
 }
 
+export function resolveBoardScrollBehavior(reducedMotion: boolean): ScrollBehavior {
+  return reducedMotion ? "auto" : "smooth";
+}
+
 function visibleFraction(card: BoardRect, viewport: BoardRect): number {
   const axes = [
     [card.top, card.bottom, viewport.top, viewport.bottom],
