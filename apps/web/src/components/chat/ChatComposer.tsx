@@ -214,12 +214,13 @@ import {
 import { selectionHoldsComposerOpen } from "./composerSelectionHold";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 import { useBoardLaneStore } from "../../board/boardLaneStore";
+import { boardLaneController } from "../../board/boardLaneController";
 import {
   localLaneChoiceQuery,
   resolveLocalBoardCommand,
-  workflowBoardLanes,
   type LocalBoardCommand,
 } from "../../board/localBoardCommands";
+import { workflowBoardLanes } from "../../board/boardLanes";
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = useCallback(
@@ -1487,8 +1488,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const boardLanes = useBoardLaneStore((store) => store.lanes);
-  const setBoardPlacement = useBoardLaneStore((store) => store.setPlacement);
-  const clearBoardPlacement = useBoardLaneStore((store) => store.clearPlacement);
 
   useEffect(() => {
     if (!attachmentUploadsCapabilityKnown) {
@@ -2233,7 +2232,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       clearLocalCommandPrompt();
       if (command.type === "unplace") {
-        clearBoardPlacement(routeThreadRef);
+        boardLaneController.unplace(routeThreadRef);
         toastManager.add({
           type: "success",
           title: "Board placement removed",
@@ -2241,7 +2240,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         return;
       }
-      setBoardPlacement(routeThreadRef, command.laneId);
+      boardLaneController.placeInLane(routeThreadRef, command.laneId);
       const laneName =
         boardLanes.find((lane) => lane.id === command.laneId)?.name ?? command.laneId;
       toastManager.add({
@@ -2250,15 +2249,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         description: "Placement was updated on this client only.",
       });
     },
-    [
-      boardLanes,
-      clearBoardPlacement,
-      clearLocalCommandPrompt,
-      navigate,
-      routeKind,
-      routeThreadRef,
-      setBoardPlacement,
-    ],
+    [boardLanes, clearLocalCommandPrompt, navigate, routeKind, routeThreadRef],
   );
 
   const addComposerImage = useCallback(
