@@ -846,6 +846,9 @@ export function SessionBoard() {
           }
           setFocusedThreadKey(entry.key);
         },
+        onInterrupted: () => {
+          clearFocusRequest(entry.key, focusRequest.nonce);
+        },
       });
     }
 
