@@ -59,6 +59,10 @@ shortcut is `mod+shift+s`, and it does not run while the terminal has focus.
 already pinned. Its default shortcut is `mod+shift+p`, and it does not run while the terminal has
 focus. See [Organizing threads](./thread-sidebar.md) for how pinned threads are ordered.
 
+`board.open` opens the session board from anywhere and defaults to `mod+shift+b`. On the board,
+`board.openFocusedFullscreen` opens the focused real session in its full-screen route and defaults
+to `mod+alt+shift+enter`; Draft cards intentionally have no full-screen session route.
+
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
 keeping the thread's project, branch, and machine context visible. Message search begins after two

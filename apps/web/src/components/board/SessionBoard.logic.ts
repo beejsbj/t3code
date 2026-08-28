@@ -226,6 +226,15 @@ export interface BoardNavigationItem {
   readonly rect: BoardRect;
 }
 
+export function resolveBoardFullscreenThreadKey(
+  entries: ReadonlyArray<{ readonly key: string; readonly kind: "thread" | "draft" }>,
+  focusedKey: string | null,
+): string | null {
+  return entries.some((entry) => entry.kind === "thread" && entry.key === focusedKey)
+    ? focusedKey
+    : null;
+}
+
 function rectCenter(rect: BoardRect): { readonly x: number; readonly y: number } {
   return { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
 }

@@ -7,6 +7,7 @@ export type BoardNavigationCommand = Extract<
   | "board.focusUp"
   | "board.focusDown"
   | "board.toggleExpanded"
+  | "board.openFocusedFullscreen"
 >;
 
 const BOARD_NAVIGATION_EVENT = "t3code:board-navigation";
