@@ -1,7 +1,7 @@
 import {
   effectiveSettled,
   effectiveSnoozed,
-  type ChangeRequestStateLike,
+  type ChangeRequestSettleSource,
 } from "@t3tools/client-runtime/state/thread-settled";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
@@ -28,7 +28,7 @@ export function resolveBoardThreadVisibility(
     readonly autoSettleOnMerge: boolean;
     readonly supportsSettlement: boolean;
     readonly supportsSnooze: boolean;
-    readonly changeRequestState: ChangeRequestStateLike | null;
+    readonly changeRequest: ChangeRequestSettleSource | null;
   },
 ): BoardThreadVisibility {
   if (thread.archivedAt !== null) return "archived";
@@ -48,7 +48,7 @@ export function resolveBoardThreadVisibility(
       now: options.settlementNow,
       autoSettleAfterDays: options.autoSettleAfterDays,
       autoSettleOnMerge: options.autoSettleOnMerge,
-      changeRequestState: options.changeRequestState,
+      changeRequest: options.changeRequest,
     })
   ) {
     return "settled";

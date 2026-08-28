@@ -11,7 +11,7 @@ import type {
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import {
   canSnooze,
-  type ChangeRequestStateLike,
+  type ChangeRequestSettleSource,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AlarmClockIcon,
@@ -129,7 +129,7 @@ export interface BoardSessionCardProps {
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly isDragging: boolean;
-  readonly changeRequestState: ChangeRequestStateLike | null;
+  readonly changeRequest: ChangeRequestSettleSource | null;
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
@@ -152,10 +152,10 @@ export const BoardChangeRequestStateReporter = memo(
       readonly branch: string;
       readonly sourceKey: string;
     }>;
-    readonly onChangeRequestState: (
+    readonly onChangeRequest: (
       threadKey: string,
       sourceKey: string,
-      state: ChangeRequestStateLike | null,
+      changeRequest: ChangeRequestSettleSource | null,
     ) => void;
   }) {
     const gitStatus = useEnvironmentQuery(
@@ -167,10 +167,12 @@ export const BoardChangeRequestStateReporter = memo(
     useEffect(() => {
       if (gitStatus.isPending) return;
       for (const thread of props.threads) {
-        const state =
-          resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data })?.state ??
-          null;
-        props.onChangeRequestState(thread.cardKey, thread.sourceKey, state);
+        const pr = resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data });
+        props.onChangeRequest(
+          thread.cardKey,
+          thread.sourceKey,
+          pr === null ? null : { state: pr.state, updatedAt: pr.updatedAt },
+        );
       }
     }, [gitStatus.data, gitStatus.isPending, props]);
     return null;
@@ -804,7 +806,6 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     latestTurn,
     runningTurnId,
     isWorking,
-    activeTurnInProgress,
     activeTurnStartedAt,
     turnDiffSummaryByAssistantMessageId,
     revertTurnCountByUserMessageId,
@@ -994,7 +995,6 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
           minimapVariant="compact"
           viewportClassName="pointer-coarse:overflow-y-hidden pointer-coarse:overscroll-y-auto pointer-coarse:touch-pan-y"
           isWorking={isWorking}
-          activeTurnInProgress={activeTurnInProgress}
           activeTurnStartedAt={activeTurnStartedAt}
           listRef={legendListRef}
           timelineEntries={timelineEntries}
