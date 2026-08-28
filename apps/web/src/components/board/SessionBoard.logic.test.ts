@@ -73,7 +73,7 @@ const lifecycleOptions = {
   autoSettleOnMerge: true,
   supportsSettlement: true,
   supportsSnooze: true,
-  changeRequestState: null,
+  changeRequest: null,
 } as const;
 
 describe("resolveBoardThreadVisibility", () => {
@@ -172,26 +172,26 @@ describe("resolveBoardThreadVisibility", () => {
     expect(
       resolveBoardThreadVisibility(stale, {
         ...lifecycleOptions,
-        changeRequestState: "open",
+        changeRequest: { state: "open" },
       }),
     ).toBe("visible");
     expect(
       resolveBoardThreadVisibility(threadShell(), {
         ...lifecycleOptions,
-        changeRequestState: "merged",
+        changeRequest: { state: "merged" },
       }),
     ).toBe("settled");
     expect(
       resolveBoardThreadVisibility(threadShell(), {
         ...lifecycleOptions,
         autoSettleOnMerge: false,
-        changeRequestState: "merged",
+        changeRequest: { state: "merged" },
       }),
     ).toBe("visible");
     expect(
       resolveBoardThreadVisibility(threadShell(), {
         ...lifecycleOptions,
-        changeRequestState: "closed",
+        changeRequest: { state: "closed" },
       }),
     ).toBe("settled");
   });
