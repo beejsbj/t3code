@@ -3,7 +3,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { DraftId } from "../composerDraftStore.ts";
-import { useBoardFocusStore } from "./boardFocusStore.ts";
+import { selectBoardCardFocusRequestNonce, useBoardFocusStore } from "./boardFocusStore.ts";
 
 beforeEach(() => {
   useBoardFocusStore.setState({
@@ -42,6 +42,21 @@ describe("boardFocusStore", () => {
     store.requestFocus("thread-a");
     expect(useBoardFocusStore.getState().request?.nonce).toBe(firstNonce + 1);
     expect(useBoardFocusStore.getState().acknowledgedFocus?.requestNonce).toBe(firstNonce);
+    expect(useBoardFocusStore.getState().focusedThreadKey).toBeNull();
+    expect(selectBoardCardFocusRequestNonce(useBoardFocusStore.getState(), "thread-a")).toBeNull();
+  });
+
+  it("releases a pending request to the card composer only after board focus settles", () => {
+    const store = useBoardFocusStore.getState();
+    store.requestFocus("thread-a");
+    const requestNonce = useBoardFocusStore.getState().request?.nonce ?? 0;
+
+    expect(selectBoardCardFocusRequestNonce(useBoardFocusStore.getState(), "thread-a")).toBeNull();
+
+    store.setFocused("thread-a");
+    expect(selectBoardCardFocusRequestNonce(useBoardFocusStore.getState(), "thread-a")).toBe(
+      requestNonce,
+    );
   });
 
   it("keeps focus acknowledgement scoped to the selected environment", () => {
