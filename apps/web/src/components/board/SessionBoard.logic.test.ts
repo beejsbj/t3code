@@ -27,6 +27,7 @@ import {
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
   resolveBoardScrollBehavior,
+  resolveBoardFullscreenThreadKey,
   resolveSpatialBoardTarget,
   resolveBoardScrollTarget,
   resolveBoardViewport,
@@ -618,6 +619,20 @@ describe("resolveSpatialBoardTarget", () => {
         direction: "right",
       })?.key,
     ).toBe("a");
+  });
+});
+
+describe("resolveBoardFullscreenThreadKey", () => {
+  const entries = [
+    { kind: "thread" as const, key: "thread" },
+    { kind: "draft" as const, key: "draft" },
+  ];
+
+  it("resolves only a focused real session", () => {
+    expect(resolveBoardFullscreenThreadKey(entries, "thread")).toBe("thread");
+    expect(resolveBoardFullscreenThreadKey(entries, "draft")).toBeNull();
+    expect(resolveBoardFullscreenThreadKey(entries, null)).toBeNull();
+    expect(resolveBoardFullscreenThreadKey(entries, "missing")).toBeNull();
   });
 });
 

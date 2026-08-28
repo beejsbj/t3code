@@ -19,6 +19,7 @@ import {
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -132,6 +133,7 @@ import {
   rowKeyFromSwimlaneDroppableId,
   resolveBoardFocusAction,
   resolveBoardScrollBehavior,
+  resolveBoardFullscreenThreadKey,
   resolveBoardScrollTarget,
   resolveBoardViewport,
   resolveSpatialBoardTarget,
@@ -216,6 +218,7 @@ function readBoardNavigationItems(scroller: HTMLElement | null) {
 }
 
 export function SessionBoard() {
+  const navigate = useNavigate();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const threads = useThreadShells();
   const projects = useProjects();
@@ -846,6 +849,20 @@ export function SessionBoard() {
       const focusedKey = expandedKey ?? useBoardFocusStore.getState().focusedThreadKey;
       const navigationItems = readBoardNavigationItems(scrollerRef.current);
 
+      if (command === "board.openFocusedFullscreen") {
+        const fullscreenKey = resolveBoardFullscreenThreadKey(entries, focusedKey);
+        const entry = entries.find((candidate) => candidate.key === fullscreenKey);
+        if (entry === undefined || entry.kind !== "thread") return;
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: entry.ref.environmentId,
+            threadId: entry.ref.threadId,
+          },
+        });
+        return;
+      }
+
       if (command === "board.toggleExpanded") {
         if (expandedTarget !== null) {
           setExpandedEntry(null);
@@ -893,7 +910,7 @@ export function SessionBoard() {
       else findCardNode(scrollerRef.current, entry.key)?.focus({ preventScroll: true });
       revealCard(entry.key);
     },
-    [expandedTarget, revealCard, setExpandedEntry, setFocusedThreadKey],
+    [expandedTarget, navigate, revealCard, setExpandedEntry, setFocusedThreadKey],
   );
 
   useEffect(() => {
@@ -914,7 +931,8 @@ export function SessionBoard() {
         command !== "board.focusRight" &&
         command !== "board.focusUp" &&
         command !== "board.focusDown" &&
-        command !== "board.toggleExpanded"
+        command !== "board.toggleExpanded" &&
+        command !== "board.openFocusedFullscreen"
       ) {
         return;
       }

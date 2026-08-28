@@ -1,7 +1,8 @@
 # Session Board
 
 The session board is an alternate workspace for keeping several live coding-agent sessions visible
-at once. Open **Board** from the sidebar or use the command palette.
+at once. Open **Board** from the sidebar, choose **Open session board** in the command palette, or
+press `mod+shift+B`.
 
 The normal chat workspace remains available at `/`. The board lives at `/board` and uses the same
 sessions, messages, composer, approvals, questions, and provider controls. A server-backed card is
@@ -89,9 +90,15 @@ does not wrap. If no card is focused, the first visible card in reading order is
 the sheet to the neighboring session. These commands do not take over input from composers, form
 fields, terminals, menus, dialogs, or resize handles.
 
-All five actions are also available in the command palette while the board is open. Their shortcuts
-can be changed in **Settings** → **Keybindings**; the defaults use the `boardOpen` condition so they
-do not claim those keys elsewhere in the app.
+Press `mod+alt+shift+Enter` to leave the board and open the focused real session in its existing
+full-screen route. The action is unavailable for Draft cards because they do not have a durable
+server session route yet. This is separate from `mod+alt+Enter`, which only toggles between the card
+and the 80%-sized expanded board sheet.
+
+All six board-local actions are also available in the command palette while the board is open. Their
+shortcuts can be changed in **Settings** → **Keybindings**; the defaults use the `boardOpen`
+condition so they do not claim those keys elsewhere in the app. The global `board.open` command uses
+`!terminalFocus`, matching other navigation commands that should not take over terminal input.
 
 A new thread started from the board opens in that expanded view. Once it contains user content,
 closing the expanded view leaves a Draft card on the board. Project rows have their own new-thread

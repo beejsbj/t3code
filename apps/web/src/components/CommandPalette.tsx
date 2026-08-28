@@ -47,6 +47,7 @@ import {
   ArrowRightIcon,
   ArrowUpIcon,
   CornerLeftUpIcon,
+  ExternalLinkIcon,
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -106,6 +107,7 @@ import {
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { dispatchBoardNavigation } from "../board/boardNavigationBus";
+import { useBoardFocusStore } from "../board/boardFocusStore";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -408,6 +410,7 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     mode: "command",
@@ -475,6 +478,12 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         });
         return;
       }
+      if (command === "board.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        void navigate({ to: "/board" });
+        return;
+      }
       const mode = overlayModeForCommand(command);
       if (mode === null) {
         return;
@@ -485,7 +494,16 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, previewOpen, resolvedTheme, terminalOpen, theme, themeHalves, toggleMode]);
+  }, [
+    keybindings,
+    navigate,
+    previewOpen,
+    resolvedTheme,
+    terminalOpen,
+    theme,
+    themeHalves,
+    toggleMode,
+  ]);
 
   useEffect(
     () =>
@@ -582,6 +600,13 @@ function OpenCommandPaletteDialog(props: {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const isBoardRoute = pathname === "/board";
+  const focusedBoardKey = useBoardFocusStore((state) =>
+    state.expandedTarget?.kind === "thread"
+      ? state.expandedTarget.threadKey
+      : state.expandedTarget?.kind === "draft"
+        ? null
+        : state.focusedThreadKey,
+  );
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -669,6 +694,12 @@ function OpenCommandPaletteDialog(props: {
   }, [activeThreadReferenceCopyTarget]);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const canOpenFocusedBoardThreadFullscreen =
+    focusedBoardKey !== null &&
+    threads.some(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === focusedBoardKey,
+    );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -1691,6 +1722,19 @@ function OpenCommandPaletteDialog(props: {
         run: async () => dispatchBoardNavigation(action.command),
       });
     }
+    actionItems.push({
+      kind: "action",
+      value: "action:board.openFocusedFullscreen",
+      searchTerms: ["board", "session", "full screen", "open", "focused"],
+      title: "Board: open focused session full screen",
+      description: canOpenFocusedBoardThreadFullscreen
+        ? "Leave the board and open this session"
+        : "Unavailable for drafts or when no session is focused",
+      disabled: !canOpenFocusedBoardThreadFullscreen,
+      icon: <ExternalLinkIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "board.openFocusedFullscreen",
+      run: async () => dispatchBoardNavigation("board.openFocusedFullscreen"),
+    });
   }
 
   actionItems.push({
@@ -1773,6 +1817,7 @@ function OpenCommandPaletteDialog(props: {
     searchTerms: ["board", "session board", "lanes", "kanban", "workspace"],
     title: "Open session board",
     icon: <LayoutGridIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "board.open",
     run: async () => {
       await navigate({ to: "/board" });
     },

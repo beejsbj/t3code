@@ -745,6 +745,31 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("keeps the global board shortcut out of terminal input", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("b", { shiftKey: true }),
+        command: "board.open",
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      },
+    ]);
+    const shortcut = event({ key: "b", ctrlKey: true, shiftKey: true });
+
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "board.open",
+    );
+    assert.isNull(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
   it("limits board navigation bindings to the board context", () => {
     const keybindings = compile([
       {
