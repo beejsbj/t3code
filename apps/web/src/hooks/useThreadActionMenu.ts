@@ -18,8 +18,8 @@ import {
   boardLaneForPlacementAction,
   buildBoardPlacementContextMenuItems,
 } from "../board/boardPlacementMenu.ts";
+import { boardLaneController } from "../board/boardLaneController.ts";
 import type { BoardLane } from "../board/boardLaneStore.ts";
-import { useBoardLaneStore } from "../board/boardLaneStore.ts";
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
@@ -86,7 +86,6 @@ export function useThreadActionMenu(input: {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
-  const setBoardPlacement = useBoardLaneStore((state) => state.setPlacement);
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
   const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
@@ -236,7 +235,7 @@ export function useThreadActionMenu(input: {
           // before saving its client-local spatial placement.
           if (isSnoozed && !(await unsnooze())) return;
           if (isEffectivelySettled && !(await unsettle())) return;
-          setBoardPlacement(threadRef, laneId);
+          boardLaneController.placeInLane(threadRef, laneId);
           return;
         }
         const action = clicked.value as ThreadActionMenuId;
@@ -394,7 +393,6 @@ export function useThreadActionMenu(input: {
       onStartRename,
       pinThread,
       projectCwd,
-      setBoardPlacement,
       settle,
       snooze,
       threadRef,

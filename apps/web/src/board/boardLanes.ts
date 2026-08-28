@@ -19,6 +19,44 @@ export function isBoardWorkflowLane(lane: BoardLane): boolean {
   return !isBoardLifecycleLaneId(lane.id);
 }
 
+export function workflowBoardLanes(lanes: ReadonlyArray<BoardLane>): ReadonlyArray<BoardLane> {
+  return orderBoardLanes(lanes).filter(isBoardWorkflowLane);
+}
+
+export type WorkflowBoardLaneResolution =
+  | { readonly type: "lane"; readonly lane: BoardLane }
+  | { readonly type: "error"; readonly message: string };
+
+/** Resolve a live workflow lane by ID, then by an unambiguous exact name. */
+export function resolveWorkflowBoardLane(
+  lanes: ReadonlyArray<BoardLane>,
+  argument: string,
+): WorkflowBoardLaneResolution {
+  const normalizedArgument = argument.trim().toLocaleLowerCase();
+  const workflowLanes = workflowBoardLanes(lanes);
+  const idMatch = workflowLanes.find(
+    (lane) => lane.id.trim().toLocaleLowerCase() === normalizedArgument,
+  );
+  if (idMatch) return { type: "lane", lane: idMatch };
+
+  const nameMatches = workflowLanes.filter(
+    (lane) => lane.name.trim().toLocaleLowerCase() === normalizedArgument,
+  );
+  if (nameMatches.length === 1) return { type: "lane", lane: nameMatches[0]! };
+  if (nameMatches.length > 1) {
+    return {
+      type: "error",
+      message: `More than one lane is named “${argument}”. Use a lane ID: ${nameMatches
+        .map((lane) => lane.id)
+        .join(", ")}.`,
+    };
+  }
+  return {
+    type: "error",
+    message: `No workflow lane matches “${argument}”. Type /lane to choose from current lanes.`,
+  };
+}
+
 /**
  * One canonical column order: fixed Triage, user-ordered workflow, then the
  * two fixed lifecycle tails. Persisted `order` values never move fixed lanes.
