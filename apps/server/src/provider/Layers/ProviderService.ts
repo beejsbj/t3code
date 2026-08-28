@@ -58,6 +58,7 @@ import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
+import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 const isModelSelection = Schema.is(ModelSelection);
 
@@ -69,14 +70,11 @@ const isModelSelection = Schema.is(ModelSelection);
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogger?: EventNdjsonLogger;
   /**
-   * Overrides MCP credential issuance. The real issuer reads a module-global
-   * registry that only a running MCP server installs, which makes the
-   * agent-browser-access gate unobservable from a unit test; this seam lets a
-   * test see whether a credential was requested at all.
+   * Overrides credential issuance. The real issuer reads a module-global
+   * registry installed only by a running server; this seam lets tests inspect
+   * the capabilities requested for a provider session.
    */
   readonly issueMcpCredential?: typeof McpSessionRegistry.issueActiveMcpCredential;
-  /** Same seam as `issueMcpCredential`, for observing the deny path's revoke. */
-  readonly revokeMcpCredential?: typeof McpSessionRegistry.revokeActiveMcpThread;
 }
 
 type ProviderServiceMethod<Name extends keyof ProviderService.ProviderService["Service"]> =
@@ -229,8 +227,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const issueMcpCredential =
     options?.issueMcpCredential ?? McpSessionRegistry.issueActiveMcpCredential;
-  const revokeMcpCredential =
-    options?.revokeMcpCredential ?? McpSessionRegistry.revokeActiveMcpThread;
   const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   /**
@@ -261,18 +257,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
-      if (!(yield* agentBrowserAccessEnabled)) {
-        // Revoke as well as clear. Every other prepare path reaches
-        // `issueActiveMcpCredential`, which revokes the thread first, so
-        // skipping it here would leave a previously issued bearer token valid
-        // against `/mcp` for the rest of its liveness window — and later turns
-        // would keep refreshing it. A session restart (runtime mode, cwd,
-        // model) re-prepares without stopping, so it relies on this.
-        yield* revokeMcpCredential(threadId);
-        yield* Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId));
-        return undefined;
-      }
-      const credential = yield* issueMcpCredential({ threadId, providerInstanceId });
+      const browserEnabled = yield* agentBrowserAccessEnabled;
+      const credential = yield* issueMcpCredential({
+        threadId,
+        providerInstanceId,
+        capabilities: new Set<McpInvocationContext.McpCapability>([
+          "board",
+          ...(browserEnabled ? (["preview"] as const) : []),
+        ]),
+      });
       if (credential) {
         yield* Effect.sync(() => McpProviderSession.setMcpProviderSession(credential.config));
       }
