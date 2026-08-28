@@ -124,6 +124,7 @@ import {
   resolveBoardFocusAction,
   resolveBoardScrollBehavior,
   resolveBoardScrollTarget,
+  resolveBoardViewport,
   resolveBoardThreadVisibility,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
@@ -800,10 +801,7 @@ export function SessionBoard() {
       scroller?.querySelector<HTMLElement>("[data-board-lane-header-row]")?.offsetHeight ?? 0;
     const stickyProjectHeight =
       scroller?.querySelector<HTMLElement>("[data-board-project-header]")?.offsetHeight ?? 0;
-    const viewport = {
-      ...rawViewport,
-      top: Math.min(rawViewport.bottom, rawViewport.top + stickyHeaderHeight + stickyProjectHeight),
-    };
+    const viewport = resolveBoardViewport(rawViewport, stickyHeaderHeight, stickyProjectHeight);
     const acknowledgedFocus = useBoardFocusStore.getState().acknowledgedFocus;
     const action = resolveBoardFocusAction({
       card: node?.getBoundingClientRect() ?? null,
