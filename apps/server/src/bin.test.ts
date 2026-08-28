@@ -215,6 +215,38 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     }),
   );
 
+  it.effect("exposes the opt-in board command surface", () =>
+    Effect.gen(function* () {
+      const { output } = yield* captureStdout(runCliWithRuntime(["board", "--help"]));
+
+      assert.include(output, "originating client's local board placement");
+      assert.include(output, "lanes");
+      assert.include(output, "placement");
+      assert.include(output, "place");
+      assert.include(output, "unplace");
+    }),
+  );
+
+  it.effect("rejects board commands outside a scoped agent turn", () =>
+    Effect.gen(function* () {
+      const previousEndpoint = process.env.T3_AGENT_ENDPOINT;
+      const previousToken = process.env.T3_AGENT_BEARER_TOKEN;
+      delete process.env.T3_AGENT_ENDPOINT;
+      delete process.env.T3_AGENT_BEARER_TOKEN;
+      const error = yield* runCliWithRuntime(["board", "lanes"]).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousEndpoint) process.env.T3_AGENT_ENDPOINT = previousEndpoint;
+            if (previousToken) process.env.T3_AGENT_BEARER_TOKEN = previousToken;
+          }),
+        ),
+        Effect.flip,
+      );
+
+      assert.include(error.message, "only inside a T3 agent turn");
+    }),
+  );
+
   it.effect("reports fresh headless connect state without requiring local configuration", () =>
     Effect.gen(function* () {
       const baseDir = NodeFS.mkdtempSync(

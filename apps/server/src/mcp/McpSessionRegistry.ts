@@ -14,6 +14,7 @@ import * as McpProviderSession from "./McpProviderSession.ts";
 export interface McpCredentialRequest {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
+  readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
 }
 
 export interface McpIssuedCredential {
@@ -102,6 +103,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     httpServer.address._tag === "TcpAddress"
       ? `http://${getHttpMcpEndpointHost(httpServer.address.hostname)}:${httpServer.address.port}/mcp`
       : "http://127.0.0.1/mcp";
+  const agentEndpoint = endpoint.replace(/\/mcp$/, "/agent/board");
 
   const hashToken = (token: string) =>
     crypto
@@ -128,7 +130,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         threadId: ThreadId.make(request.threadId),
         providerSessionId,
         providerInstanceId: ProviderInstanceId.make(request.providerInstanceId),
-        capabilities: new Set(["preview"]),
+        capabilities: request.capabilities ?? new Set(["preview"]),
         issuedAt,
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
@@ -143,7 +145,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           providerSessionId,
           providerInstanceId: scope.providerInstanceId,
           endpoint,
+          agentEndpoint,
           authorizationHeader: `Bearer ${rawToken}`,
+          capabilities: scope.capabilities,
         },
       };
     },
