@@ -9,6 +9,7 @@ import {
 
 import type { BoardLane } from "../../board/boardLaneStore.ts";
 import {
+  type BoardRect,
   boardLaneGridTemplateColumns,
   buildProjectSwimlanes,
   boardLaneHeaderDroppableId,
@@ -24,6 +25,7 @@ import {
   resolveBoardFocusAction,
   resolveBoardScrollBehavior,
   resolveBoardScrollTarget,
+  resolveBoardViewport,
   resolveBoardThreadVisibility,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
@@ -580,6 +582,25 @@ describe("resolveBoardScrollTarget", () => {
         scrollLeft: 300,
       }),
     ).toEqual({ top: 1240, left: 800 });
+  });
+});
+
+describe("resolveBoardViewport", () => {
+  it("materializes non-enumerable DOMRect geometry around sticky headers", () => {
+    const rawViewport = {} as Record<keyof BoardRect, number>;
+    Object.defineProperties(rawViewport, {
+      top: { value: 100, enumerable: false },
+      bottom: { value: 800, enumerable: false },
+      left: { value: 256, enumerable: false },
+      right: { value: 1402, enumerable: false },
+    });
+
+    expect(resolveBoardViewport(rawViewport, 52, 24)).toEqual({
+      top: 176,
+      bottom: 800,
+      left: 256,
+      right: 1402,
+    });
   });
 });
 

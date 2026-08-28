@@ -219,6 +219,20 @@ export interface BoardScrollTarget {
   readonly left: number;
 }
 
+/** DOMRect coordinates are non-enumerable, so copy each usable edge explicitly. */
+export function resolveBoardViewport(
+  rawViewport: BoardRect,
+  stickyHeaderHeight: number,
+  stickyProjectHeight: number,
+): BoardRect {
+  return {
+    top: Math.min(rawViewport.bottom, rawViewport.top + stickyHeaderHeight + stickyProjectHeight),
+    bottom: rawViewport.bottom,
+    left: rawViewport.left,
+    right: rawViewport.right,
+  };
+}
+
 /**
  * Centers a card inside the actually usable board viewport. Sticky lane and
  * project headers cover the top of the raw scroller rect, so scrollIntoView
