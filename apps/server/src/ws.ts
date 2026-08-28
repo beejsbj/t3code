@@ -101,6 +101,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as BoardAgentBroker from "./agentBoard/BoardAgentBroker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
@@ -455,6 +456,7 @@ const makeWsRpcLayer = (
   clientOrigin: OrchestrationClientOrigin,
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
+  boardAgentBroker: BoardAgentBroker.BoardAgentBroker["Service"],
 ) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -1217,7 +1219,7 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
-        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
+        [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command, metadata) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
@@ -1257,6 +1259,9 @@ const makeWsRpcLayer = (
               const result = yield* dispatchNormalizedCommand(normalizedCommand).pipe(
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );
+              if (normalizedCommand.type === "thread.turn.start") {
+                yield* boardAgentBroker.bind(normalizedCommand.threadId, metadata.client.id);
+              }
               yield* recordClientCommandAnalytics(normalizedCommand);
               if (parkingCommand) {
                 const parkingKind = parkingCommand.type === "thread.archive" ? "archive" : "settle";
@@ -2346,6 +2351,18 @@ const makeWsRpcLayer = (
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
           ),
+        [WS_METHODS.agentBoardConnect]: (_input, metadata) =>
+          observeRpcStreamEffect(
+            WS_METHODS.agentBoardConnect,
+            boardAgentBroker.connect(metadata.client.id),
+            { "rpc.aggregate": "agent-board" },
+          ),
+        [WS_METHODS.agentBoardRespond]: (input, metadata) =>
+          observeRpcEffect(
+            WS_METHODS.agentBoardRespond,
+            boardAgentBroker.respond(metadata.client.id, input),
+            { "rpc.aggregate": "agent-board" },
+          ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           observeRpcStream(WS_METHODS.subscribePreviewEvents, previewManager.events, {
             "rpc.aggregate": "preview",
@@ -2525,6 +2542,7 @@ const makeWsRpcLayer = (
 export const websocketRpcRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const previewAutomationBroker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+    const boardAgentBroker = yield* BoardAgentBroker.BoardAgentBroker;
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const pullRequests = yield* PullRequestService.PullRequestService;
     return HttpRouter.add(
@@ -2559,6 +2577,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               clientOrigin,
               clientAnalyticsProps,
               previewAutomationBroker,
+              boardAgentBroker,
             ).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
