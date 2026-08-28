@@ -82,7 +82,7 @@ but the new thread does not reuse the worktree created for the thread that just 
 
 A `when` expression is evaluated against context keys describing the current UI state. The keys
 the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, and
-`modelPickerOpen`. The set is open and grows over time, so treat that as the current list rather
+`modelPickerOpen`, and `boardOpen`. The set is open and grows over time, so treat that as the current list rather
 than a fixed one. Any key the running app does not supply evaluates to `false`.
 
 Operators: `!` (not), `&&` (and), `||` (or), and parentheses.
