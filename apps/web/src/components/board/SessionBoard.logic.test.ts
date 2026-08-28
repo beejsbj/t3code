@@ -27,6 +27,7 @@ import {
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
   resolveBoardScrollBehavior,
+  resolveSpatialBoardTarget,
   resolveBoardScrollTarget,
   resolveBoardViewport,
   resolveBoardThreadVisibility,
@@ -572,6 +573,51 @@ describe("boardFocusRequestMatches", () => {
       false,
     );
     expect(boardFocusRequestMatches(null, expected)).toBe(false);
+  });
+});
+
+describe("resolveSpatialBoardTarget", () => {
+  const item = (key: string, left: number, top: number) => ({
+    key,
+    rect: { left, right: left + 100, top, bottom: top + 100 },
+  });
+  const items = [
+    item("origin", 200, 200),
+    item("left", 50, 210),
+    item("right", 410, 190),
+    item("up", 205, 20),
+    item("down", 190, 430),
+  ];
+
+  it.each([
+    ["left", "left"],
+    ["right", "right"],
+    ["up", "up"],
+    ["down", "down"],
+  ] as const)("finds the nearest card to the %s", (direction, expected) => {
+    expect(resolveSpatialBoardTarget({ items, currentKey: "origin", direction })?.key).toBe(
+      expected,
+    );
+  });
+
+  it("does not wrap at an edge", () => {
+    expect(resolveSpatialBoardTarget({ items, currentKey: "left", direction: "left" })).toBeNull();
+  });
+
+  it("uses visual reading order when no mounted card is focused", () => {
+    expect(resolveSpatialBoardTarget({ items, currentKey: null, direction: "right" })?.key).toBe(
+      "up",
+    );
+  });
+
+  it("breaks equal-distance ties deterministically", () => {
+    expect(
+      resolveSpatialBoardTarget({
+        items: [item("origin", 0, 0), item("z", 200, -100), item("a", 200, 100)],
+        currentKey: "origin",
+        direction: "right",
+      })?.key,
+    ).toBe("a");
   });
 });
 

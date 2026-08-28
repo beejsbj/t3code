@@ -32,10 +32,13 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
+  ArrowDownIcon,
+  ArrowRightIcon,
+  ArrowUpIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderIcon,
@@ -43,6 +46,7 @@ import {
   LayoutGridIcon,
   LinkIcon,
   MessageSquareIcon,
+  Maximize2Icon,
   PaletteIcon,
   ServerIcon,
   SettingsIcon,
@@ -92,6 +96,7 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { dispatchBoardNavigation } from "../board/boardNavigationBus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -564,6 +569,7 @@ function OpenCommandPaletteDialog(props: {
   readonly clearOpenIntent: () => void;
 }) {
   const navigate = useNavigate();
+  const isBoardRoute = useLocation({ select: (location) => location.pathname === "/board" });
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -1538,6 +1544,47 @@ function OpenCommandPaletteDialog(props: {
       openOverlayMode("files");
     },
   });
+
+  if (isBoardRoute) {
+    const boardNavigationActions = [
+      {
+        command: "board.focusLeft" as const,
+        title: "Board: focus left",
+        icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.focusRight" as const,
+        title: "Board: focus right",
+        icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.focusUp" as const,
+        title: "Board: focus up",
+        icon: <ArrowUpIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.focusDown" as const,
+        title: "Board: focus down",
+        icon: <ArrowDownIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.toggleExpanded" as const,
+        title: "Board: expand or collapse focused session",
+        icon: <Maximize2Icon className={ITEM_ICON_CLASS} />,
+      },
+    ];
+    for (const action of boardNavigationActions) {
+      actionItems.push({
+        kind: "action",
+        value: `action:${action.command}`,
+        searchTerms: ["board", "keyboard", "spatial", "navigate", action.title],
+        title: action.title,
+        icon: action.icon,
+        shortcutCommand: action.command,
+        run: async () => dispatchBoardNavigation(action.command),
+      });
+    }
+  }
 
   actionItems.push({
     kind: "action",

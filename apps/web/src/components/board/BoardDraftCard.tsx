@@ -10,6 +10,7 @@ import {
   type DraftId,
 } from "../../composerDraftStore.ts";
 import { cn } from "~/lib/utils";
+import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { Badge } from "../ui/badge.tsx";
 import { Button } from "../ui/button.tsx";
 
@@ -77,6 +78,8 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
     disabled: props.draggable !== true,
   });
   const composer = useComposerDraftStore((state) => state.draftsByThreadKey[draftId]);
+  const isFocused = useBoardFocusStore((state) => state.focusedThreadKey === cardKey);
+  const setFocused = useBoardFocusStore((state) => state.setFocused);
   const preview = resolveBoardDraftPreview(composer);
 
   const setRefs = useCallback(
@@ -102,7 +105,10 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
       data-board-card-key={cardKey}
       data-board-draft-id={draftId}
       role="group"
+      tabIndex={0}
       aria-label={title?.trim() || "Draft"}
+      onPointerDownCapture={() => setFocused(cardKey)}
+      onFocusCapture={() => setFocused(cardKey)}
       className="outline-none"
       style={{
         transform: CSS.Transform.toString(transform),
@@ -113,6 +119,7 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
         className={cn(
           "group/draft-card relative flex min-h-48 flex-col overflow-hidden rounded-lg border border-amber-500/35 bg-[color-mix(in_srgb,var(--card)_96%,var(--color-amber-500))] shadow-sm",
           isDragging && "opacity-60",
+          isFocused && "ring-1 ring-primary/40",
         )}
       >
         <header className="flex shrink-0 items-start gap-1.5 border-b border-amber-500/15 px-2 py-1.5">

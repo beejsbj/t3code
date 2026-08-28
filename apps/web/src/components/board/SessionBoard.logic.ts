@@ -219,6 +219,93 @@ export interface BoardRect {
   readonly right: number;
 }
 
+export type BoardNavigationDirection = "left" | "right" | "up" | "down";
+
+export interface BoardNavigationItem {
+  readonly key: string;
+  readonly rect: BoardRect;
+}
+
+function rectCenter(rect: BoardRect): { readonly x: number; readonly y: number } {
+  return { x: (rect.left + rect.right) / 2, y: (rect.top + rect.bottom) / 2 };
+}
+
+/**
+ * Resolves spatial movement from mounted board-card geometry. Candidates must
+ * be inside the requested 90-degree cone, so a slightly offset card above or
+ * below does not steal horizontal movement and edges never wrap. Euclidean
+ * distance wins; primary-axis distance, cross-axis distance, and stable key
+ * provide deterministic ties.
+ */
+export function resolveSpatialBoardTarget(input: {
+  readonly items: ReadonlyArray<BoardNavigationItem>;
+  readonly currentKey: string | null;
+  readonly direction: BoardNavigationDirection;
+}): BoardNavigationItem | null {
+  const ordered = input.items.toSorted((left, right) => {
+    const leftCenter = rectCenter(left.rect);
+    const rightCenter = rectCenter(right.rect);
+    return (
+      leftCenter.y - rightCenter.y ||
+      leftCenter.x - rightCenter.x ||
+      left.key.localeCompare(right.key)
+    );
+  });
+  const current = ordered.find((item) => item.key === input.currentKey);
+  if (current === undefined) return ordered[0] ?? null;
+
+  const origin = rectCenter(current.rect);
+  const candidates = ordered.flatMap((item) => {
+    if (item.key === current.key) return [];
+    const center = rectCenter(item.rect);
+    const dx = center.x - origin.x;
+    const dy = center.y - origin.y;
+    const primary =
+      input.direction === "left" || input.direction === "right" ? Math.abs(dx) : Math.abs(dy);
+    const cross =
+      input.direction === "left" || input.direction === "right" ? Math.abs(dy) : Math.abs(dx);
+    const isInDirection =
+      input.direction === "left"
+        ? dx < 0
+        : input.direction === "right"
+          ? dx > 0
+          : input.direction === "up"
+            ? dy < 0
+            : dy > 0;
+    return isInDirection && primary >= cross
+      ? [{ item, distanceSquared: dx * dx + dy * dy, primary, cross }]
+      : [];
+  });
+
+  return (
+    candidates.toSorted(
+      (left, right) =>
+        left.distanceSquared - right.distanceSquared ||
+        left.primary - right.primary ||
+        left.cross - right.cross ||
+        left.item.key.localeCompare(right.item.key),
+    )[0]?.item ?? null
+  );
+}
+
+const BOARD_KEYBOARD_INPUT_SELECTOR = [
+  "input",
+  "textarea",
+  "select",
+  "[contenteditable]:not([contenteditable='false'])",
+  "[data-keybinding-capture]",
+  "[data-terminal-owner]",
+  "[data-slot='dialog-popup']",
+  "[role='menu']",
+  "[role='menuitem']",
+  "[role='separator']",
+].join(",");
+
+/** Keeps board-level commands out of editing, terminal, menu, and resize input. */
+export function shouldIgnoreBoardKeyboardTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(BOARD_KEYBOARD_INPUT_SELECTOR) !== null;
+}
+
 export interface BoardScrollTarget {
   readonly top: number;
   readonly left: number;
