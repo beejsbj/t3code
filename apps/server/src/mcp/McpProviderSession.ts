@@ -6,7 +6,9 @@ export interface McpProviderSessionConfig {
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly endpoint: string;
+  readonly agentEndpoint: string;
   readonly authorizationHeader: string;
+  readonly capabilities: ReadonlySet<import("./McpInvocationContext.ts").McpCapability>;
 }
 
 const sessionsByThread = new Map<ThreadId, McpProviderSessionConfig>();

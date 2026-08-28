@@ -1,0 +1,6 @@
+interface:
+  display_name: "T3 Board"
+  short_description: "Inspect or change this thread's local board lane"
+  default_prompt: "Use $t3-board to handle my explicit request about this thread's T3 board placement."
+policy:
+  allow_implicit_invocation: false
