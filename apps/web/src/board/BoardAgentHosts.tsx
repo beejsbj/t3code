@@ -20,10 +20,13 @@ import { createBoardAgentRequestConsumerAtom } from "./boardAgentRequestConsumer
 
 const BOARD_AGENT_CLIENT_ID = randomUUID();
 
-function executeBoardCommand(
+export function executeBoardCommand(
   environmentId: EnvironmentId,
   request: AgentBoardHostRequest,
 ): AgentBoardResult {
+  if (Date.now() >= request.expiresAtMs) {
+    throw new Error("The board command expired before this client could execute it.");
+  }
   switch (request.command.type) {
     case "lanes":
       return { type: "lanes", lanes: boardLaneController.list() };
@@ -81,7 +84,14 @@ function BoardAgentHost({ environmentId }: { readonly environmentId: Environment
                 }),
             )
             .then((result) => {
-              if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+              if (result._tag === "Failure") {
+                console.error("Could not return the board command receipt.", {
+                  cause: squashAtomCommandFailure(result),
+                });
+              }
+            })
+            .catch((cause: unknown) => {
+              console.error("Could not handle the board command request.", { cause });
             });
         },
       }),

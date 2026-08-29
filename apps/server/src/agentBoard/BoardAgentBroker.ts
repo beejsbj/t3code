@@ -9,6 +9,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -28,14 +29,24 @@ interface Pending {
   readonly deferred: Deferred.Deferred<AgentBoardResult, AgentBoardError>;
 }
 
+const REQUEST_EXECUTION_WINDOW_MS = 12_000;
+
 interface State {
   readonly hosts: ReadonlyMap<number, Host>;
   readonly rpcClientIdByStableId: ReadonlyMap<string, number>;
-  readonly bindings: ReadonlyMap<ThreadId, number>;
+  readonly bindings: ReadonlyMap<
+    ThreadId,
+    | { readonly type: "stable"; readonly clientId: string }
+    | { readonly type: "connection"; readonly rpcClientId: number }
+  >;
   readonly pending: ReadonlyMap<string, Pending>;
   readonly turnOrigins: ReadonlyMap<
     CommandId,
-    { readonly clientId: number; readonly accepted: boolean }
+    {
+      readonly rpcClientId: number;
+      readonly stableClientId: string | undefined;
+      readonly accepted: boolean;
+    }
   >;
 }
 
@@ -220,7 +231,11 @@ export const make = Effect.gen(function* () {
     SynchronizedRef.update(state, (current) => {
       if (current.turnOrigins.has(commandId)) return current;
       const turnOrigins = new Map(current.turnOrigins);
-      turnOrigins.set(commandId, { clientId, accepted: false });
+      turnOrigins.set(commandId, {
+        rpcClientId: clientId,
+        stableClientId: current.hosts.get(clientId)?.client.clientId,
+        accepted: false,
+      });
       while (turnOrigins.size > 2_048) {
         const oldest = turnOrigins.keys().next().value;
         if (oldest === undefined) break;
@@ -235,7 +250,7 @@ export const make = Effect.gen(function* () {
   )((commandId, clientId) =>
     SynchronizedRef.update(state, (current) => {
       const origin = current.turnOrigins.get(commandId);
-      if (!origin || origin.accepted || origin.clientId !== clientId) return current;
+      if (!origin || origin.accepted || origin.rpcClientId !== clientId) return current;
       const turnOrigins = new Map(current.turnOrigins);
       turnOrigins.delete(commandId);
       return { ...current, turnOrigins };
@@ -250,7 +265,20 @@ export const make = Effect.gen(function* () {
       const origin = current.turnOrigins.get(commandId);
       if (!origin || origin.accepted) return current;
       const bindings = new Map(current.bindings);
-      bindings.set(threadId, origin.clientId);
+      const stableClientId =
+        origin.stableClientId ?? current.hosts.get(origin.rpcClientId)?.client.clientId;
+      bindings.delete(threadId);
+      bindings.set(
+        threadId,
+        stableClientId === undefined
+          ? { type: "connection", rpcClientId: origin.rpcClientId }
+          : { type: "stable", clientId: stableClientId },
+      );
+      while (bindings.size > 2_048) {
+        const oldest = bindings.keys().next().value;
+        if (oldest === undefined) break;
+        bindings.delete(oldest);
+      }
       const turnOrigins = new Map(current.turnOrigins);
       turnOrigins.set(commandId, { ...origin, accepted: true });
       while (turnOrigins.size > 2_048) {
@@ -272,6 +300,9 @@ export const make = Effect.gen(function* () {
   ) {
     const deferred = yield* Deferred.make<AgentBoardResult, AgentBoardError>();
     const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    // Leave time for the receipt to cross the socket before the broker's
+    // 15-second response timeout.
+    const expiresAtMs = (yield* Clock.currentTimeMillis) + REQUEST_EXECUTION_WINDOW_MS;
     const host = yield* SynchronizedRef.modify(state, (current) => {
       const selected = select(current);
       if (!selected) return [undefined, current] as const;
@@ -288,7 +319,10 @@ export const make = Effect.gen(function* () {
     }
     const offered = yield* Queue.offer(host.connection.queue, {
       type: "request",
-      request: threadId === undefined ? { requestId, command } : { requestId, threadId, command },
+      request:
+        threadId === undefined
+          ? { requestId, expiresAtMs, command }
+          : { requestId, expiresAtMs, threadId, command },
     });
     if (!offered) {
       yield* SynchronizedRef.update(state, (current) => {
@@ -326,7 +360,11 @@ export const make = Effect.gen(function* () {
         threadId,
         command,
         (current) => {
-          const rpcClientId = current.bindings.get(threadId);
+          const binding = current.bindings.get(threadId);
+          const rpcClientId =
+            binding?.type === "stable"
+              ? current.rpcClientIdByStableId.get(binding.clientId)
+              : binding?.rpcClientId;
           const connection = rpcClientId === undefined ? undefined : current.hosts.get(rpcClientId);
           return rpcClientId === undefined || !connection ? undefined : { rpcClientId, connection };
         },

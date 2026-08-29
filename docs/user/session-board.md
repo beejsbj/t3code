@@ -9,11 +9,12 @@ not a separate task or summary of a session; unsent drafts are labeled explicitl
 
 ## Arrange Sessions
 
-Every non-archived sidebar session exists on the board. Content-bearing new-thread drafts also appear
-as cards; an empty new-thread placeholder does not. The default workflow runs from **Triage** through
-**Blocked**, **Ready**, **In Progress**, and **Review**. New and previously unplaced sessions start in
-Triage. Triage is fixed at the left edge; the other workflow lanes can be created, renamed,
-described, reordered, and archived.
+Every active sidebar session exists on the board except snoozed, settled, or archived sessions.
+Content-bearing new-thread drafts also appear as cards; an empty new-thread placeholder does not.
+The default workflow runs from **Triage** through **Blocked**, **Ready**, **In Progress**, and
+**Review**. New sessions and sessions without an explicit workflow override start in Triage. Triage
+is fixed at the left edge; the other workflow lanes can be created, renamed, described, reordered,
+and archived.
 
 Use **Columns** and **Rows** to choose the spatial organization. Columns can be **Workflow** or
 **State**. Rows can be **Project**, **State**, or **None**. State cannot be both axes at once; choosing
@@ -42,8 +43,8 @@ columns saves that manual placement locally. State columns are read-only present
 
 Each card header has quick actions to snooze or settle the session. Its context menu offers the same
 thread actions as the sidebar, along with workflow lane placement. The checkout icon identifies the
-repository, branch, and workspace path on hover. Sessions cannot be removed from the board
-independently because the board and sidebar are two views over the same collection.
+repository, branch, and workspace path on hover. Snoozing, settling, or archiving removes a session
+from both active views; there is no board-only membership toggle.
 
 Sending from a card behaves like sending from the normal chat workspace: the message appears
 immediately, the timeline keeps its place, and a message sent while the agent is working steers the
@@ -93,5 +94,31 @@ included yet.
 
 From a web or desktop thread composer, `/board` opens this board and `/lane` lists the current
 workflow lanes. Choosing a lane updates only that scoped environment and thread on the current
-client. `/lane unplace` removes the explicit placement and returns the card to Triage. These local
-commands are not registered by the React Native app while it has no dedicated board.
+client. Choosing Triage clears any explicit workflow override. These local commands are not
+registered by the React Native app while it has no dedicated board.
+
+## Use Board Commands From An Agent Or Shell
+
+The board skill is opt-in. Install it in a project, then start a new provider session so the provider
+can discover the ordinary project-local skill:
+
+```bash
+t3 board skill install --directory /path/to/project
+```
+
+After an explicit request, an agent can run `t3 board lanes`, `t3 board lane`, or
+`t3 board move <lane>`. Those commands apply only to the current thread on the client that started
+the turn. If that client is unavailable, the command fails instead of choosing another client.
+
+For manual use from a shell, first list the board-capable windows connected to that T3 server:
+
+```bash
+t3 board clients
+t3 board lanes --client <client-id>
+t3 board lane --client <client-id> --thread <thread-id>
+t3 board move <lane> --client <client-id> --thread <thread-id>
+```
+
+Client IDs identify one browser tab or desktop renderer for its current lifetime. Run
+`t3 board clients` again after reloading that window. Manual targeting is unavailable inside an
+agent process, which remains restricted to its originating client and current thread.
