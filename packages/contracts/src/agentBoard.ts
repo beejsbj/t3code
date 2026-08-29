@@ -54,6 +54,7 @@ export type AgentBoardManualCommandRequest = typeof AgentBoardManualCommandReque
 
 export const AgentBoardHostRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
+  expiresAtMs: Schema.Int,
   threadId: Schema.optional(ThreadId),
   command: AgentBoardCommand,
 });
