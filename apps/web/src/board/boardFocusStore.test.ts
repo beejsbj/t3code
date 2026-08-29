@@ -59,6 +59,20 @@ describe("boardFocusStore", () => {
     );
   });
 
+  it("cancels a pending sidebar request when the user focuses another card", () => {
+    const store = useBoardFocusStore.getState();
+    store.requestFocus("thread-a");
+    const request = useBoardFocusStore.getState().request;
+
+    store.setFocused(null);
+    expect(useBoardFocusStore.getState().request).toBe(request);
+
+    store.setFocused("thread-b");
+
+    expect(useBoardFocusStore.getState().request).toBeNull();
+    expect(useBoardFocusStore.getState().focusedThreadKey).toBe("thread-b");
+  });
+
   it("keeps focus acknowledgement scoped to the selected environment", () => {
     const firstKey = scopedThreadKey(
       scopeThreadRef(EnvironmentId.make("environment-a"), ThreadId.make("shared-thread")),
