@@ -128,6 +128,7 @@ import {
   resolveBoardScrollTarget,
   resolveBoardViewport,
   resolveBoardThreadVisibility,
+  scheduleBoardRevealDisconnectCleanup,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
 
@@ -831,7 +832,7 @@ export function SessionBoard() {
         scrollLeft: scroller.scrollLeft,
       });
       setFocusedThreadKey(null);
-      return coordinateBoardReveal({
+      const cleanupReveal = coordinateBoardReveal({
         scroller,
         target,
         behavior: resolveBoardScrollBehavior(
@@ -848,6 +849,12 @@ export function SessionBoard() {
           clearFocusRequest(entry.key, focusRequest.nonce);
         },
       });
+      return () => {
+        cleanupReveal();
+        scheduleBoardRevealDisconnectCleanup(scroller, () => {
+          clearFocusRequest(entry.key, focusRequest.nonce);
+        });
+      };
     }
 
     setFocusedThreadKey(entry.key);

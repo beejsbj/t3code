@@ -30,6 +30,7 @@ import {
   resolveBoardScrollTarget,
   resolveBoardViewport,
   resolveBoardThreadVisibility,
+  scheduleBoardRevealDisconnectCleanup,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
@@ -972,5 +973,32 @@ describe("coordinateBoardReveal", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("scheduleBoardRevealDisconnectCleanup", () => {
+  it("preserves the request during connected dependency cleanup", async () => {
+    const clearRequest = vi.fn();
+
+    scheduleBoardRevealDisconnectCleanup({ isConnected: true }, clearRequest);
+    await Promise.resolve();
+
+    expect(clearRequest).not.toHaveBeenCalled();
+  });
+
+  it("clears the request after the board scroller disconnects", async () => {
+    const clearRequest = vi.fn();
+    let isConnected = true;
+    const target = {
+      get isConnected() {
+        return isConnected;
+      },
+    };
+
+    scheduleBoardRevealDisconnectCleanup(target, clearRequest);
+    isConnected = false;
+    await Promise.resolve();
+
+    expect(clearRequest).toHaveBeenCalledOnce();
   });
 });
