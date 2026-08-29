@@ -10,8 +10,10 @@ import {
 } from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
@@ -27,6 +29,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { boardSkillFiles } from "./boardSkill.ts";
 
 class BoardCliError extends CliError.UserError {
   override get message() {
@@ -45,6 +48,14 @@ const threadFlag = Flag.string("thread").pipe(
   Flag.withDescription("Thread ID from the T3 chat URL to inspect or move."),
   Flag.optional,
 );
+
+const directoryFlag = Flag.string("directory").pipe(
+  Flag.withDescription("Project directory in which to install the opt-in filesystem skill."),
+  Flag.optional,
+);
+
+const isAgentScopedProcess = () =>
+  Boolean(process.env.T3_AGENT_ENDPOINT?.trim() || process.env.T3_AGENT_BEARER_TOKEN?.trim());
 
 const laneText = (state: AgentBoardLaneState): string => {
   if (!state.lane) return "No board lane is available.";
@@ -118,9 +129,15 @@ const runAgentBoardCommand = Effect.fn("cli.board.runAgent")(function* (
 
 const withManualBoardSession = <A, E, R>(
   flags: CliAuthLocationFlags,
+  scopes: ReadonlyArray<typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope>,
   run: (input: { readonly origin: string; readonly token: string }) => Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
+    if (isAgentScopedProcess()) {
+      return yield* fail(
+        "Manual board targeting is unavailable inside a T3 agent turn; use the scoped lanes, lane, and move commands without --client or --thread.",
+      );
+    }
     const logLevel = yield* GlobalFlag.LogLevel;
     const config = yield* resolveCliAuthConfig(flags, logLevel);
     const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
@@ -131,7 +148,7 @@ const withManualBoardSession = <A, E, R>(
       const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
       return yield* Effect.acquireUseRelease(
         environmentAuth.issueSession({
-          scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+          scopes,
           label: "t3 board cli",
         }),
         (issued) => run({ origin: runtimeState.value.origin, token: issued.token }),
@@ -148,20 +165,61 @@ const withManualBoardSession = <A, E, R>(
     );
   });
 
+const installBoardSkill = Effect.fn("cli.board.installSkill")(function* (
+  directory: Option.Option<string>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const projectDirectory = path.resolve(Option.getOrElse(directory, () => process.cwd()));
+  const skillDirectory = path.join(projectDirectory, ".agents", "skills", "t3-board");
+  const targets = yield* Effect.forEach(
+    Object.entries(boardSkillFiles),
+    ([relativePath, content]) =>
+      Effect.gen(function* () {
+        const target = path.join(skillDirectory, relativePath);
+        const exists = yield* fs.exists(target);
+        return { target, content, exists } as const;
+      }),
+  );
+
+  for (const target of targets) {
+    if (target.exists && (yield* fs.readFileString(target.target)) !== target.content) {
+      return yield* fail(
+        `Refusing to overwrite the existing T3 board skill at ${target.target}. Remove it explicitly before reinstalling.`,
+      );
+    }
+  }
+
+  const missing = targets.filter((target) => !target.exists);
+  for (const target of missing) {
+    yield* fs.makeDirectory(path.dirname(target.target), { recursive: true });
+    yield* fs.writeFileString(target.target, target.content);
+  }
+
+  yield* Console.log(
+    missing.length > 0
+      ? `Installed the opt-in T3 board skill at ${skillDirectory}. Start a new provider session to discover it.`
+      : `The opt-in T3 board skill is already installed at ${skillDirectory}.`,
+  );
+});
+
 const manualUrl = (origin: string, path: string) => new URL(path, origin).toString();
 
 const runManualBoardCommand = (
   flags: CliAuthLocationFlags,
   input: AgentBoardManualCommandRequest,
 ) =>
-  withManualBoardSession(flags, ({ origin, token }) =>
-    executeJsonRequest(
-      HttpClientRequest.post(manualUrl(origin, "/api/board")).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.bodyJsonUnsafe(input),
-      ),
-      AgentBoardResult,
-    ).pipe(Effect.flatMap(printResult)),
+  withManualBoardSession(
+    flags,
+    [input.command.type === "move" ? AuthOrchestrationOperateScope : AuthOrchestrationReadScope],
+    ({ origin, token }) =>
+      executeJsonRequest(
+        HttpClientRequest.post(manualUrl(origin, "/api/board")).pipe(
+          HttpClientRequest.bearerToken(token),
+          HttpClientRequest.bodyJsonUnsafe(input),
+        ),
+        AgentBoardResult,
+      ).pipe(Effect.flatMap(printResult)),
   );
 
 const runSelectedThreadCommand = (
@@ -187,7 +245,7 @@ const runSelectedThreadCommand = (
 const clientsCommand = Command.make("clients", projectLocationFlags).pipe(
   Command.withDescription("List board-capable clients connected to this T3 server."),
   Command.withHandler((flags) =>
-    withManualBoardSession(flags, ({ origin, token }) =>
+    withManualBoardSession(flags, [AuthOrchestrationReadScope], ({ origin, token }) =>
       executeJsonRequest(
         HttpClientRequest.get(manualUrl(origin, "/api/board/clients")).pipe(
           HttpClientRequest.bearerToken(token),
@@ -244,7 +302,17 @@ const moveCommand = Command.make("move", {
   ),
 );
 
+const installSkillCommand = Command.make("install", { directory: directoryFlag }).pipe(
+  Command.withDescription("Install the opt-in T3 board skill in a project."),
+  Command.withHandler(({ directory }) => installBoardSkill(directory)),
+);
+
+const skillCommand = Command.make("skill").pipe(
+  Command.withDescription("Manage the opt-in T3 board filesystem skill."),
+  Command.withSubcommands([installSkillCommand]),
+);
+
 export const boardCommand = Command.make("board").pipe(
   Command.withDescription("Inspect or move client-local board lanes."),
-  Command.withSubcommands([clientsCommand, lanesCommand, laneCommand, moveCommand]),
+  Command.withSubcommands([clientsCommand, lanesCommand, laneCommand, moveCommand, skillCommand]),
 );
