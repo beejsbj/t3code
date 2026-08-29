@@ -30,12 +30,37 @@ export const AgentBoardResult = Schema.Union([
 ]);
 export type AgentBoardResult = typeof AgentBoardResult.Type;
 
+export const AgentBoardClientKind = Schema.Literals(["desktop-renderer", "web"]);
+export type AgentBoardClientKind = typeof AgentBoardClientKind.Type;
+
+export const AgentBoardClient = Schema.Struct({
+  clientId: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  kind: AgentBoardClientKind,
+});
+export type AgentBoardClient = typeof AgentBoardClient.Type;
+
+export const AgentBoardClientList = Schema.Struct({
+  clients: Schema.Array(AgentBoardClient),
+});
+export type AgentBoardClientList = typeof AgentBoardClientList.Type;
+
+export const AgentBoardManualCommandRequest = Schema.Struct({
+  clientId: TrimmedNonEmptyString,
+  threadId: Schema.optional(ThreadId),
+  command: AgentBoardCommand,
+});
+export type AgentBoardManualCommandRequest = typeof AgentBoardManualCommandRequest.Type;
+
 export const AgentBoardHostRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
-  threadId: ThreadId,
+  threadId: Schema.optional(ThreadId),
   command: AgentBoardCommand,
 });
 export type AgentBoardHostRequest = typeof AgentBoardHostRequest.Type;
+
+export const AgentBoardConnectInput = AgentBoardClient;
+export type AgentBoardConnectInput = typeof AgentBoardConnectInput.Type;
 
 export const AgentBoardStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("connected") }),

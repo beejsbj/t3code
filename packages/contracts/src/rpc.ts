@@ -164,7 +164,12 @@ import {
   PreviewAutomationResponse,
   PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
-import { AgentBoardError, AgentBoardHostResponse, AgentBoardStreamEvent } from "./agentBoard.ts";
+import {
+  AgentBoardConnectInput,
+  AgentBoardError,
+  AgentBoardHostResponse,
+  AgentBoardStreamEvent,
+} from "./agentBoard.ts";
 import {
   ServerConfigStreamEvent,
   ServerConfig,
@@ -888,7 +893,7 @@ export const WsPreviewAutomationFocusHostRpc = Rpc.make(WS_METHODS.previewAutoma
 });
 
 export const WsAgentBoardConnectRpc = Rpc.make(WS_METHODS.agentBoardConnect, {
-  payload: Schema.Struct({}),
+  payload: AgentBoardConnectInput,
   success: AgentBoardStreamEvent,
   error: Schema.Union([AgentBoardError, EnvironmentAuthorizationError]),
   stream: true,
