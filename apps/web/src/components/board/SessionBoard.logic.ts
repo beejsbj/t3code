@@ -226,12 +226,14 @@ export interface BoardRevealScroller {
   readonly scrollWidth: number;
   readonly clientHeight: number;
   readonly clientWidth: number;
+  readonly onscrollend?: unknown;
   readonly scrollTo: (options: ScrollToOptions) => void;
-  readonly addEventListener: (type: "scrollend", listener: EventListener) => void;
-  readonly removeEventListener: (type: "scrollend", listener: EventListener) => void;
+  readonly addEventListener: (type: "scroll" | "scrollend", listener: EventListener) => void;
+  readonly removeEventListener: (type: "scroll" | "scrollend", listener: EventListener) => void;
 }
 
 const BOARD_SCROLL_POSITION_EPSILON = 0.5;
+const BOARD_SCROLL_END_FALLBACK_MS = 100;
 
 /** Releases composer focus only after native board movement settles. */
 export function coordinateBoardReveal(input: {
@@ -241,7 +243,7 @@ export function coordinateBoardReveal(input: {
   readonly onSettled: () => void;
   readonly onInterrupted: () => void;
 }): () => void {
-  const target = {
+  const resolveEffectiveTarget = () => ({
     top: Math.min(
       Math.max(0, input.target.top),
       Math.max(0, input.scroller.scrollHeight - input.scroller.clientHeight),
@@ -250,15 +252,20 @@ export function coordinateBoardReveal(input: {
       Math.max(0, input.target.left),
       Math.max(0, input.scroller.scrollWidth - input.scroller.clientWidth),
     ),
+  });
+  const reachedTarget = () => {
+    const target = resolveEffectiveTarget();
+    return (
+      Math.abs(input.scroller.scrollTop - target.top) <= BOARD_SCROLL_POSITION_EPSILON &&
+      Math.abs(input.scroller.scrollLeft - target.left) <= BOARD_SCROLL_POSITION_EPSILON
+    );
   };
-  const reachedTarget = () =>
-    Math.abs(input.scroller.scrollTop - target.top) <= BOARD_SCROLL_POSITION_EPSILON &&
-    Math.abs(input.scroller.scrollLeft - target.left) <= BOARD_SCROLL_POSITION_EPSILON;
   if (reachedTarget()) {
     input.onSettled();
     return () => {};
   }
 
+  const target = resolveEffectiveTarget();
   if (input.behavior !== "smooth") {
     input.scroller.scrollTo({ ...target, behavior: input.behavior });
     input.onSettled();
@@ -266,22 +273,47 @@ export function coordinateBoardReveal(input: {
   }
 
   let active = true;
-  const handleScrollEnd = () => {
+  let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  const supportsScrollEnd = "onscrollend" in input.scroller;
+  const clearFallbackTimer = () => {
+    if (fallbackTimer === null) return;
+    clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+  };
+  const removeListeners = () => {
+    if (supportsScrollEnd) {
+      input.scroller.removeEventListener("scrollend", handleScrollEnd);
+    } else {
+      input.scroller.removeEventListener("scroll", handleScroll);
+    }
+  };
+  const finish = () => {
     if (!active) return;
     active = false;
-    input.scroller.removeEventListener("scrollend", handleScrollEnd);
+    clearFallbackTimer();
+    removeListeners();
     if (reachedTarget()) {
       input.onSettled();
     } else {
       input.onInterrupted();
     }
   };
-  input.scroller.addEventListener("scrollend", handleScrollEnd);
+  const handleScrollEnd = () => finish();
+  const handleScroll = () => {
+    clearFallbackTimer();
+    fallbackTimer = setTimeout(finish, BOARD_SCROLL_END_FALLBACK_MS);
+  };
+  if (supportsScrollEnd) {
+    input.scroller.addEventListener("scrollend", handleScrollEnd);
+  } else {
+    input.scroller.addEventListener("scroll", handleScroll);
+  }
   input.scroller.scrollTo({ ...target, behavior: input.behavior });
   return () => {
     if (!active) return;
     active = false;
-    input.scroller.removeEventListener("scrollend", handleScrollEnd);
+    clearFallbackTimer();
+    removeListeners();
   };
 }
 
@@ -346,6 +378,13 @@ function visibleFraction(card: BoardRect, viewport: BoardRect): number {
 }
 
 export type BoardFocusAction = "reveal" | "open";
+
+export function boardFocusRequestMatches(
+  current: { readonly threadKey: string; readonly nonce: number } | null,
+  expected: { readonly threadKey: string; readonly nonce: number },
+): boolean {
+  return current?.threadKey === expected.threadKey && current.nonce === expected.nonce;
+}
 
 export function resolveBoardFocusAction(input: {
   readonly card: BoardRect | null;
