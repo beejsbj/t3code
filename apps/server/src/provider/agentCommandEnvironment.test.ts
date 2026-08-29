@@ -33,6 +33,10 @@ it.effect("injects scoped board credentials and an exact t3 launcher", () =>
     expect(environment.PATH).toContain(`existing-bin`);
     expect(yield* fs.exists(path.join(launcherDirectory, "t3"))).toBe(true);
     expect(yield* fs.exists(path.join(launcherDirectory, "t3.cmd"))).toBe(true);
+    expect(yield* fs.readFileString(path.join(launcherDirectory, "t3"))).toContain("board:move:3");
+    expect(yield* fs.readFileString(path.join(launcherDirectory, "t3.cmd"))).toContain(
+      '"board:move"',
+    );
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

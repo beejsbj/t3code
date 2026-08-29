@@ -7,10 +7,13 @@ import {
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import type { McpProviderSessionConfig } from "../mcp/McpProviderSession.ts";
 
+// Provider children use this directory for their whole lifetime, so it must
+// remain available until the server process exits.
 let runtimeBinDir: string | undefined;
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
@@ -26,16 +29,35 @@ const ensureRuntimeBin = Effect.gen(function* () {
   const posix = path.join(directory, "t3");
   yield* fs.writeFileString(
     posix,
-    `#!/bin/sh\nexec ${shellQuote(executable)} ${shellQuote(entrypoint)} "$@"\n`,
+    `#!/bin/sh
+case "$1:$2:$#" in
+  board:lanes:2|board:lane:2|board:move:3) ;;
+  *)
+    echo "The scoped T3 agent launcher supports only: t3 board lanes, t3 board lane, and t3 board move <lane>." >&2
+    exit 2
+    ;;
+esac
+exec ${shellQuote(executable)} ${shellQuote(entrypoint)} "$@"
+`,
   );
   yield* fs.chmod(posix, 0o755);
   yield* fs.writeFileString(
     path.join(directory, "t3.cmd"),
-    `@"${executable.replaceAll('"', '""')}" "${entrypoint.replaceAll('"', '""')}" %*\r\n`,
+    [
+      "@echo off",
+      'if /I "%~1:%~2"=="board:lanes" if "%~3"=="" goto run',
+      'if /I "%~1:%~2"=="board:lane" if "%~3"=="" goto run',
+      'if /I "%~1:%~2"=="board:move" if not "%~3"=="" if "%~4"=="" goto run',
+      "echo The scoped T3 agent launcher supports only: t3 board lanes, t3 board lane, and t3 board move ^<lane^>. 1>&2",
+      "exit /b 2",
+      ":run",
+      `@"${executable.replaceAll('"', '""')}" "${entrypoint.replaceAll('"', '""')}" %*`,
+      "",
+    ].join("\r\n"),
   );
   runtimeBinDir = directory;
   return directory;
-}).pipe(Effect.provide(NodeServices.layer), Effect.orDie);
+}).pipe(Effect.provide(NodeServices.layer));
 
 /** Environment shared by every local provider process for the opt-in `t3 board` CLI. */
 export const agentCommandEnvironment = Effect.fn("provider.agentCommandEnvironment")(function* (
@@ -45,9 +67,19 @@ export const agentCommandEnvironment = Effect.fn("provider.agentCommandEnvironme
   const environment = base ?? (yield* HostProcessEnvironment);
   if (!session) return environment;
   const separator = (yield* HostProcessPlatform) === "win32" ? ";" : ":";
+  const launcherDirectory = yield* ensureRuntimeBin.pipe(
+    Effect.map(Option.some),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not create the scoped T3 agent launcher.", { cause }).pipe(
+        Effect.as(Option.none<string>()),
+      ),
+    ),
+  );
   return {
     ...environment,
-    PATH: `${yield* ensureRuntimeBin}${separator}${environment.PATH ?? ""}`,
+    ...(Option.isSome(launcherDirectory)
+      ? { PATH: `${launcherDirectory.value}${separator}${environment.PATH ?? ""}` }
+      : {}),
     T3_AGENT_ENDPOINT: session.agentEndpoint,
     T3_AGENT_BEARER_TOKEN: session.authorizationHeader.replace(/^Bearer\s+/, ""),
   } satisfies NodeJS.ProcessEnv;

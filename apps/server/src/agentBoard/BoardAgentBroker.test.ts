@@ -79,6 +79,30 @@ it.effect("keeps the binding on disconnect and never falls back to another clien
   ),
 );
 
+it.effect("restores an active binding when the same renderer reconnects", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const firstReady = yield* Deferred.make<void>();
+      const reconnected = yield* Deferred.make<void>();
+      const firstHost = yield* Stream.runForEach(yield* broker.connect(1, client(1)), (event) =>
+        event.type === "connected" ? Deferred.succeed(firstReady, undefined) : Effect.void,
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(firstReady);
+      yield* acceptOrigin(broker, 1, "reconnect");
+      yield* Fiber.interrupt(firstHost);
+
+      yield* Stream.runForEach(yield* broker.connect(3, client(1)), (event) => {
+        if (event.type === "connected") return Deferred.succeed(reconnected, undefined);
+        return broker.respond(3, { requestId: event.request.requestId, result: lanesResult });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(reconnected);
+
+      expect(yield* broker.invoke(threadId, { type: "lanes" })).toEqual(lanesResult);
+    }),
+  ),
+);
+
 it.effect("ignores a response sent by a different websocket client", () =>
   Effect.scoped(
     Effect.gen(function* () {

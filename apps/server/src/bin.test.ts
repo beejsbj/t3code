@@ -48,6 +48,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { environmentAuthenticatedAuthLayer } from "./auth/http.ts";
+import { boardSkillFiles } from "./cli/boardSkill.ts";
 
 import packageJson from "../package.json" with { type: "json" };
 
@@ -257,6 +258,7 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       assert.include(output, "lanes");
       assert.include(output, "lane");
       assert.include(output, "move");
+      assert.include(output, "skill");
       assert.notInclude(output, "unplace");
     }),
   );
@@ -303,6 +305,91 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       );
 
       assert.include(error.message, "No running T3 server was found");
+    }),
+  );
+
+  it.effect("prevents an agent-scoped process from entering manual board mode", () =>
+    Effect.gen(function* () {
+      const previousEndpoint = process.env.T3_AGENT_ENDPOINT;
+      const previousToken = process.env.T3_AGENT_BEARER_TOKEN;
+      process.env.T3_AGENT_ENDPOINT = "http://127.0.0.1/agent/board";
+      process.env.T3_AGENT_BEARER_TOKEN = "scoped-token";
+      const error = yield* runCliWithRuntime([
+        "board",
+        "move",
+        "review",
+        "--client",
+        "client-2",
+        "--thread",
+        "other-thread",
+      ]).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousEndpoint === undefined) delete process.env.T3_AGENT_ENDPOINT;
+            else process.env.T3_AGENT_ENDPOINT = previousEndpoint;
+            if (previousToken === undefined) delete process.env.T3_AGENT_BEARER_TOKEN;
+            else process.env.T3_AGENT_BEARER_TOKEN = previousToken;
+          }),
+        ),
+        Effect.flip,
+      );
+
+      assert.include(error.message, "unavailable inside a T3 agent turn");
+    }),
+  );
+
+  it.effect("installs the opt-in board skill into an explicit project directory", () =>
+    Effect.gen(function* () {
+      const projectDirectory = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-board-skill-test-"),
+      );
+      yield* runCliWithRuntime(["board", "skill", "install", "--directory", projectDirectory]);
+
+      const skillDirectory = NodePath.join(projectDirectory, ".agents", "skills", "t3-board");
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(skillDirectory, "SKILL.md"), "utf8"),
+        boardSkillFiles["SKILL.md"],
+      );
+      assert.equal(
+        NodeFS.readFileSync(NodePath.join(skillDirectory, "agents", "openai.yaml"), "utf8"),
+        boardSkillFiles["agents/openai.yaml"],
+      );
+
+      yield* runCliWithRuntime(["board", "skill", "install", "--directory", projectDirectory]);
+    }),
+  );
+
+  it.effect("does not partially overwrite a conflicting board skill", () =>
+    Effect.gen(function* () {
+      const projectDirectory = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3-board-skill-conflict-test-"),
+      );
+      const metadataPath = NodePath.join(
+        projectDirectory,
+        ".agents",
+        "skills",
+        "t3-board",
+        "agents",
+        "openai.yaml",
+      );
+      NodeFS.mkdirSync(NodePath.dirname(metadataPath), { recursive: true });
+      NodeFS.writeFileSync(metadataPath, "user-owned metadata\n");
+
+      const error = yield* runCliWithRuntime([
+        "board",
+        "skill",
+        "install",
+        "--directory",
+        projectDirectory,
+      ]).pipe(Effect.flip);
+
+      assert.include(error.message, "Refusing to overwrite");
+      assert.equal(
+        NodeFS.existsSync(
+          NodePath.join(projectDirectory, ".agents", "skills", "t3-board", "SKILL.md"),
+        ),
+        false,
+      );
     }),
   );
 

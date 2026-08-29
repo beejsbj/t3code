@@ -28,14 +28,8 @@ export const layer = Layer.unwrap(
     const broker = yield* BoardAgentBroker.BoardAgentBroker;
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
 
-    const authenticateManual = Effect.fn("agentBoard.authenticateManual")(function* (
-      request: HttpServerRequest.HttpServerRequest,
-      scope: typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope,
-    ) {
-      const session = yield* environmentAuth.authenticateHttpRequest(request).pipe(Effect.option);
-      if (session._tag === "None") return undefined;
-      return session.value.scopes.includes(scope) ? session.value : null;
-    });
+    const authenticateManual = (request: HttpServerRequest.HttpServerRequest) =>
+      environmentAuth.authenticateHttpRequest(request).pipe(Effect.option);
 
     return Layer.mergeAll(
       HttpRouter.add(
@@ -69,9 +63,11 @@ export const layer = Layer.unwrap(
         "/api/board/clients",
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
-          const session = yield* authenticateManual(request, AuthOrchestrationReadScope);
-          if (session === undefined) return jsonError(401, "A valid T3 session is required.");
-          if (session === null) return jsonError(403, "The orchestration:read scope is required.");
+          const session = yield* authenticateManual(request);
+          if (session._tag === "None") return jsonError(401, "A valid T3 session is required.");
+          if (!session.value.scopes.includes(AuthOrchestrationReadScope)) {
+            return jsonError(403, "The orchestration:read scope is required.");
+          }
           return HttpServerResponse.jsonUnsafe(
             { clients: yield* broker.listClients() },
             { headers: { "cache-control": "no-store" } },
@@ -83,15 +79,20 @@ export const layer = Layer.unwrap(
         "/api/board",
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
-          const session = yield* authenticateManual(request, AuthOrchestrationOperateScope);
-          if (session === undefined) return jsonError(401, "A valid T3 session is required.");
-          if (session === null)
-            return jsonError(403, "The orchestration:operate scope is required.");
+          const session = yield* authenticateManual(request);
+          if (session._tag === "None") return jsonError(401, "A valid T3 session is required.");
           const raw = yield* request.json.pipe(Effect.orElseSucceed(() => undefined));
           const input = yield* decodeManualBoardCommand(raw).pipe(Effect.option);
           if (input._tag === "None") return jsonError(400, "Invalid manual board command.");
           if (input.value.command.type !== "lanes" && input.value.threadId === undefined) {
             return jsonError(400, "A thread ID is required for lane and move commands.");
+          }
+          const requiredScope =
+            input.value.command.type === "move"
+              ? AuthOrchestrationOperateScope
+              : AuthOrchestrationReadScope;
+          if (!session.value.scopes.includes(requiredScope)) {
+            return jsonError(403, `The ${requiredScope} scope is required.`);
           }
           return yield* broker
             .invokeClient(input.value.clientId, input.value.threadId, input.value.command)
