@@ -1,5 +1,6 @@
 import {
   AgentBoardError,
+  type AgentBoardClient,
   type CommandId,
   type AgentBoardCommand,
   type AgentBoardHostResponse,
@@ -17,17 +18,19 @@ import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 
 interface Host {
+  readonly client: AgentBoardClient;
   readonly queue: Queue.Queue<AgentBoardStreamEvent>;
 }
 
 interface Pending {
-  readonly clientId: number;
+  readonly rpcClientId: number;
   readonly queue: Host["queue"];
   readonly deferred: Deferred.Deferred<AgentBoardResult, AgentBoardError>;
 }
 
 interface State {
   readonly hosts: ReadonlyMap<number, Host>;
+  readonly rpcClientIdByStableId: ReadonlyMap<string, number>;
   readonly bindings: ReadonlyMap<ThreadId, number>;
   readonly pending: ReadonlyMap<string, Pending>;
   readonly turnOrigins: ReadonlyMap<
@@ -37,8 +40,12 @@ interface State {
 }
 
 export interface BoardAgentBrokerShape {
-  readonly connect: (clientId: number) => Effect.Effect<Stream.Stream<AgentBoardStreamEvent>>;
+  readonly connect: (
+    rpcClientId: number,
+    client: AgentBoardClient,
+  ) => Effect.Effect<Stream.Stream<AgentBoardStreamEvent>>;
   readonly respond: (clientId: number, response: AgentBoardHostResponse) => Effect.Effect<void>;
+  readonly listClients: () => Effect.Effect<ReadonlyArray<AgentBoardClient>>;
   readonly reserveTurnOrigin: (commandId: CommandId, clientId: number) => Effect.Effect<void>;
   readonly cancelTurnOrigin: (commandId: CommandId, clientId: number) => Effect.Effect<void>;
   readonly acceptTurnOrigin: (
@@ -47,6 +54,11 @@ export interface BoardAgentBrokerShape {
   ) => Effect.Effect<void>;
   readonly invoke: (
     threadId: ThreadId,
+    command: AgentBoardCommand,
+  ) => Effect.Effect<AgentBoardResult, AgentBoardError>;
+  readonly invokeClient: (
+    clientId: string,
+    threadId: ThreadId | undefined,
     command: AgentBoardCommand,
   ) => Effect.Effect<AgentBoardResult, AgentBoardError>;
 }
@@ -59,29 +71,34 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const state = yield* SynchronizedRef.make<State>({
     hosts: new Map(),
+    rpcClientIdByStableId: new Map(),
     bindings: new Map(),
     pending: new Map(),
     turnOrigins: new Map(),
   });
 
   const disconnect = Effect.fn("BoardAgentBroker.disconnect")(function* (
-    clientId: number,
+    rpcClientId: number,
     queue: Host["queue"],
   ) {
     const disconnected = yield* SynchronizedRef.modify(state, (current) => {
-      if (current.hosts.get(clientId)?.queue !== queue)
-        return [[] as Array<Pending>, current] as const;
+      const host = current.hosts.get(rpcClientId);
+      if (host?.queue !== queue) return [[] as Array<Pending>, current] as const;
       const hosts = new Map(current.hosts);
-      hosts.delete(clientId);
+      hosts.delete(rpcClientId);
+      const rpcClientIdByStableId = new Map(current.rpcClientIdByStableId);
+      if (rpcClientIdByStableId.get(host.client.clientId) === rpcClientId) {
+        rpcClientIdByStableId.delete(host.client.clientId);
+      }
       const pending = new Map(current.pending);
       const failures: Array<Pending> = [];
       for (const [requestId, entry] of current.pending) {
-        if (entry.clientId === clientId && entry.queue === queue) {
+        if (entry.rpcClientId === rpcClientId && entry.queue === queue) {
           pending.delete(requestId);
           failures.push(entry);
         }
       }
-      return [failures, { ...current, hosts, pending }] as const;
+      return [failures, { ...current, hosts, rpcClientIdByStableId, pending }] as const;
     });
     yield* Effect.forEach(
       disconnected,
@@ -89,7 +106,7 @@ export const make = Effect.gen(function* () {
         Deferred.fail(
           deferred,
           new AgentBoardError({
-            message: "The client that started this turn disconnected; no other client was used.",
+            message: "The selected board client disconnected; no other client was used.",
           }),
         ),
       { discard: true },
@@ -98,7 +115,7 @@ export const make = Effect.gen(function* () {
   });
 
   const connect: BoardAgentBrokerShape["connect"] = Effect.fn("BoardAgentBroker.connect")(
-    (clientId) =>
+    (rpcClientId, client) =>
       Effect.succeed(
         Stream.unwrap(
           Effect.acquireRelease(
@@ -106,21 +123,38 @@ export const make = Effect.gen(function* () {
               const queue = yield* Queue.unbounded<AgentBoardStreamEvent>();
               const replaced = yield* SynchronizedRef.modify(state, (current) => {
                 const hosts = new Map(current.hosts);
-                const old = hosts.get(clientId);
-                hosts.set(clientId, { queue });
+                const rpcClientIdByStableId = new Map(current.rpcClientIdByStableId);
+                const replacedHosts = new Map<Queue.Queue<AgentBoardStreamEvent>, Host>();
+                const oldForConnection = hosts.get(rpcClientId);
+                if (oldForConnection) replacedHosts.set(oldForConnection.queue, oldForConnection);
+                const oldRpcClientId = rpcClientIdByStableId.get(client.clientId);
+                const oldForStableId =
+                  oldRpcClientId === undefined ? undefined : hosts.get(oldRpcClientId);
+                if (oldForStableId) replacedHosts.set(oldForStableId.queue, oldForStableId);
+                for (const old of replacedHosts.values()) {
+                  for (const [hostRpcClientId, host] of hosts) {
+                    if (host.queue === old.queue) hosts.delete(hostRpcClientId);
+                  }
+                  if (rpcClientIdByStableId.get(old.client.clientId) !== undefined) {
+                    rpcClientIdByStableId.delete(old.client.clientId);
+                  }
+                }
+                const host = { client, queue } satisfies Host;
+                hosts.set(rpcClientId, host);
+                rpcClientIdByStableId.set(client.clientId, rpcClientId);
                 const pending = new Map(current.pending);
                 const disconnected: Array<Pending> = [];
-                if (old) {
+                if (replacedHosts.size > 0) {
                   for (const [requestId, entry] of current.pending) {
-                    if (entry.queue === old.queue) {
+                    if (replacedHosts.has(entry.queue)) {
                       pending.delete(requestId);
                       disconnected.push(entry);
                     }
                   }
                 }
                 return [
-                  { old, disconnected },
-                  { ...current, hosts, pending },
+                  { old: [...replacedHosts.values()], disconnected },
+                  { ...current, hosts, rpcClientIdByStableId, pending },
                 ] as const;
               });
               yield* Effect.forEach(
@@ -135,21 +169,23 @@ export const make = Effect.gen(function* () {
                   ),
                 { discard: true },
               );
-              if (replaced.old) yield* Queue.shutdown(replaced.old.queue);
+              yield* Effect.forEach(replaced.old, (host) => Queue.shutdown(host.queue), {
+                discard: true,
+              });
               yield* Queue.offer(queue, { type: "connected" });
               return queue;
             }),
-            (queue) => disconnect(clientId, queue),
+            (queue) => disconnect(rpcClientId, queue),
           ).pipe(Effect.map(Stream.fromQueue)),
         ),
       ),
   );
 
   const respond: BoardAgentBrokerShape["respond"] = Effect.fn("BoardAgentBroker.respond")(
-    function* (clientId, response) {
+    function* (rpcClientId, response) {
       const entry = yield* SynchronizedRef.modify(state, (current) => {
         const pending = current.pending.get(response.requestId);
-        if (!pending || pending.clientId !== clientId) return [undefined, current] as const;
+        if (!pending || pending.rpcClientId !== rpcClientId) return [undefined, current] as const;
         const next = new Map(current.pending);
         next.delete(response.requestId);
         return [pending, { ...current, pending: next }] as const;
@@ -164,6 +200,18 @@ export const make = Effect.gen(function* () {
           }),
         );
     },
+  );
+
+  const listClients: BoardAgentBrokerShape["listClients"] = Effect.fn(
+    "BoardAgentBroker.listClients",
+  )(() =>
+    SynchronizedRef.get(state).pipe(
+      Effect.map((current) =>
+        [...current.hosts.values()]
+          .map((host) => host.client)
+          .toSorted((left, right) => left.label.localeCompare(right.label)),
+      ),
+    ),
   );
 
   const reserveTurnOrigin: BoardAgentBrokerShape["reserveTurnOrigin"] = Effect.fn(
@@ -214,70 +262,102 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const invoke: BoardAgentBrokerShape["invoke"] = Effect.fn("BoardAgentBroker.invoke")(
-    function* (threadId, command) {
-      const deferred = yield* Deferred.make<AgentBoardResult, AgentBoardError>();
-      const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
-      const host = yield* SynchronizedRef.modify(state, (current) => {
-        const clientId = current.bindings.get(threadId);
-        const connection = clientId === undefined ? undefined : current.hosts.get(clientId);
-        if (clientId === undefined || !connection) return [undefined, current] as const;
+  const invokeResolved = Effect.fn("BoardAgentBroker.invokeResolved")(function* (
+    threadId: ThreadId | undefined,
+    command: AgentBoardCommand,
+    select: (
+      current: State,
+    ) => { readonly rpcClientId: number; readonly connection: Host } | undefined,
+    unavailableMessage: string,
+  ) {
+    const deferred = yield* Deferred.make<AgentBoardResult, AgentBoardError>();
+    const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const host = yield* SynchronizedRef.modify(state, (current) => {
+      const selected = select(current);
+      if (!selected) return [undefined, current] as const;
+      const pending = new Map(current.pending);
+      pending.set(requestId, {
+        rpcClientId: selected.rpcClientId,
+        queue: selected.connection.queue,
+        deferred,
+      });
+      return [selected, { ...current, pending }] as const;
+    });
+    if (!host) {
+      return yield* new AgentBoardError({ message: unavailableMessage });
+    }
+    const offered = yield* Queue.offer(host.connection.queue, {
+      type: "request",
+      request: threadId === undefined ? { requestId, command } : { requestId, threadId, command },
+    });
+    if (!offered) {
+      yield* SynchronizedRef.update(state, (current) => {
         const pending = new Map(current.pending);
-        pending.set(requestId, { clientId, queue: connection.queue, deferred });
-        return [
-          { clientId, connection },
-          { ...current, pending },
-        ] as const;
+        pending.delete(requestId);
+        return { ...current, pending };
       });
-      if (!host) {
-        return yield* new AgentBoardError({
-          message:
-            "Board commands are unavailable because the client that started this turn is not connected with board support.",
-        });
-      }
-      const offered = yield* Queue.offer(host.connection.queue, {
-        type: "request",
-        request: { requestId, threadId, command },
+      return yield* new AgentBoardError({
+        message: "The selected board client disconnected before the command could be sent.",
       });
-      if (!offered) {
-        yield* SynchronizedRef.update(state, (current) => {
+    }
+    return yield* Deferred.await(deferred).pipe(
+      Effect.timeoutOrElse({
+        duration: "15 seconds",
+        orElse: () =>
+          Effect.fail(
+            new AgentBoardError({
+              message: "The selected board client did not answer within 15 seconds.",
+            }),
+          ),
+      }),
+      Effect.ensuring(
+        SynchronizedRef.update(state, (current) => {
           const pending = new Map(current.pending);
           pending.delete(requestId);
           return { ...current, pending };
-        });
-        return yield* new AgentBoardError({
-          message: "The originating client disconnected before the board command could be sent.",
-        });
-      }
-      return yield* Deferred.await(deferred).pipe(
-        Effect.timeoutOrElse({
-          duration: "15 seconds",
-          orElse: () =>
-            Effect.fail(
-              new AgentBoardError({
-                message:
-                  "The originating client did not answer the board command within 15 seconds.",
-              }),
-            ),
         }),
-        Effect.ensuring(
-          SynchronizedRef.update(state, (current) => {
-            const pending = new Map(current.pending);
-            pending.delete(requestId);
-            return { ...current, pending };
-          }),
-        ),
-      );
-    },
+      ),
+    );
+  });
+
+  const invoke: BoardAgentBrokerShape["invoke"] = Effect.fn("BoardAgentBroker.invoke")(
+    (threadId, command) =>
+      invokeResolved(
+        threadId,
+        command,
+        (current) => {
+          const rpcClientId = current.bindings.get(threadId);
+          const connection = rpcClientId === undefined ? undefined : current.hosts.get(rpcClientId);
+          return rpcClientId === undefined || !connection ? undefined : { rpcClientId, connection };
+        },
+        "Board commands are unavailable because the client that started this turn is not connected with board support.",
+      ),
+  );
+
+  const invokeClient: BoardAgentBrokerShape["invokeClient"] = Effect.fn(
+    "BoardAgentBroker.invokeClient",
+  )((clientId, threadId, command) =>
+    invokeResolved(
+      threadId,
+      command,
+      (current) => {
+        const rpcClientId = current.rpcClientIdByStableId.get(clientId);
+        const connection = rpcClientId === undefined ? undefined : current.hosts.get(rpcClientId);
+        return rpcClientId === undefined || !connection ? undefined : { rpcClientId, connection };
+      },
+      `Board client ${clientId} is not connected to this server.`,
+    ),
   );
 
   return {
     connect,
     respond,
+    listClients,
     reserveTurnOrigin,
     cancelTurnOrigin,
     acceptTurnOrigin,
     invoke,
+    invokeClient,
   } satisfies BoardAgentBrokerShape;
 });
 

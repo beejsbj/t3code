@@ -252,7 +252,8 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
     Effect.gen(function* () {
       const { output } = yield* captureStdout(runCliWithRuntime(["board", "--help"]));
 
-      assert.include(output, "originating client's board");
+      assert.include(output, "client-local board lanes");
+      assert.include(output, "clients");
       assert.include(output, "lanes");
       assert.include(output, "lane");
       assert.include(output, "move");
@@ -276,7 +277,32 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
         Effect.flip,
       );
 
-      assert.include(error.message, "only inside a T3 agent turn");
+      assert.include(error.message, "No agent turn is active");
+    }),
+  );
+
+  it.effect("requires an exact client and thread together for manual board moves", () =>
+    Effect.gen(function* () {
+      const error = yield* runCliWithRuntime([
+        "board",
+        "move",
+        "review",
+        "--client",
+        "client-1",
+      ]).pipe(Effect.flip);
+
+      assert.include(error.message, "require both `--client` and `--thread`");
+    }),
+  );
+
+  it.effect("reports when no local server is available for manual board client discovery", () =>
+    Effect.gen(function* () {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-board-cli-test-"));
+      const error = yield* runCliWithRuntime(["board", "clients", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+
+      assert.include(error.message, "No running T3 server was found");
     }),
   );
 

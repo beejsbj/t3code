@@ -2623,10 +2623,10 @@ const makeWsRpcLayer = (
             previewAutomationBroker.focusHost(input),
             { "rpc.aggregate": "preview-automation" },
           ),
-        [WS_METHODS.agentBoardConnect]: (_input, metadata) =>
+        [WS_METHODS.agentBoardConnect]: (input, metadata) =>
           observeRpcStreamEffect(
             WS_METHODS.agentBoardConnect,
-            boardAgentBroker.connect(metadata.client.id),
+            boardAgentBroker.connect(metadata.client.id, input),
             { "rpc.aggregate": "agent-board" },
           ),
         [WS_METHODS.agentBoardRespond]: (input, metadata) =>

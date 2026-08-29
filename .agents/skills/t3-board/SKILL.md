@@ -1,6 +1,6 @@
 ---
 name: t3-board
-description: Inspect or move the current T3 Code thread on the client-local board with `t3 board`. Use only when the user explicitly asks about the board or a thread's lane.
+description: Inspect or move T3 Code threads on the client-local board with `t3 board`. Use only after an explicit user request.
 ---
 
 # T3 Board
@@ -16,6 +16,14 @@ The board is client-local. Every active sidebar thread is already on the board; 
 - `t3 board move <lane-id-or-exact-name>` moves the current thread. Prefer a stable lane ID after listing lanes; an exact unambiguous live name also works. Moving to Triage clears the override because Triage is the default lane.
 
 Run one command at a time and report its receipt faithfully. Do not infer success from an exit code if the command printed an error.
+
+For an explicit request to operate from a human shell rather than this agent turn, use `t3 board clients` to list the renderers connected to that local T3 server. A human can then target one renderer exactly:
+
+- `t3 board lanes --client <client-id>`
+- `t3 board lane --client <client-id> --thread <thread-id>`
+- `t3 board move <lane> --client <client-id> --thread <thread-id>`
+
+Manual commands require the server for that T3 home to be running. The selected renderer remains authoritative; the CLI does not read or write a second board store.
 
 If the originating client is disconnected, too old to host board commands, or did not answer, explain that the operation was not performed. Never retry against another client or suggest that server state was updated.
 
