@@ -235,6 +235,15 @@ export interface BoardRevealScroller {
 const BOARD_SCROLL_POSITION_EPSILON = 0.5;
 const BOARD_SCROLL_END_FALLBACK_MS = 100;
 
+export function scheduleBoardRevealDisconnectCleanup(
+  target: { readonly isConnected: boolean },
+  clearRequest: () => void,
+): void {
+  queueMicrotask(() => {
+    if (!target.isConnected) clearRequest();
+  });
+}
+
 /** Releases composer focus only after native board movement settles. */
 export function coordinateBoardReveal(input: {
   readonly scroller: BoardRevealScroller;
