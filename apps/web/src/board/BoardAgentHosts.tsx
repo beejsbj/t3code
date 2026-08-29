@@ -13,21 +13,28 @@ import { useMemo } from "react";
 import { useEnvironments } from "~/state/environments";
 import { agentBoardEnvironment } from "~/state/agentBoard";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { randomUUID } from "~/lib/utils";
 
 import { boardLaneController } from "./boardLaneController";
 import { createBoardAgentRequestConsumerAtom } from "./boardAgentRequestConsumer";
+
+const BOARD_AGENT_CLIENT_ID = randomUUID();
 
 function executeBoardCommand(
   environmentId: EnvironmentId,
   request: AgentBoardHostRequest,
 ): AgentBoardResult {
-  const ref: ScopedThreadRef = { environmentId, threadId: request.threadId };
   switch (request.command.type) {
     case "lanes":
       return { type: "lanes", lanes: boardLaneController.list() };
-    case "lane":
+    case "lane": {
+      if (request.threadId === undefined) throw new Error("A thread ID is required.");
+      const ref: ScopedThreadRef = { environmentId, threadId: request.threadId };
       return { type: "lane", state: boardLaneController.current(ref) };
+    }
     case "move": {
+      if (request.threadId === undefined) throw new Error("A thread ID is required.");
+      const ref: ScopedThreadRef = { environmentId, threadId: request.threadId };
       const result = boardLaneController.move(ref, request.command.lane);
       if (result.type === "error") throw new Error(result.message);
       return { type: "move", state: result.state };
@@ -43,7 +50,15 @@ export function BoardAgentHosts() {
 }
 
 function BoardAgentHost({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const requestsAtom = agentBoardEnvironment.requests({ environmentId, input: {} });
+  const clientKind = window.desktopBridge ? "desktop-renderer" : "web";
+  const requestsAtom = agentBoardEnvironment.requests({
+    environmentId,
+    input: {
+      clientId: BOARD_AGENT_CLIENT_ID,
+      kind: clientKind,
+      label: clientKind === "desktop-renderer" ? "Desktop" : `Web (${window.location.host})`,
+    },
+  });
   const respond = useAtomCommand(agentBoardEnvironment.respond, "agent board response");
   const consumerAtom = useMemo(
     () =>

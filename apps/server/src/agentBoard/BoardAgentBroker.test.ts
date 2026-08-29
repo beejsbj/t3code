@@ -12,6 +12,11 @@ import * as BoardAgentBroker from "./BoardAgentBroker.ts";
 const makeBroker = BoardAgentBroker.make.pipe(Effect.provide(NodeServices.layer));
 const threadId = ThreadId.make("thread-1");
 const lanesResult: AgentBoardResult = { type: "lanes", lanes: [] };
+const client = (clientId: number) => ({
+  clientId: `client-${clientId}`,
+  label: `Client ${clientId}`,
+  kind: "web" as const,
+});
 const acceptOrigin = (
   broker: BoardAgentBroker.BoardAgentBrokerShape,
   clientId: number,
@@ -30,11 +35,11 @@ it.effect("routes only to the exact client bound by the accepted turn", () =>
       const aReady = yield* Deferred.make<void>();
       const bReady = yield* Deferred.make<void>();
       const bRequests = yield* Ref.make(0);
-      yield* Stream.runForEach(yield* broker.connect(1), (event) => {
+      yield* Stream.runForEach(yield* broker.connect(1, client(1)), (event) => {
         if (event.type === "connected") return Deferred.succeed(aReady, undefined);
         return broker.respond(1, { requestId: event.request.requestId, result: lanesResult });
       }).pipe(Effect.forkScoped);
-      yield* Stream.runForEach(yield* broker.connect(2), (event) => {
+      yield* Stream.runForEach(yield* broker.connect(2, client(2)), (event) => {
         if (event.type === "connected") return Deferred.succeed(bReady, undefined);
         return Ref.update(bRequests, (count) => count + 1);
       }).pipe(Effect.forkScoped);
@@ -55,10 +60,10 @@ it.effect("keeps the binding on disconnect and never falls back to another clien
       const aReady = yield* Deferred.make<void>();
       const bReady = yield* Deferred.make<void>();
       const bRequests = yield* Ref.make(0);
-      const aFiber = yield* Stream.runForEach(yield* broker.connect(1), (event) =>
+      const aFiber = yield* Stream.runForEach(yield* broker.connect(1, client(1)), (event) =>
         event.type === "connected" ? Deferred.succeed(aReady, undefined) : Effect.void,
       ).pipe(Effect.forkScoped);
-      yield* Stream.runForEach(yield* broker.connect(2), (event) => {
+      yield* Stream.runForEach(yield* broker.connect(2, client(2)), (event) => {
         if (event.type === "connected") return Deferred.succeed(bReady, undefined);
         return Ref.update(bRequests, (count) => count + 1);
       }).pipe(Effect.forkScoped);
@@ -80,7 +85,7 @@ it.effect("ignores a response sent by a different websocket client", () =>
       const broker = yield* makeBroker;
       const requestSeen = yield* Deferred.make<void>();
       const connected = yield* Deferred.make<void>();
-      yield* Stream.runForEach(yield* broker.connect(1), (event) => {
+      yield* Stream.runForEach(yield* broker.connect(1, client(1)), (event) => {
         if (event.type === "connected") return Deferred.succeed(connected, undefined);
         return broker
           .respond(2, { requestId: event.request.requestId, result: lanesResult })
@@ -111,7 +116,7 @@ it.effect("does not move an active binding until the queued turn is accepted", (
         [1, aReady],
         [2, bReady],
       ] as const) {
-        yield* Stream.runForEach(yield* broker.connect(clientId), (event) => {
+        yield* Stream.runForEach(yield* broker.connect(clientId, client(clientId)), (event) => {
           if (event.type === "connected") return Deferred.succeed(ready, undefined);
           return Ref.update(routedTo, (clients) => [...clients, clientId]).pipe(
             Effect.andThen(
@@ -144,7 +149,7 @@ it.effect("fails in-flight commands when the same client replaces its host strea
       const broker = yield* makeBroker;
       const connected = yield* Deferred.make<void>();
       const requestSeen = yield* Deferred.make<void>();
-      yield* Stream.runForEach(yield* broker.connect(1), (event) =>
+      yield* Stream.runForEach(yield* broker.connect(1, client(1)), (event) =>
         event.type === "connected"
           ? Deferred.succeed(connected, undefined)
           : Deferred.succeed(requestSeen, undefined),
@@ -153,10 +158,54 @@ it.effect("fails in-flight commands when the same client replaces its host strea
       yield* acceptOrigin(broker, 1, "replacement");
       const invocation = yield* broker.invoke(threadId, { type: "lanes" }).pipe(Effect.forkScoped);
       yield* Deferred.await(requestSeen);
-      yield* Stream.runDrain(yield* broker.connect(1)).pipe(Effect.forkScoped);
+      yield* Stream.runDrain(yield* broker.connect(1, client(1))).pipe(Effect.forkScoped);
 
       const error = yield* Fiber.join(invocation).pipe(Effect.flip);
       expect(error.message).toContain("replaced");
+    }),
+  ),
+);
+
+it.effect("lists stable clients and manually routes only to the selected client", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const broker = yield* makeBroker;
+      const aReady = yield* Deferred.make<void>();
+      const bReady = yield* Deferred.make<void>();
+      const routedTo = yield* Ref.make<ReadonlyArray<number>>([]);
+      for (const [rpcClientId, ready] of [
+        [1, aReady],
+        [2, bReady],
+      ] as const) {
+        yield* Stream.runForEach(
+          yield* broker.connect(rpcClientId, client(rpcClientId)),
+          (event) => {
+            if (event.type === "connected") return Deferred.succeed(ready, undefined);
+            return Ref.update(routedTo, (clients) => [...clients, rpcClientId]).pipe(
+              Effect.andThen(
+                broker.respond(rpcClientId, {
+                  requestId: event.request.requestId,
+                  result: lanesResult,
+                }),
+              ),
+            );
+          },
+        ).pipe(Effect.forkScoped);
+      }
+      yield* Deferred.await(aReady);
+      yield* Deferred.await(bReady);
+
+      expect(yield* broker.listClients()).toEqual([client(1), client(2)]);
+      expect(yield* broker.invokeClient("client-2", undefined, { type: "lanes" })).toEqual(
+        lanesResult,
+      );
+      expect(yield* Ref.get(routedTo)).toEqual([2]);
+
+      const error = yield* Effect.flip(
+        broker.invokeClient("missing-client", undefined, { type: "lanes" }),
+      );
+      expect(error.message).toContain("missing-client");
+      expect(yield* Ref.get(routedTo)).toEqual([2]);
     }),
   ),
 );
