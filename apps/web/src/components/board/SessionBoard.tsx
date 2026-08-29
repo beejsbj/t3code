@@ -110,6 +110,7 @@ import { BoardDraftCard } from "./BoardDraftCard.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { threadHasStarted } from "../ChatView.logic.ts";
 import {
+  boardFocusRequestMatches,
   coordinateBoardReveal,
   boardLaneGridTemplateColumns,
   boardLaneHeaderDroppableId,
@@ -838,10 +839,7 @@ export function SessionBoard() {
         ),
         onSettled: () => {
           const currentRequest = useBoardFocusStore.getState().request;
-          if (
-            currentRequest?.threadKey !== entry.key ||
-            currentRequest.nonce !== focusRequest.nonce
-          ) {
+          if (!boardFocusRequestMatches(currentRequest, focusRequest)) {
             return;
           }
           setFocusedThreadKey(entry.key);
