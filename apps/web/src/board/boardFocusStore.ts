@@ -105,10 +105,18 @@ export const useBoardFocusStore = create<BoardFocusStoreState>()((set) => ({
     set((state) => {
       const acknowledgedFocus =
         state.acknowledgedFocus?.threadKey === threadKey ? state.acknowledgedFocus : null;
-      if (state.focusedThreadKey === threadKey && state.acknowledgedFocus === acknowledgedFocus) {
+      const request =
+        state.request !== null && threadKey !== null && state.request.threadKey !== threadKey
+          ? null
+          : state.request;
+      if (
+        state.focusedThreadKey === threadKey &&
+        state.acknowledgedFocus === acknowledgedFocus &&
+        state.request === request
+      ) {
         return state;
       }
-      return { focusedThreadKey: threadKey, acknowledgedFocus };
+      return { request, focusedThreadKey: threadKey, acknowledgedFocus };
     }),
   setExpanded: (target) =>
     set((state) =>
