@@ -42,6 +42,7 @@ import {
   type ChatMessage,
   type Thread,
 } from "../../types.ts";
+import { isImageAttachment } from "../../types.ts";
 import {
   deriveLockedProvider,
   buildThreadTurnInterruptInput,
@@ -56,6 +57,7 @@ import {
 } from "../ChatView.logic.ts";
 import {
   useComposerDraftStore,
+  type ComposerFileAttachment,
   type ComposerImageAttachment,
   type ComposerThreadDraftState,
 } from "../../composerDraftStore.ts";
@@ -133,7 +135,11 @@ export function boardComposerDraftCanBeRestored(
         Partial<
           Pick<
             ComposerThreadDraftState,
-            "terminalContexts" | "elementContexts" | "previewAnnotations" | "reviewComments"
+            | "files"
+            | "terminalContexts"
+            | "elementContexts"
+            | "previewAnnotations"
+            | "reviewComments"
           >
         >)
     | null,
@@ -142,6 +148,7 @@ export function boardComposerDraftCanBeRestored(
     draft === null ||
     (draft.prompt.length === 0 &&
       draft.images.length === 0 &&
+      (draft.files?.length ?? 0) === 0 &&
       (draft.terminalContexts?.length ?? 0) === 0 &&
       (draft.elementContexts?.length ?? 0) === 0 &&
       (draft.previewAnnotations?.length ?? 0) === 0 &&
@@ -167,7 +174,7 @@ export function mergeBoardTimelineMessages(
     let imageIndex = 0;
     let changed = false;
     const attachments = message.attachments.map((attachment) => {
-      if (attachment.type !== "image") return attachment;
+      if (!isImageAttachment(attachment)) return attachment;
       const previewUrl = handoffPreviewUrls[imageIndex];
       imageIndex += 1;
       if (!previewUrl || attachment.previewUrl === previewUrl) return attachment;
@@ -250,6 +257,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const composerRef = useRef<import("./ChatComposer.tsx").ChatComposerHandle | null>(null);
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   // Board composer doesn't support inline terminal/element context chips, so
   // these start empty; typed explicitly rather than inferred as `never[]` to
   // match what ChatComposerProps expects. Each card gets its own array — a
@@ -396,7 +404,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     )) {
       const serverMessage = displayServerMessages.find((message) => message.id === messageId);
       const serverPreviewUrls = (serverMessage?.attachments ?? []).flatMap((attachment) =>
-        attachment.type === "image" && attachment.previewUrl ? [attachment.previewUrl] : [],
+        isImageAttachment(attachment) && attachment.previewUrl ? [attachment.previewUrl] : [],
       );
       if (
         serverPreviewUrls.length !== handoffPreviewUrls.length ||
@@ -798,6 +806,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       attachmentUploadsCapabilityKnown: environmentConfig !== undefined,
       supportsAttachmentUploads:
         environmentConfig?.environment.capabilities.attachmentUploads === true,
+      // The embedded board sender currently serializes images directly. Keep
+      // generic files visible in retained drafts, but require the full thread
+      // route to send them instead of silently dropping them.
+      maxFileAttachmentBytes: null,
       routeKind: "server",
       routeThreadRef: threadRef,
       draftId: null,
@@ -849,6 +861,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       gitCwd,
       promptRef,
       composerImagesRef,
+      composerFilesRef,
       composerTerminalContextsRef,
       composerElementContextsRef,
       onSend,
@@ -868,6 +881,8 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       scheduleComposerFocus: focusComposer,
       setThreadError: NOOP,
       onExpandImage,
+      onFileOpen: NOOP,
+      openingVideoAttachmentId: null,
       density: "compact",
     }),
     [

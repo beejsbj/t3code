@@ -1010,6 +1010,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
           onRevertUserMessage={onRevertUserMessage}
           isRevertingCheckpoint={timelineIsRevertingCheckpoint}
           onImageExpand={onExpandTimelineImage}
+          openingVideoAttachmentId={null}
           activeThreadEnvironmentId={activeThreadEnvironmentId}
           markdownCwd={markdownCwd}
           resolvedTheme={timelineTheme}
