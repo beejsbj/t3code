@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
+import { isImageAttachment } from "../../types.ts";
 import { EnvironmentId, MessageId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useComposerDraftStore, type ComposerImageAttachment } from "../../composerDraftStore.ts";
-import type { ChatMessage } from "../../types.ts";
+import type { ChatImageAttachment, ChatMessage } from "../../types.ts";
 
 import {
   boardComposerDraftCanBeRestored,
@@ -172,19 +173,18 @@ describe("buildBoardComposerMessageText", () => {
 describe("mergeBoardTimelineMessages", () => {
   it("hands an optimistic image preview to the matching projected message", () => {
     const messageId = MessageId.make("board-image-message");
+    const serverAttachment: ChatImageAttachment = {
+      type: "image",
+      id: "server-attachment",
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 128,
+    };
     const serverMessage: ChatMessage = {
       id: messageId,
       role: "user",
       text: "image",
-      attachments: [
-        {
-          type: "image",
-          id: "server-attachment",
-          name: "image.png",
-          mimeType: "image/png",
-          sizeBytes: 128,
-        },
-      ],
+      attachments: [serverAttachment],
       turnId: null,
       createdAt: "2026-08-14T12:00:00.000Z",
       updatedAt: "2026-08-14T12:00:00.000Z",
@@ -192,7 +192,7 @@ describe("mergeBoardTimelineMessages", () => {
     };
     const optimisticMessage: ChatMessage = {
       ...serverMessage,
-      attachments: [{ ...serverMessage.attachments![0]!, previewUrl: "blob:optimistic" }],
+      attachments: [{ ...serverAttachment, previewUrl: "blob:optimistic" }],
     };
 
     const merged = mergeBoardTimelineMessages([serverMessage], [optimisticMessage], {
@@ -200,7 +200,12 @@ describe("mergeBoardTimelineMessages", () => {
     });
 
     expect(merged).toHaveLength(1);
-    expect(merged[0]?.attachments?.[0]?.previewUrl).toBe("blob:optimistic");
+    const mergedAttachment = merged[0]?.attachments?.[0];
+    expect(mergedAttachment && isImageAttachment(mergedAttachment)).toBe(true);
+    if (!mergedAttachment || !isImageAttachment(mergedAttachment)) {
+      throw new Error("Expected the merged attachment to remain an image");
+    }
+    expect(mergedAttachment.previewUrl).toBe("blob:optimistic");
   });
 });
 

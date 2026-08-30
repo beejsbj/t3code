@@ -7,6 +7,7 @@ function draft(overrides: Partial<ComposerThreadDraftState> = {}): ComposerThrea
   return {
     prompt: "",
     images: [],
+    files: [],
     nonPersistedImageIds: [],
     persistedAttachments: [],
     terminalContexts: [],
