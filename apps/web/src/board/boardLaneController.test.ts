@@ -1,8 +1,9 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { ThreadId, type EnvironmentId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import { createBoardLaneController } from "./boardLaneController.ts";
+import { useBoardFocusStore } from "./boardFocusStore.ts";
 import {
   DEFAULT_BOARD_LANES,
   DEFAULT_BOARD_ORGANIZATION,
@@ -24,6 +25,12 @@ beforeEach(() => {
     byLaneColumnKey: {},
     collapsedLifecycleLaneIds: [],
     organization: DEFAULT_BOARD_ORGANIZATION,
+  });
+  useBoardFocusStore.setState({
+    request: null,
+    acknowledgedFocus: null,
+    focusedThreadKey: null,
+    expandedTarget: null,
   });
 });
 
@@ -75,6 +82,20 @@ describe("boardLaneController", () => {
       lane: expect.objectContaining({ id: "triage" }),
     });
     expect(controller.current(sameIdElsewhere).lane?.id).toBe("review");
+  });
+
+  it("keeps an expanded focused session selected across a client-local lane move", () => {
+    const threadKey = scopedThreadKey(firstThread);
+    useBoardFocusStore.getState().setFocused(threadKey);
+    useBoardFocusStore.getState().setExpanded({ kind: "thread", threadKey });
+
+    controller.moveToLane(firstThread, "review");
+
+    expect(controller.current(firstThread).lane?.id).toBe("review");
+    expect(useBoardFocusStore.getState()).toMatchObject({
+      focusedThreadKey: threadKey,
+      expandedTarget: { kind: "thread", threadKey },
+    });
   });
 
   it("converges menu, /lane, and agent-style exact-name moves on one transition", () => {
