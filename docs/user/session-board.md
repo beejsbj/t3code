@@ -1,7 +1,8 @@
 # Session Board
 
 The session board is an alternate workspace for keeping several live coding-agent sessions visible
-at once. Open **Board** from the sidebar or use the command palette.
+at once. Open **Board** from the sidebar, choose **Open session board** in the command palette, or
+press `mod+alt+shift+B`.
 
 The normal chat workspace remains available at `/`. The board lives at `/board` and uses the same
 sessions, messages, composer, approvals, questions, and provider controls. A server-backed card is
@@ -82,6 +83,29 @@ motion is enabled. Select the focused session again, or use the expand control o
 an 80%-sized chat over the board. Focusing a card smoothly reveals the matching session in the
 sidebar. Close the expanded view to return to the same spatial workspace.
 
+Use `mod+alt+ArrowLeft`, `mod+alt+ArrowRight`, `mod+alt+ArrowUp`, and
+`mod+alt+ArrowDown` to move to the nearest card in that direction. Movement stops at an edge and
+does not wrap. If no card is focused, the first visible card in reading order is selected.
+`mod+alt+Enter` expands or collapses the focused card. Directional movement while expanded switches
+the sheet to the neighboring session. These commands do not take over input from composers, form
+fields, terminals, menus, dialogs, or resize handles.
+
+Press `mod+alt+shift+Enter` to leave the board and open the focused real session in its existing
+full-screen route. The action is unavailable for Draft cards because they do not have a durable
+server session route yet. This is separate from `mod+alt+Enter`, which only toggles between the card
+and the 80%-sized expanded board sheet.
+
+Press `mod+alt+shift+ArrowLeft` or `mod+alt+shift+ArrowRight` to move the focused card one local
+workflow lane. Moving stops at the left and right edges without wrapping. This changes only the
+card's local placement, so it does not settle, snooze, or otherwise update the session in its
+environment. The action is unavailable while the board uses state columns because workflow lanes
+are not displayed there.
+
+All eight board-local actions are also available in the command palette while the board is open. Their
+shortcuts can be changed in **Settings** → **Keybindings**; the defaults use the `boardOpen`
+condition so they do not claim those keys elsewhere in the app. The global `board.open` command uses
+`!terminalFocus`, matching other navigation commands that should not take over terminal input.
+
 A new thread started from the board opens in that expanded view. Once it contains user content,
 closing the expanded view leaves a Draft card on the board. Project rows have their own new-thread
 button and supply the project automatically. On first send, the Draft card hands off to the real
@@ -90,7 +114,7 @@ classic full-screen route flow. Returning to **Board** always closes any old exp
 
 The responsive web board remains available at phone-sized browser widths. Adaptive multi-card
 packing is intended for desktop-width web and the desktop app. A dedicated React Native board is not
-included yet.
+included yet, including these keyboard commands.
 
 From a web or desktop thread composer, `/board` opens this board and `/lane` lists the current
 workflow lanes. Choosing a lane updates only that scoped environment and thread on the current

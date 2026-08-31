@@ -1,6 +1,10 @@
 "use client";
 
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -32,17 +36,22 @@ import {
   type SourceControlRepositoryInfo,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
   ArrowLeftIcon,
+  ArrowDownIcon,
+  ArrowRightIcon,
+  ArrowUpIcon,
   CornerLeftUpIcon,
+  ExternalLinkIcon,
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
   LayoutGridIcon,
   LinkIcon,
   MessageSquareIcon,
+  Maximize2Icon,
   PaletteIcon,
   ServerIcon,
   SettingsIcon,
@@ -92,6 +101,9 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { dispatchBoardNavigation } from "../board/boardNavigationBus";
+import { useBoardFocusStore } from "../board/boardFocusStore";
+import { useBoardLaneStore } from "../board/boardLaneStore";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -392,6 +404,8 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
+  const isBoardRoute = useLocation({ select: (location) => location.pathname === "/board" });
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     mode: "command",
@@ -447,6 +461,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
+          boardOpen: isBoardRoute,
         },
       });
       if (command === "themeEditor.toggle") {
@@ -459,6 +474,13 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         });
         return;
       }
+      if (command === "board.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        void navigate({ to: "/board" });
+        return;
+      }
       const mode = overlayModeForCommand(command);
       if (mode === null) {
         return;
@@ -469,7 +491,18 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [keybindings, previewOpen, resolvedTheme, terminalOpen, theme, themeHalves, toggleMode]);
+  }, [
+    keybindings,
+    navigate,
+    isBoardRoute,
+    previewOpen,
+    resolvedTheme,
+    setOpen,
+    terminalOpen,
+    theme,
+    themeHalves,
+    toggleMode,
+  ]);
 
   useEffect(
     () =>
@@ -564,6 +597,15 @@ function OpenCommandPaletteDialog(props: {
   readonly clearOpenIntent: () => void;
 }) {
   const navigate = useNavigate();
+  const isBoardRoute = useLocation({ select: (location) => location.pathname === "/board" });
+  const focusedBoardKey = useBoardFocusStore((state) =>
+    state.expandedTarget?.kind === "thread"
+      ? state.expandedTarget.threadKey
+      : state.expandedTarget?.kind === "draft"
+        ? null
+        : state.focusedThreadKey,
+  );
+  const boardOrganization = useBoardLaneStore((state) => state.organization);
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -591,6 +633,12 @@ function OpenCommandPaletteDialog(props: {
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
+  const canOpenFocusedBoardThreadFullscreen =
+    focusedBoardKey !== null &&
+    threads.some(
+      (thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === focusedBoardKey,
+    );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme } = useTheme();
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -1539,6 +1587,80 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
+  if (isBoardRoute) {
+    const boardNavigationActions = [
+      {
+        command: "board.focusLeft" as const,
+        title: "Board: focus left",
+        icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.focusRight" as const,
+        title: "Board: focus right",
+        icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.focusUp" as const,
+        title: "Board: focus up",
+        icon: <ArrowUpIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.focusDown" as const,
+        title: "Board: focus down",
+        icon: <ArrowDownIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.moveFocusedLeft" as const,
+        title: "Board: move focused card left",
+        icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.moveFocusedRight" as const,
+        title: "Board: move focused card right",
+        icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.toggleExpanded" as const,
+        title: "Board: expand or collapse focused session",
+        icon: <Maximize2Icon className={ITEM_ICON_CLASS} />,
+      },
+    ];
+    for (const action of boardNavigationActions) {
+      actionItems.push({
+        kind: "action",
+        value: `action:${action.command}`,
+        searchTerms: ["board", "keyboard", "spatial", "navigate", action.title],
+        title: action.title,
+        icon: action.icon,
+        description:
+          (action.command === "board.moveFocusedLeft" ||
+            action.command === "board.moveFocusedRight") &&
+          boardOrganization.columns !== "workflow"
+            ? "Switch columns to workflow to move cards between local lanes"
+            : undefined,
+        disabled:
+          (action.command === "board.moveFocusedLeft" ||
+            action.command === "board.moveFocusedRight") &&
+          boardOrganization.columns !== "workflow",
+        shortcutCommand: action.command,
+        run: async () => dispatchBoardNavigation(action.command),
+      });
+    }
+    actionItems.push({
+      kind: "action",
+      value: "action:board.openFocusedFullscreen",
+      searchTerms: ["board", "session", "full screen", "open", "focused"],
+      title: "Board: open focused session full screen",
+      description: canOpenFocusedBoardThreadFullscreen
+        ? "Leave the board and open this session"
+        : "Unavailable for drafts or when no session is focused",
+      disabled: !canOpenFocusedBoardThreadFullscreen,
+      icon: <ExternalLinkIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: "board.openFocusedFullscreen",
+      run: async () => dispatchBoardNavigation("board.openFocusedFullscreen"),
+    });
+  }
+
   actionItems.push({
     kind: "action",
     value: "action:search-project-contents",
@@ -1619,6 +1741,7 @@ function OpenCommandPaletteDialog(props: {
     searchTerms: ["board", "session board", "lanes", "kanban", "workspace"],
     title: "Open session board",
     icon: <LayoutGridIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "board.open",
     run: async () => {
       await navigate({ to: "/board" });
     },
@@ -2507,6 +2630,7 @@ function OpenCommandPaletteDialog(props: {
         isActionsOnly={isActionsOnly}
         keybindings={keybindings}
         onExecuteItem={executeItem}
+        shortcutContext={{ boardOpen: isBoardRoute }}
         {...(addProjectCloneFlow?.step === "repository"
           ? {
               emptyStateMessage:

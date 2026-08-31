@@ -209,6 +209,21 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("terminal.splitVertical"), "mod+shift+d");
       assert.equal(defaultsByCommand.get("modelPicker.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("modelPicker.jump.9"), "mod+9");
+      assert.equal(defaultsByCommand.get("board.focusLeft"), "mod+alt+arrowleft");
+      assert.equal(defaultsByCommand.get("board.open"), "mod+alt+shift+b");
+      assert.equal(defaultsByCommand.get("board.focusRight"), "mod+alt+arrowright");
+      assert.equal(defaultsByCommand.get("board.focusUp"), "mod+alt+arrowup");
+      assert.equal(defaultsByCommand.get("board.focusDown"), "mod+alt+arrowdown");
+      assert.equal(defaultsByCommand.get("board.moveFocusedLeft"), "mod+alt+shift+arrowleft");
+      assert.equal(defaultsByCommand.get("board.moveFocusedRight"), "mod+alt+shift+arrowright");
+      assert.equal(defaultsByCommand.get("board.toggleExpanded"), "mod+alt+enter");
+      assert.equal(defaultsByCommand.get("board.openFocusedFullscreen"), "mod+alt+shift+enter");
+      assert.isTrue(
+        Keybindings.DEFAULT_KEYBINDINGS.filter(
+          (binding) =>
+            String(binding.command).startsWith("board.") && binding.command !== "board.open",
+        ).every((binding) => binding.when === "boardOpen"),
+      );
     }),
   );
 

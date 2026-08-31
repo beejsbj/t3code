@@ -26,12 +26,16 @@ import {
   rowKeyFromSwimlaneDroppableId,
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
+  resolveBoardThreadFocus,
   resolveBoardScrollBehavior,
+  resolveBoardFullscreenThreadKey,
+  resolveSpatialBoardTarget,
   resolveBoardScrollTarget,
   resolveBoardViewport,
   resolveBoardThreadVisibility,
   scheduleBoardRevealDisconnectCleanup,
   isThreadOnBoard,
+  shouldIgnoreBoardKeyboardTarget,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
@@ -83,6 +87,55 @@ const lifecycleOptions = {
   supportsSnooze: true,
   changeRequest: null,
 } as const;
+
+type KeyboardTargetInput = {
+  readonly tagName?: "input";
+  readonly terminalOwner?: boolean;
+  readonly slot?: "dialog-popup" | "alert-dialog-popup" | "command-dialog-popup" | "select-popup";
+  readonly role?: "listbox" | "option";
+  readonly contentEditable?: "true" | "false";
+};
+
+function keyboardTarget(input: KeyboardTargetInput): EventTarget {
+  const target = {
+    closest: (selectorList: string) => {
+      const selectors = selectorList.split(",");
+      const matches =
+        (input.tagName === "input" && selectors.includes("input")) ||
+        (input.terminalOwner === true && selectors.includes("[data-terminal-owner]")) ||
+        (input.slot !== undefined && selectors.includes(`[data-slot='${input.slot}']`)) ||
+        (input.role !== undefined && selectors.includes(`[role='${input.role}']`)) ||
+        (input.contentEditable === "true" &&
+          selectors.includes("[contenteditable]:not([contenteditable='false'])"));
+      return matches ? target : null;
+    },
+  };
+  return target as unknown as EventTarget;
+}
+
+describe("shouldIgnoreBoardKeyboardTarget", () => {
+  const ignoredTargets = [
+    ["an input", { tagName: "input" }],
+    ["a terminal owner", { terminalOwner: true }],
+    ["a dialog", { slot: "dialog-popup" }],
+    ["an alert dialog", { slot: "alert-dialog-popup" }],
+    ["a command dialog", { slot: "command-dialog-popup" }],
+    ["a select popup", { slot: "select-popup" }],
+    ["a listbox", { role: "listbox" }],
+    ["an option", { role: "option" }],
+    ["a contenteditable editor", { contentEditable: "true" }],
+  ] as const satisfies ReadonlyArray<readonly [string, KeyboardTargetInput]>;
+
+  it.each(ignoredTargets)("ignores %s", (_label, selector) => {
+    expect(shouldIgnoreBoardKeyboardTarget(keyboardTarget(selector))).toBe(true);
+  });
+
+  it("does not ignore a contenteditable=false target", () => {
+    expect(shouldIgnoreBoardKeyboardTarget(keyboardTarget({ contentEditable: "false" }))).toBe(
+      false,
+    );
+  });
+});
 
 describe("resolveBoardThreadVisibility", () => {
   it("includes every active thread and excludes lifecycle-hidden threads", () => {
@@ -209,6 +262,31 @@ describe("resolveBoardThreadVisibility", () => {
         changeRequest: { state: "closed" },
       }),
     ).toBe("settled");
+  });
+});
+
+describe("resolveBoardThreadFocus", () => {
+  it("clears focused and expanded thread targets that leave the board", () => {
+    expect(
+      resolveBoardThreadFocus({
+        boardThreadKeys: new Set(["environment-a:visible"]),
+        focusedThreadKey: "environment-a:settled",
+        expandedThreadKey: "environment-a:snoozed",
+      }),
+    ).toEqual({ focusedThreadKey: null, expandedThreadKey: null });
+  });
+
+  it("retains current board targets independently", () => {
+    expect(
+      resolveBoardThreadFocus({
+        boardThreadKeys: new Set(["environment-a:visible", "environment-b:expanded"]),
+        focusedThreadKey: "environment-a:visible",
+        expandedThreadKey: "environment-b:expanded",
+      }),
+    ).toEqual({
+      focusedThreadKey: "environment-a:visible",
+      expandedThreadKey: "environment-b:expanded",
+    });
   });
 });
 
@@ -572,6 +650,65 @@ describe("boardFocusRequestMatches", () => {
       false,
     );
     expect(boardFocusRequestMatches(null, expected)).toBe(false);
+  });
+});
+
+describe("resolveSpatialBoardTarget", () => {
+  const item = (key: string, left: number, top: number) => ({
+    key,
+    rect: { left, right: left + 100, top, bottom: top + 100 },
+  });
+  const items = [
+    item("origin", 200, 200),
+    item("left", 50, 210),
+    item("right", 410, 190),
+    item("up", 205, 20),
+    item("down", 190, 430),
+  ];
+
+  it.each([
+    ["left", "left"],
+    ["right", "right"],
+    ["up", "up"],
+    ["down", "down"],
+  ] as const)("finds the nearest card to the %s", (direction, expected) => {
+    expect(resolveSpatialBoardTarget({ items, currentKey: "origin", direction })?.key).toBe(
+      expected,
+    );
+  });
+
+  it("does not wrap at an edge", () => {
+    expect(resolveSpatialBoardTarget({ items, currentKey: "left", direction: "left" })).toBeNull();
+  });
+
+  it("uses visual reading order when no mounted card is focused", () => {
+    expect(resolveSpatialBoardTarget({ items, currentKey: null, direction: "right" })?.key).toBe(
+      "up",
+    );
+  });
+
+  it("breaks equal-distance ties deterministically", () => {
+    expect(
+      resolveSpatialBoardTarget({
+        items: [item("origin", 0, 0), item("z", 200, -100), item("a", 200, 100)],
+        currentKey: "origin",
+        direction: "right",
+      })?.key,
+    ).toBe("a");
+  });
+});
+
+describe("resolveBoardFullscreenThreadKey", () => {
+  const entries = [
+    { kind: "thread" as const, key: "thread" },
+    { kind: "draft" as const, key: "draft" },
+  ];
+
+  it("resolves only a focused real session", () => {
+    expect(resolveBoardFullscreenThreadKey(entries, "thread")).toBe("thread");
+    expect(resolveBoardFullscreenThreadKey(entries, "draft")).toBeNull();
+    expect(resolveBoardFullscreenThreadKey(entries, null)).toBeNull();
+    expect(resolveBoardFullscreenThreadKey(entries, "missing")).toBeNull();
   });
 });
 

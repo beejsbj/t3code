@@ -59,6 +59,13 @@ shortcut is `mod+shift+s`, and it does not run while the terminal has focus.
 already pinned. Its default shortcut is `mod+shift+p`, and it does not run while the terminal has
 focus. See [Organizing threads](./thread-sidebar.md) for how pinned threads are ordered.
 
+`board.open` opens the session board from anywhere and defaults to `mod+alt+shift+b`. On the board,
+`board.openFocusedFullscreen` opens the focused real session in its full-screen route and defaults
+to `mod+alt+shift+enter`; Draft cards intentionally have no full-screen session route.
+`board.moveFocusedLeft` and `board.moveFocusedRight` move the focused card one local workflow lane
+and default to `mod+alt+shift+ArrowLeft` and `mod+alt+shift+ArrowRight`. They are unavailable while
+the board uses state columns, because local workflow lanes are not displayed there.
+
 The command palette searches active thread titles, projects, branches, user messages, and final
 agent responses across connected environments. Message matches show one labeled excerpt while
 keeping the thread's project, branch, and machine context visible. Message search begins after two
@@ -82,7 +89,7 @@ but the new thread does not reuse the worktree created for the thread that just 
 
 A `when` expression is evaluated against context keys describing the current UI state. The keys
 the app supplies today are `terminalFocus`, `terminalOpen`, `previewFocus`, `previewOpen`, and
-`modelPickerOpen`. The set is open and grows over time, so treat that as the current list rather
+`modelPickerOpen`, and `boardOpen`. The set is open and grows over time, so treat that as the current list rather
 than a fixed one. Any key the running app does not supply evaluates to `false`.
 
 Operators: `!` (not), `&&` (and), `||` (or), and parentheses.

@@ -441,6 +441,30 @@ describe("shortcutLabelForCommand", () => {
       "Ctrl+D",
     );
   });
+
+  it("returns a board shortcut label only while the board is open", () => {
+    const bindings = compile([
+      {
+        shortcut: modShortcut("arrowleft", { altKey: true }),
+        command: "board.focusLeft",
+        whenAst: whenIdentifier("boardOpen"),
+      },
+    ]);
+
+    assert.isNull(
+      shortcutLabelForCommand(bindings, "board.focusLeft", {
+        platform: "Linux",
+        context: { boardOpen: false },
+      }),
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(bindings, "board.focusLeft", {
+        platform: "Linux",
+        context: { boardOpen: true },
+      }),
+      "Ctrl+Alt+Left",
+    );
+  });
 });
 
 describe("thread navigation helpers", () => {
@@ -709,6 +733,111 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("keeps the global board shortcut out of terminal input", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("b", { altKey: true, shiftKey: true }),
+        command: "board.open",
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      },
+    ]);
+    const shortcut = event({ key: "b", ctrlKey: true, altKey: true, shiftKey: true });
+
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "board.open",
+    );
+    assert.isNull(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("limits board navigation bindings to the board context", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("arrowleft", { altKey: true }),
+        command: "board.focusLeft",
+        whenAst: whenIdentifier("boardOpen"),
+      },
+    ]);
+    const shortcut = event({ key: "ArrowLeft", ctrlKey: true, altKey: true });
+
+    assert.isNull(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: false },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: true },
+      }),
+      "board.focusLeft",
+    );
+  });
+
+  it("resolves board-scoped global palette bindings on the board", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("p"),
+        command: "filePicker.toggle",
+        whenAst: whenIdentifier("boardOpen"),
+      },
+    ]);
+    const shortcut = event({ key: "p", ctrlKey: true });
+
+    assert.isNull(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: false },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: true },
+      }),
+      "filePicker.toggle",
+    );
+  });
+
+  it("resolves focused-card lane moves only on the board", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("arrowright", { altKey: true, shiftKey: true }),
+        command: "board.moveFocusedRight",
+        whenAst: whenIdentifier("boardOpen"),
+      },
+    ]);
+    const shortcut = event({
+      key: "ArrowRight",
+      ctrlKey: true,
+      altKey: true,
+      shiftKey: true,
+    });
+
+    assert.isNull(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: false },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: true },
+      }),
+      "board.moveFocusedRight",
+    );
+  });
+
   it("returns dynamic script commands", () => {
     const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 

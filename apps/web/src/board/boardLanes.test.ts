@@ -5,6 +5,7 @@ import {
   isBoardFixedLaneId,
   isBoardLifecycleLaneId,
   isBoardWorkflowLane,
+  adjacentBoardWorkflowLane,
   leftmostLane,
   orderBoardLanes,
   resolveBoardLane,
@@ -42,6 +43,20 @@ describe("leftmostLane", () => {
   it("falls back to the first ordered workflow lane for a malformed registry", () => {
     expect(leftmostLane(LANES.filter((lane) => lane.id !== "triage"))).toBe("blocked");
     expect(leftmostLane([])).toBeNull();
+  });
+});
+
+describe("adjacentBoardWorkflowLane", () => {
+  it("moves through the displayed local lanes without entering lifecycle lanes", () => {
+    expect(adjacentBoardWorkflowLane("triage", LANES, "right")).toBe("blocked");
+    expect(adjacentBoardWorkflowLane("blocked", LANES, "right")).toBe("ready");
+    expect(adjacentBoardWorkflowLane("ready", LANES, "left")).toBe("blocked");
+  });
+
+  it("does not wrap at either workflow edge or move a lifecycle card", () => {
+    expect(adjacentBoardWorkflowLane("triage", LANES, "left")).toBeNull();
+    expect(adjacentBoardWorkflowLane("ready", LANES, "right")).toBeNull();
+    expect(adjacentBoardWorkflowLane("snoozed", LANES, "left")).toBeNull();
   });
 });
 

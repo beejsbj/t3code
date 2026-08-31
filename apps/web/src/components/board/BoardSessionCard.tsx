@@ -94,7 +94,6 @@ import { Button } from "../ui/button.tsx";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu.tsx";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip.tsx";
 import { toastManager } from "../ui/toast.tsx";
-import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import {
   boardCardVisitTimestamp,
   resolveBoardTimelineFollowCancellation,
@@ -475,7 +474,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
       aria-label={thread.title}
       onPointerDownCapture={handleCardFocus}
       onFocusCapture={handleCardFocus}
-      className="outline-none"
+      className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       style={{
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
         transition,
@@ -634,6 +633,8 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
             variant="ghost"
             onClick={() => setExpanded(true)}
             aria-label="Zoom into session"
+            aria-expanded={expanded}
+            aria-haspopup="dialog"
             data-testid={`board-card-zoom-${thread.id}`}
             className="text-muted-foreground/60 hover:text-foreground"
           >
@@ -675,12 +676,6 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           </>
         )}
       </div>
-
-      <BoardCardExpandedSheet
-        target={{ kind: "thread", threadRef, title: thread.title }}
-        open={expanded}
-        onOpenChange={setExpanded}
-      />
     </div>
   );
 });

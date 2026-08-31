@@ -10,6 +10,7 @@ import {
   type DraftId,
 } from "../../composerDraftStore.ts";
 import { cn } from "~/lib/utils";
+import { useBoardFocusStore } from "../../board/boardFocusStore.ts";
 import { Badge } from "../ui/badge.tsx";
 import { Button } from "../ui/button.tsx";
 
@@ -77,6 +78,11 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
     disabled: props.draggable !== true,
   });
   const composer = useComposerDraftStore((state) => state.draftsByThreadKey[draftId]);
+  const expanded = useBoardFocusStore(
+    (state) => state.expandedTarget?.kind === "draft" && state.expandedTarget.draftId === draftId,
+  );
+  const isFocused = useBoardFocusStore((state) => state.focusedThreadKey === cardKey);
+  const setFocused = useBoardFocusStore((state) => state.setFocused);
   const preview = resolveBoardDraftPreview(composer);
 
   const setRefs = useCallback(
@@ -102,8 +108,11 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
       data-board-card-key={cardKey}
       data-board-draft-id={draftId}
       role="group"
+      tabIndex={0}
       aria-label={title?.trim() || "Draft"}
-      className="outline-none"
+      onPointerDownCapture={() => setFocused(cardKey)}
+      onFocusCapture={() => setFocused(cardKey)}
+      className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -113,6 +122,7 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
         className={cn(
           "group/draft-card relative flex min-h-48 flex-col overflow-hidden rounded-lg border border-amber-500/35 bg-[color-mix(in_srgb,var(--card)_96%,var(--color-amber-500))] shadow-sm",
           isDragging && "opacity-60",
+          isFocused && "ring-1 ring-primary/40",
         )}
       >
         <header className="flex shrink-0 items-start gap-1.5 border-b border-amber-500/15 px-2 py-1.5">
@@ -161,6 +171,8 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
             variant="ghost"
             onClick={handleExpand}
             aria-label="Open draft"
+            aria-expanded={expanded}
+            aria-haspopup="dialog"
             title="Open draft"
             className="text-muted-foreground/60 hover:text-foreground"
           >
@@ -171,6 +183,8 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
         <button
           type="button"
           onClick={handleExpand}
+          aria-expanded={expanded}
+          aria-haspopup="dialog"
           className="flex min-h-24 flex-1 cursor-pointer items-start bg-transparent px-3 py-3 text-left outline-none hover:bg-amber-500/[0.04] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           <span className="line-clamp-5 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
