@@ -783,6 +783,31 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("resolves board-scoped global palette bindings on the board", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("p"),
+        command: "filePicker.toggle",
+        whenAst: whenIdentifier("boardOpen"),
+      },
+    ]);
+    const shortcut = event({ key: "p", ctrlKey: true });
+
+    assert.isNull(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: false },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: true },
+      }),
+      "filePicker.toggle",
+    );
+  });
+
   it("resolves focused-card lane moves only on the board", () => {
     const keybindings = compile([
       {

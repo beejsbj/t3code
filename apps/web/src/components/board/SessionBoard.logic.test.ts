@@ -26,6 +26,7 @@ import {
   rowKeyFromSwimlaneDroppableId,
   resolveBoardLaneDrop,
   resolveBoardFocusAction,
+  resolveBoardThreadFocus,
   resolveBoardScrollBehavior,
   resolveBoardFullscreenThreadKey,
   resolveSpatialBoardTarget,
@@ -261,6 +262,31 @@ describe("resolveBoardThreadVisibility", () => {
         changeRequest: { state: "closed" },
       }),
     ).toBe("settled");
+  });
+});
+
+describe("resolveBoardThreadFocus", () => {
+  it("clears focused and expanded thread targets that leave the board", () => {
+    expect(
+      resolveBoardThreadFocus({
+        boardThreadKeys: new Set(["environment-a:visible"]),
+        focusedThreadKey: "environment-a:settled",
+        expandedThreadKey: "environment-a:snoozed",
+      }),
+    ).toEqual({ focusedThreadKey: null, expandedThreadKey: null });
+  });
+
+  it("retains current board targets independently", () => {
+    expect(
+      resolveBoardThreadFocus({
+        boardThreadKeys: new Set(["environment-a:visible", "environment-b:expanded"]),
+        focusedThreadKey: "environment-a:visible",
+        expandedThreadKey: "environment-b:expanded",
+      }),
+    ).toEqual({
+      focusedThreadKey: "environment-a:visible",
+      expandedThreadKey: "environment-b:expanded",
+    });
   });
 });
 

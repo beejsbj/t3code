@@ -62,6 +62,24 @@ export function isThreadOnBoard(visibility: BoardThreadVisibility): boolean {
   return visibility === "visible";
 }
 
+/** Clears selection targets that no longer belong to the active board projection. */
+export function resolveBoardThreadFocus(input: {
+  readonly boardThreadKeys: ReadonlySet<string>;
+  readonly focusedThreadKey: string | null;
+  readonly expandedThreadKey: string | null;
+}): { readonly focusedThreadKey: string | null; readonly expandedThreadKey: string | null } {
+  return {
+    focusedThreadKey:
+      input.focusedThreadKey !== null && input.boardThreadKeys.has(input.focusedThreadKey)
+        ? input.focusedThreadKey
+        : null,
+    expandedThreadKey:
+      input.expandedThreadKey !== null && input.boardThreadKeys.has(input.expandedThreadKey)
+        ? input.expandedThreadKey
+        : null,
+  };
+}
+
 /** Every local lane keeps its chosen width for the whole composed board. */
 export function boardLaneGridTemplateColumns(
   columns: ReadonlyArray<{ readonly key: string; readonly laneId: BoardLaneId }>,
