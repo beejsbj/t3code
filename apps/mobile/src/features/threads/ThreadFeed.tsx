@@ -10,12 +10,21 @@ import type {
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import {
+  codexArtifactTemplatePresentationLabel,
+  type CodexArtifactTemplate,
+} from "@t3tools/client-runtime/codex-artifact-templates";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
+import {
+  renderCodexFileCitationsAsMarkdown,
+  splitCodexArtifactTemplateMarkdown,
+} from "@t3tools/client-runtime/codex-markdown-directives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
-import { SymbolView } from "../../components/AppSymbol";
+import { videoMimeType } from "@t3tools/shared/video";
+import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
@@ -80,6 +89,8 @@ import {
 } from "../../native/SelectableMarkdownText";
 
 import { AppText as Text } from "../../components/AppText";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
+import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
 import { CopyTextButton } from "../../components/CopyTextButton";
 import {
   parseReviewCommentMessageSegments,
@@ -190,6 +201,7 @@ export interface ThreadFeedProps {
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
+  readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   /** Non-null when older turns exist beyond the loaded window. */
   readonly loadEarlier?: {
     readonly loading: boolean;
@@ -237,12 +249,25 @@ function isFileAttachment(attachment: ChatAttachment): attachment is ChatFileAtt
 function MessageAttachmentFile(props: {
   readonly environmentId: EnvironmentId;
   readonly attachment: ChatFileAttachment;
+  readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
 }) {
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
   });
   const preparedConnection = usePreparedConnection(props.environmentId);
   const { attachment } = props;
+  const videoType = videoMimeType(attachment);
+  const thumbnailUrl = useAssetUrl(
+    props.environmentId,
+    videoType === null
+      ? null
+      : {
+          _tag: "attachment",
+          attachmentId: attachment.id,
+          fileName: attachment.name,
+          mimeType: videoType,
+        },
+  );
   const httpBaseUrl = Option.isSome(preparedConnection)
     ? preparedConnection.value.httpBaseUrl
     : null;
@@ -259,6 +284,69 @@ function MessageAttachmentFile(props: {
     }, [props.environmentId, attachment.id, httpBaseUrl]),
   );
 
+  const shareFile = (sourceIdentifier?: string) => {
+    if (httpBaseUrl === null || openingRef.current) return;
+    const controller = new AbortController();
+    openingRef.current = controller;
+    setOpening(true);
+    void (async () => {
+      try {
+        const result = await createAssetUrl({
+          environmentId: props.environmentId,
+          input: {
+            resource: {
+              _tag: "attachment",
+              attachmentId: attachment.id,
+              fileName: attachment.name,
+              mimeType: attachment.mimeType,
+            },
+          },
+        });
+        if (controller.signal.aborted) return;
+        if (result._tag === "Failure") {
+          throw squashAtomCommandFailure(result);
+        }
+        const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+        if (url === null) {
+          throw new Error("The attachment could not be opened.");
+        }
+        await downloadAndShareAttachment({
+          url,
+          attachment,
+          signal: controller.signal,
+          sourceIdentifier,
+        });
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          Alert.alert(
+            "Could not open attachment",
+            error instanceof Error ? error.message : "The attachment is unavailable.",
+          );
+        }
+      } finally {
+        if (openingRef.current === controller) {
+          openingRef.current = null;
+          setOpening(false);
+        }
+      }
+    })();
+  };
+
+  if (videoType !== null) {
+    return (
+      <VideoAttachmentTile
+        name={attachment.name}
+        sourceIdentifier={`attachment:${props.environmentId}:${attachment.id}`}
+        thumbnailSource={thumbnailUrl}
+        disabled={opening || httpBaseUrl === null}
+        onPress={(sourceIdentifier) => props.onPressVideo(attachment, sourceIdentifier)}
+        onShare={() => shareFile(`attachment:${props.environmentId}:${attachment.id}`)}
+        className="my-1 rounded-2xl"
+        style={{ width: 224, maxWidth: "100%", aspectRatio: 16 / 9 }}
+      />
+    );
+  }
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -266,48 +354,7 @@ function MessageAttachmentFile(props: {
       accessibilityState={{ disabled: opening || httpBaseUrl === null, busy: opening }}
       disabled={opening || httpBaseUrl === null}
       className="flex-row items-center gap-2 py-1"
-      onPress={() => {
-        if (httpBaseUrl === null || openingRef.current) return;
-        const controller = new AbortController();
-        openingRef.current = controller;
-        setOpening(true);
-        void (async () => {
-          try {
-            const result = await createAssetUrl({
-              environmentId: props.environmentId,
-              input: {
-                resource: {
-                  _tag: "attachment",
-                  attachmentId: attachment.id,
-                  fileName: attachment.name,
-                  mimeType: attachment.mimeType,
-                },
-              },
-            });
-            if (controller.signal.aborted) return;
-            if (result._tag === "Failure") {
-              throw squashAtomCommandFailure(result);
-            }
-            const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
-            if (url === null) {
-              throw new Error("The attachment could not be opened.");
-            }
-            await downloadAndShareAttachment({ url, attachment, signal: controller.signal });
-          } catch (error) {
-            if (!controller.signal.aborted) {
-              Alert.alert(
-                "Could not open attachment",
-                error instanceof Error ? error.message : "The attachment is unavailable.",
-              );
-            }
-          } finally {
-            if (openingRef.current === controller) {
-              openingRef.current = null;
-              setOpening(false);
-            }
-          }
-        })();
-      }}
+      onPress={() => shareFile()}
     >
       {opening ? (
         <ActivityIndicator size="small" />
@@ -566,6 +613,115 @@ const MarkdownExternalLink = memo(function MarkdownExternalLink(props: {
       {props.children}
     </NativeText>
   );
+});
+
+const ARTIFACT_TEMPLATE_SYMBOL_BY_KIND: Record<
+  CodexArtifactTemplate["artifactKind"],
+  AppSymbolName
+> = {
+  document: "doc.text",
+  presentation: "chart.bar.xaxis",
+  spreadsheet: "chart.bar.xaxis",
+  site: "safari",
+  "google-docs": "doc.text",
+  "google-slides": "chart.bar.xaxis",
+  "google-sheets": "chart.bar.xaxis",
+  image: "camera",
+  email: "text.bubble",
+  slack: "text.bubble",
+};
+
+function ArtifactTemplateCard(props: {
+  readonly template: CodexArtifactTemplate;
+  readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
+}) {
+  return (
+    <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
+      <View className="relative h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
+        <SymbolView
+          name={ARTIFACT_TEMPLATE_SYMBOL_BY_KIND[props.template.artifactKind]}
+          size={20}
+          tintColorClassName="accent-foreground-muted"
+          type="monochrome"
+        />
+        <View className="absolute -right-1 -bottom-1 h-4 w-4 items-center justify-center rounded-full bg-fuchsia-500">
+          <SymbolView
+            name={{ ios: "sparkles", android: "auto_awesome" }}
+            size={9}
+            tintColor="white"
+            type="monochrome"
+          />
+        </View>
+      </View>
+      <View className="min-w-0 flex-1">
+        <Text className="font-t3-bold text-sm text-foreground" numberOfLines={1}>
+          {props.template.displayName}
+        </Text>
+        <Text className="text-xs text-foreground-muted">
+          {codexArtifactTemplatePresentationLabel(props.template.artifactKind)}
+        </Text>
+      </View>
+      {props.onUse ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Use ${props.template.displayName} template`}
+          className="min-h-9 justify-center rounded-lg border border-border bg-subtle px-3 active:opacity-65"
+          onPress={() => props.onUse?.(props.template)}
+        >
+          <Text className="font-t3-bold text-xs text-foreground">Use template</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
+  readonly markdown: string;
+  readonly markdownStyles: MarkdownStyleSet;
+  readonly onLinkPress: (href: string) => void;
+  readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
+  readonly renderImage: MarkdownImageRenderer;
+  readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+}) {
+  const segments = useMemo(
+    () => splitCodexArtifactTemplateMarkdown(props.markdown),
+    [props.markdown],
+  );
+
+  return segments.map((segment) => {
+    if (segment.kind === "artifact-template") {
+      return (
+        <ArtifactTemplateCard
+          key={`artifact-template:${segment.sourceOffset}`}
+          template={segment.template}
+          onUse={props.onUseArtifactTemplate}
+        />
+      );
+    }
+    if (segment.markdown.trim().length === 0) return null;
+
+    const markdown = renderCodexFileCitationsAsMarkdown(segment.markdown);
+    return hasNativeSelectableMarkdownText() ? (
+      <SelectableMarkdownText
+        key={`markdown:${segment.sourceOffset}`}
+        markdown={markdown}
+        skills={props.skills}
+        textStyle={props.markdownStyles.nativeTextStyle}
+        onLinkPress={props.onLinkPress}
+        renderImage={props.renderImage}
+      />
+    ) : (
+      <Markdown
+        key={`markdown:${segment.sourceOffset}`}
+        options={{ gfm: true }}
+        renderers={props.markdownStyles.renderers}
+        styles={props.markdownStyles.styles}
+        theme={props.markdownStyles.theme}
+      >
+        {markdown}
+      </Markdown>
+    );
+  });
 });
 
 function MarkdownCodeBlock(props: {
@@ -1099,7 +1255,7 @@ function useMarkdownStyles(
 
 function renderFeedEntry(
   info: { item: ThreadFeedEntry; index: number },
-  props: Pick<ThreadFeedProps, "environmentId" | "skills"> & {
+  props: Pick<ThreadFeedProps, "environmentId" | "onUseArtifactTemplate" | "skills"> & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
@@ -1109,6 +1265,7 @@ function renderFeedEntry(
     readonly onToggleWorkRow: (rowId: string) => void;
     readonly onToggleTurnFold: (turnId: TurnId) => void;
     readonly onPressImage: (uri: string, headers?: Record<string, string>) => void;
+    readonly onPressVideo: (attachment: ChatFileAttachment, sourceIdentifier: string) => void;
     readonly onMarkdownLinkPress: (href: string) => void;
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
@@ -1162,6 +1319,7 @@ function renderFeedEntry(
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
+    const renderedText = message.text;
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
@@ -1171,7 +1329,7 @@ function renderFeedEntry(
     // children during the unclamped pass and never moves them once the width
     // is clamped, so the paragraphs around the block end up drawn on top of
     // each other. Pinning the width removes that pass.
-    const hasWideBlock = hasWideMarkdownBlock(message.text, WIDE_MARKDOWN_BLOCK_OPTIONS);
+    const hasWideBlock = hasWideMarkdownBlock(renderedText, WIDE_MARKDOWN_BLOCK_OPTIONS);
     const assistantTurnStillInProgress =
       message.role === "assistant" &&
       props.unsettledTurnId !== null &&
@@ -1225,6 +1383,7 @@ function renderFeedEntry(
                   key={attachment.id}
                   environmentId={props.environmentId}
                   attachment={attachment}
+                  onPressVideo={props.onPressVideo}
                 />
               ) : (
                 <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
@@ -1251,7 +1410,7 @@ function renderFeedEntry(
 
     // Skip empty assistant messages (no text, no attachments) — they would
     // render as an orphaned timestamp and break adjacent activity-group merging.
-    if (message.text.trim().length === 0 && attachments.length === 0) {
+    if (renderedText.trim().length === 0 && attachments.length === 0) {
       return null;
     }
 
@@ -1261,25 +1420,15 @@ function renderFeedEntry(
         className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-2 px-1")}
         {...(enterAnimated ? { entering: FadeIn.duration(220) } : {})}
       >
-        {message.text.trim().length > 0 ? (
-          hasNativeSelectableMarkdownText() ? (
-            <SelectableMarkdownText
-              markdown={message.text}
-              skills={props.skills}
-              textStyle={styles.nativeTextStyle}
-              onLinkPress={props.onMarkdownLinkPress}
-              renderImage={props.renderMarkdownImage}
-            />
-          ) : (
-            <Markdown
-              options={{ gfm: true }}
-              renderers={styles.renderers}
-              styles={styles.styles}
-              theme={styles.theme}
-            >
-              {message.text}
-            </Markdown>
-          )
+        {renderedText.trim().length > 0 ? (
+          <AssistantMarkdownContent
+            markdown={renderedText}
+            markdownStyles={styles}
+            onLinkPress={props.onMarkdownLinkPress}
+            onUseArtifactTemplate={props.onUseArtifactTemplate}
+            renderImage={props.renderMarkdownImage}
+            skills={props.skills}
+          />
         ) : null}
         {attachments.map((attachment) => {
           return isImageAttachment(attachment) ? (
@@ -1295,6 +1444,7 @@ function renderFeedEntry(
               key={attachment.id}
               environmentId={props.environmentId}
               attachment={attachment}
+              onPressVideo={props.onPressVideo}
             />
           ) : (
             <MessageAttachmentUnknown key={attachment.id} name={attachment.name} />
@@ -1304,7 +1454,7 @@ function renderFeedEntry(
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
               accessibilityLabel="Copy message"
-              text={message.text}
+              text={renderedText}
               tintColor={iconSubtleColor}
               buttonSize={28}
               iconSize={13}
@@ -1660,6 +1810,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     uri: string;
     headers?: Record<string, string>;
   } | null>(null);
+  const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
+  useEffect(() => {
+    setExpandedVideo(null);
+  }, [props.environmentId, props.threadId, props.contentPresentation.kind]);
   const horizontalPadding = props.layoutVariant === "split" ? 20 : 16;
   const contentHorizontalPadding = deriveCenteredContentHorizontalPadding({
     viewportWidth,
@@ -2134,6 +2288,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const onPressImage = useCallback((uri: string, headers?: Record<string, string>) => {
     setExpandedImage({ uri, headers });
   }, []);
+  const onPressVideo = useCallback(
+    (attachment: ChatFileAttachment, sourceIdentifier: string) => {
+      setExpandedVideo(
+        (current) =>
+          current ?? {
+            type: "remote",
+            environmentId: props.environmentId,
+            attachment,
+            sourceIdentifier,
+          },
+      );
+    },
+    [props.environmentId],
+  );
 
   // Rows whose height is known before they ever render. Without this, every
   // row above the viewport is assumed to be estimatedItemSize tall, and
@@ -2183,6 +2351,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           onToggleWorkRow,
           onToggleTurnFold,
           onPressImage,
+          onPressVideo,
           onMarkdownLinkPress,
           renderMarkdownImage,
           iconSubtleColor,
@@ -2192,6 +2361,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           reviewCommentBubbleWidth,
           userBubbleMaxWidth,
           skills: props.skills,
+          onUseArtifactTemplate: props.onUseArtifactTemplate,
         })}
       </Animated.View>
     ),
@@ -2210,10 +2380,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       onCopyWorkRow,
       onMarkdownLinkPress,
       onPressImage,
+      onPressVideo,
       onToggleTurnFold,
       onToggleWorkGroup,
       onToggleWorkRow,
       props.environmentId,
+      props.onUseArtifactTemplate,
       props.skills,
       renderMarkdownImage,
     ],
@@ -2392,6 +2564,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         ) : null}
       </View>
 
+      <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
       <ImageViewing
         images={
           expandedImage
