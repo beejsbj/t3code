@@ -839,6 +839,7 @@ export function SessionBoard() {
   const runBoardNavigation = useCallback(
     (command: BoardNavigationCommand) => {
       const entries = placedRef.current;
+      const { expandedTarget } = useBoardFocusStore.getState();
       const expandedKey =
         expandedTarget?.kind === "thread"
           ? expandedTarget.threadKey
@@ -893,12 +894,13 @@ export function SessionBoard() {
       if (command === "board.moveFocusedLeft" || command === "board.moveFocusedRight") {
         // State columns do not display client-local lanes, so there is no
         // honest adjacent lane to move into from this layout.
+        const { lanes, organization } = useBoardLaneStore.getState();
         if (organization.columns !== "workflow") return;
         const entry = entries.find((candidate) => candidate.key === focusedKey);
         if (entry === undefined) return;
         const targetLaneId = adjacentBoardWorkflowLane(
           entry.workflowLaneId,
-          workflowLanes,
+          orderBoardLanes(lanes).filter(isBoardWorkflowLane),
           command === "board.moveFocusedLeft" ? "left" : "right",
         );
         if (targetLaneId === null) return;
@@ -927,15 +929,7 @@ export function SessionBoard() {
       else findCardNode(scrollerRef.current, entry.key)?.focus({ preventScroll: true });
       revealCard(entry.key);
     },
-    [
-      expandedTarget,
-      navigate,
-      organization.columns,
-      revealCard,
-      setExpandedEntry,
-      setFocusedThreadKey,
-      workflowLanes,
-    ],
+    [navigate, revealCard, setExpandedEntry, setFocusedThreadKey],
   );
 
   useEffect(() => {
