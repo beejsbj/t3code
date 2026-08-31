@@ -95,7 +95,13 @@ full-screen route. The action is unavailable for Draft cards because they do not
 server session route yet. This is separate from `mod+alt+Enter`, which only toggles between the card
 and the 80%-sized expanded board sheet.
 
-All six board-local actions are also available in the command palette while the board is open. Their
+Press `mod+alt+shift+ArrowLeft` or `mod+alt+shift+ArrowRight` to move the focused card one local
+workflow lane. Moving stops at the left and right edges without wrapping. This changes only the
+card's local placement, so it does not settle, snooze, or otherwise update the session in its
+environment. The action is unavailable while the board uses state columns because workflow lanes
+are not displayed there.
+
+All eight board-local actions are also available in the command palette while the board is open. Their
 shortcuts can be changed in **Settings** → **Keybindings**; the defaults use the `boardOpen`
 condition so they do not claim those keys elsewhere in the app. The global `board.open` command uses
 `!terminalFocus`, matching other navigation commands that should not take over terminal input.

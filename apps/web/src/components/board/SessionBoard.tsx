@@ -68,6 +68,7 @@ import {
 import {
   isBoardFixedLaneId,
   isBoardWorkflowLane,
+  adjacentBoardWorkflowLane,
   boardLaneLabel,
   orderBoardLanes,
   resolveBoardLane,
@@ -889,6 +890,22 @@ export function SessionBoard() {
         return;
       }
 
+      if (command === "board.moveFocusedLeft" || command === "board.moveFocusedRight") {
+        // State columns do not display client-local lanes, so there is no
+        // honest adjacent lane to move into from this layout.
+        if (organization.columns !== "workflow") return;
+        const entry = entries.find((candidate) => candidate.key === focusedKey);
+        if (entry === undefined) return;
+        const targetLaneId = adjacentBoardWorkflowLane(
+          entry.workflowLaneId,
+          workflowLanes,
+          command === "board.moveFocusedLeft" ? "left" : "right",
+        );
+        if (targetLaneId === null) return;
+        boardLaneController.moveToLane(entry.ref, targetLaneId);
+        return;
+      }
+
       const direction =
         command === "board.focusLeft"
           ? "left"
@@ -910,7 +927,15 @@ export function SessionBoard() {
       else findCardNode(scrollerRef.current, entry.key)?.focus({ preventScroll: true });
       revealCard(entry.key);
     },
-    [expandedTarget, navigate, revealCard, setExpandedEntry, setFocusedThreadKey],
+    [
+      expandedTarget,
+      navigate,
+      organization.columns,
+      revealCard,
+      setExpandedEntry,
+      setFocusedThreadKey,
+      workflowLanes,
+    ],
   );
 
   useEffect(() => {
@@ -931,6 +956,8 @@ export function SessionBoard() {
         command !== "board.focusRight" &&
         command !== "board.focusUp" &&
         command !== "board.focusDown" &&
+        command !== "board.moveFocusedLeft" &&
+        command !== "board.moveFocusedRight" &&
         command !== "board.toggleExpanded" &&
         command !== "board.openFocusedFullscreen"
       ) {

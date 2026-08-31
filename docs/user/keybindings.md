@@ -63,6 +63,11 @@ On the board, `board.openFocusedFullscreen` opens the focused real session in it
 full-screen route and defaults to `mod+alt+shift+enter`; draft cards do not have a
 full-screen session route.
 
+`board.moveFocusedLeft` and `board.moveFocusedRight` move the focused card one
+local workflow lane and default to `mod+alt+shift+ArrowLeft` and
+`mod+alt+shift+ArrowRight`. They are unavailable while the board uses state
+columns, because local workflow lanes are not displayed there.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

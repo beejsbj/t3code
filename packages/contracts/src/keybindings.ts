@@ -80,6 +80,8 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "board.focusRight",
   "board.focusUp",
   "board.focusDown",
+  "board.moveFocusedLeft",
+  "board.moveFocusedRight",
   "board.toggleExpanded",
   "board.openFocusedFullscreen",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
