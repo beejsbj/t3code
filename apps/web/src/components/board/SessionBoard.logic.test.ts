@@ -90,7 +90,8 @@ const lifecycleOptions = {
 type KeyboardTargetInput = {
   readonly tagName?: "input";
   readonly terminalOwner?: boolean;
-  readonly slot?: "dialog-popup" | "alert-dialog-popup" | "command-dialog-popup";
+  readonly slot?: "dialog-popup" | "alert-dialog-popup" | "command-dialog-popup" | "select-popup";
+  readonly role?: "listbox" | "option";
   readonly contentEditable?: "true" | "false";
 };
 
@@ -102,6 +103,7 @@ function keyboardTarget(input: KeyboardTargetInput): EventTarget {
         (input.tagName === "input" && selectors.includes("input")) ||
         (input.terminalOwner === true && selectors.includes("[data-terminal-owner]")) ||
         (input.slot !== undefined && selectors.includes(`[data-slot='${input.slot}']`)) ||
+        (input.role !== undefined && selectors.includes(`[role='${input.role}']`)) ||
         (input.contentEditable === "true" &&
           selectors.includes("[contenteditable]:not([contenteditable='false'])"));
       return matches ? target : null;
@@ -117,6 +119,9 @@ describe("shouldIgnoreBoardKeyboardTarget", () => {
     ["a dialog", { slot: "dialog-popup" }],
     ["an alert dialog", { slot: "alert-dialog-popup" }],
     ["a command dialog", { slot: "command-dialog-popup" }],
+    ["a select popup", { slot: "select-popup" }],
+    ["a listbox", { role: "listbox" }],
+    ["an option", { role: "option" }],
     ["a contenteditable editor", { contentEditable: "true" }],
   ] as const satisfies ReadonlyArray<readonly [string, KeyboardTargetInput]>;
 

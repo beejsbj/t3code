@@ -644,6 +644,16 @@ export function SessionBoard() {
     () => orderBoardLaneEntries(placed, laneEntryByThreadKey, orderByLaneId),
     [laneEntryByThreadKey, orderByLaneId, placed],
   );
+  const expandedThread = useMemo(
+    () =>
+      expandedTarget?.kind === "thread"
+        ? (orderedPlaced.find(
+            (entry): entry is PlacedThread =>
+              entry.kind === "thread" && entry.key === expandedTarget.threadKey,
+          ) ?? null)
+        : null,
+    [expandedTarget, orderedPlaced],
+  );
 
   useEffect(() => {
     for (const entry of placed) {
@@ -818,10 +828,26 @@ export function SessionBoard() {
         scrollTop: scroller.scrollTop,
         scrollLeft: scroller.scrollLeft,
       });
-      scroller.scrollTo({ ...target, behavior: "smooth" });
+      scroller.scrollTo({
+        ...target,
+        behavior: resolveBoardScrollBehavior(
+          window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+        ),
+      });
     });
     return () => cancelAnimationFrame(frame);
   }, []);
+
+  const restoreCollapsedCardFocus = useCallback(
+    (cardKey: string) => {
+      requestAnimationFrame(() => {
+        if (useBoardFocusStore.getState().expandedTarget !== null) return;
+        findCardNode(scrollerRef.current, cardKey)?.focus({ preventScroll: true });
+        revealCard(cardKey);
+      });
+    },
+    [revealCard],
+  );
 
   const setExpandedEntry = useCallback(
     (entry: PlacedEntry | null) => {
@@ -905,6 +931,7 @@ export function SessionBoard() {
         );
         if (targetLaneId === null) return;
         boardLaneController.moveToLane(entry.ref, targetLaneId);
+        if (expandedTarget === null) restoreCollapsedCardFocus(entry.key);
         return;
       }
 
@@ -929,7 +956,7 @@ export function SessionBoard() {
       else findCardNode(scrollerRef.current, entry.key)?.focus({ preventScroll: true });
       revealCard(entry.key);
     },
-    [navigate, revealCard, setExpandedEntry, setFocusedThreadKey],
+    [navigate, restoreCollapsedCardFocus, revealCard, setExpandedEntry, setFocusedThreadKey],
   );
 
   useEffect(() => {
@@ -1397,6 +1424,19 @@ export function SessionBoard() {
           </div>
         </div>
       </DndContext>
+      {expandedThread !== null ? (
+        <BoardCardExpandedSheet
+          target={{
+            kind: "thread",
+            threadRef: expandedThread.ref,
+            title: expandedThread.thread.title,
+          }}
+          open
+          onOpenChange={(open) => {
+            if (!open) setExpandedTarget(null);
+          }}
+        />
+      ) : null}
       {expandedTarget?.kind === "draft" && expandedDraft !== null ? (
         <BoardCardExpandedSheet
           target={{

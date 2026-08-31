@@ -2762,6 +2762,7 @@ function OpenCommandPaletteDialog(props: {
         isActionsOnly={isActionsOnly}
         keybindings={keybindings}
         onExecuteItem={executeItem}
+        shortcutContext={{ boardOpen: isBoardRoute }}
         {...(addProjectCloneFlow?.step === "repository"
           ? {
               emptyStateMessage:

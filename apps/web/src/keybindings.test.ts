@@ -477,6 +477,30 @@ describe("shortcutLabelForCommand", () => {
       "Ctrl+D",
     );
   });
+
+  it("returns a board shortcut label only while the board is open", () => {
+    const bindings = compile([
+      {
+        shortcut: modShortcut("arrowleft", { altKey: true }),
+        command: "board.focusLeft",
+        whenAst: whenIdentifier("boardOpen"),
+      },
+    ]);
+
+    assert.isNull(
+      shortcutLabelForCommand(bindings, "board.focusLeft", {
+        platform: "Linux",
+        context: { boardOpen: false },
+      }),
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(bindings, "board.focusLeft", {
+        platform: "Linux",
+        context: { boardOpen: true },
+      }),
+      "Ctrl+Alt+Left",
+    );
+  });
 });
 
 describe("thread navigation helpers", () => {
