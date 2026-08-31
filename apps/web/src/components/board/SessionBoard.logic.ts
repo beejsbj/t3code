@@ -305,6 +305,8 @@ const BOARD_KEYBOARD_INPUT_SELECTOR = [
   "[data-keybinding-capture]",
   "[data-terminal-owner]",
   "[data-slot='dialog-popup']",
+  "[data-slot='alert-dialog-popup']",
+  "[data-slot='command-dialog-popup']",
   "[role='menu']",
   "[role='menuitem']",
   "[role='separator']",
@@ -312,7 +314,10 @@ const BOARD_KEYBOARD_INPUT_SELECTOR = [
 
 /** Keeps board-level commands out of editing, terminal, menu, and resize input. */
 export function shouldIgnoreBoardKeyboardTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest(BOARD_KEYBOARD_INPUT_SELECTOR) !== null;
+  return (
+    typeof (target as { readonly closest?: unknown } | null)?.closest === "function" &&
+    (target as Element).closest(BOARD_KEYBOARD_INPUT_SELECTOR) !== null
+  );
 }
 
 export interface BoardScrollTarget {

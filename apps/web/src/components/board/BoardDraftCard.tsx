@@ -78,6 +78,9 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
     disabled: props.draggable !== true,
   });
   const composer = useComposerDraftStore((state) => state.draftsByThreadKey[draftId]);
+  const expanded = useBoardFocusStore(
+    (state) => state.expandedTarget?.kind === "draft" && state.expandedTarget.draftId === draftId,
+  );
   const isFocused = useBoardFocusStore((state) => state.focusedThreadKey === cardKey);
   const setFocused = useBoardFocusStore((state) => state.setFocused);
   const preview = resolveBoardDraftPreview(composer);
@@ -109,7 +112,7 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
       aria-label={title?.trim() || "Draft"}
       onPointerDownCapture={() => setFocused(cardKey)}
       onFocusCapture={() => setFocused(cardKey)}
-      className="outline-none"
+      className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -168,6 +171,8 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
             variant="ghost"
             onClick={handleExpand}
             aria-label="Open draft"
+            aria-expanded={expanded}
+            aria-haspopup="dialog"
             title="Open draft"
             className="text-muted-foreground/60 hover:text-foreground"
           >
@@ -178,6 +183,8 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
         <button
           type="button"
           onClick={handleExpand}
+          aria-expanded={expanded}
+          aria-haspopup="dialog"
           className="flex min-h-24 flex-1 cursor-pointer items-start bg-transparent px-3 py-3 text-left outline-none hover:bg-amber-500/[0.04] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >
           <span className="line-clamp-5 whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">

@@ -34,6 +34,7 @@ import {
   resolveBoardThreadVisibility,
   scheduleBoardRevealDisconnectCleanup,
   isThreadOnBoard,
+  shouldIgnoreBoardKeyboardTarget,
   shouldHideSwimlaneProjectHeader,
   swimlaneColumnDroppableId,
 } from "./SessionBoard.logic.ts";
@@ -85,6 +86,50 @@ const lifecycleOptions = {
   supportsSnooze: true,
   changeRequest: null,
 } as const;
+
+type KeyboardTargetInput = {
+  readonly tagName?: "input";
+  readonly terminalOwner?: boolean;
+  readonly slot?: "dialog-popup" | "alert-dialog-popup" | "command-dialog-popup";
+  readonly contentEditable?: "true" | "false";
+};
+
+function keyboardTarget(input: KeyboardTargetInput): EventTarget {
+  const target = {
+    closest: (selectorList: string) => {
+      const selectors = selectorList.split(",");
+      const matches =
+        (input.tagName === "input" && selectors.includes("input")) ||
+        (input.terminalOwner === true && selectors.includes("[data-terminal-owner]")) ||
+        (input.slot !== undefined && selectors.includes(`[data-slot='${input.slot}']`)) ||
+        (input.contentEditable === "true" &&
+          selectors.includes("[contenteditable]:not([contenteditable='false'])"));
+      return matches ? target : null;
+    },
+  };
+  return target as unknown as EventTarget;
+}
+
+describe("shouldIgnoreBoardKeyboardTarget", () => {
+  const ignoredTargets = [
+    ["an input", { tagName: "input" }],
+    ["a terminal owner", { terminalOwner: true }],
+    ["a dialog", { slot: "dialog-popup" }],
+    ["an alert dialog", { slot: "alert-dialog-popup" }],
+    ["a command dialog", { slot: "command-dialog-popup" }],
+    ["a contenteditable editor", { contentEditable: "true" }],
+  ] as const satisfies ReadonlyArray<readonly [string, KeyboardTargetInput]>;
+
+  it.each(ignoredTargets)("ignores %s", (_label, selector) => {
+    expect(shouldIgnoreBoardKeyboardTarget(keyboardTarget(selector))).toBe(true);
+  });
+
+  it("does not ignore a contenteditable=false target", () => {
+    expect(shouldIgnoreBoardKeyboardTarget(keyboardTarget({ contentEditable: "false" }))).toBe(
+      false,
+    );
+  });
+});
 
 describe("resolveBoardThreadVisibility", () => {
   it("includes every active thread and excludes lifecycle-hidden threads", () => {

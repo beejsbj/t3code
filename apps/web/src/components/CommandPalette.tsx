@@ -475,6 +475,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
       if (command === "board.open") {
         event.preventDefault();
         event.stopPropagation();
+        setOpen(false);
         void navigate({ to: "/board" });
         return;
       }
@@ -493,6 +494,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     navigate,
     previewOpen,
     resolvedTheme,
+    setOpen,
     terminalOpen,
     theme,
     themeHalves,
