@@ -99,6 +99,21 @@ export function leftmostLane(lanes: ReadonlyArray<BoardLane>): BoardLaneId | nul
   return orderBoardLanes(lanes).find(isBoardWorkflowLane)?.id ?? null;
 }
 
+/**
+ * Finds the neighboring displayed workflow lane. Lifecycle lanes are derived
+ * from server state, so card moves never target them or alter that state.
+ */
+export function adjacentBoardWorkflowLane(
+  laneId: BoardLaneId,
+  lanes: ReadonlyArray<BoardLane>,
+  direction: "left" | "right",
+): BoardLaneId | null {
+  const workflowLanes = orderBoardLanes(lanes).filter(isBoardWorkflowLane);
+  const laneIndex = workflowLanes.findIndex((lane) => lane.id === laneId);
+  const adjacent = workflowLanes[laneIndex + (direction === "left" ? -1 : 1)];
+  return adjacent?.id ?? null;
+}
+
 export function boardLaneLabel(laneId: BoardLaneId, lanes: ReadonlyArray<BoardLane>): string {
   return lanes.find((lane) => lane.id === laneId)?.name ?? laneId;
 }

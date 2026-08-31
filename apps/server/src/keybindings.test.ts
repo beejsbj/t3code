@@ -214,6 +214,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("board.focusRight"), "mod+alt+arrowright");
       assert.equal(defaultsByCommand.get("board.focusUp"), "mod+alt+arrowup");
       assert.equal(defaultsByCommand.get("board.focusDown"), "mod+alt+arrowdown");
+      assert.equal(defaultsByCommand.get("board.moveFocusedLeft"), "mod+alt+shift+arrowleft");
+      assert.equal(defaultsByCommand.get("board.moveFocusedRight"), "mod+alt+shift+arrowright");
       assert.equal(defaultsByCommand.get("board.toggleExpanded"), "mod+alt+enter");
       assert.equal(defaultsByCommand.get("board.openFocusedFullscreen"), "mod+alt+shift+enter");
       assert.isTrue(

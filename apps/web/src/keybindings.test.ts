@@ -759,6 +759,36 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it("resolves focused-card lane moves only on the board", () => {
+    const keybindings = compile([
+      {
+        shortcut: modShortcut("arrowright", { altKey: true, shiftKey: true }),
+        command: "board.moveFocusedRight",
+        whenAst: whenIdentifier("boardOpen"),
+      },
+    ]);
+    const shortcut = event({
+      key: "ArrowRight",
+      ctrlKey: true,
+      altKey: true,
+      shiftKey: true,
+    });
+
+    assert.isNull(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: false },
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(shortcut, keybindings, {
+        platform: "Linux",
+        context: { boardOpen: true },
+      }),
+      "board.moveFocusedRight",
+    );
+  });
+
   it("returns dynamic script commands", () => {
     const keybindings = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
 

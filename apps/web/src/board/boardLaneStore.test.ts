@@ -13,6 +13,7 @@ import {
   selectBoardPlacement,
   useBoardLaneStore,
 } from "./boardLaneStore.ts";
+import { adjacentBoardWorkflowLane } from "./boardLanes.ts";
 
 const laneA = "triage";
 const laneB = "ready";
@@ -84,6 +85,23 @@ describe("boardLaneStore", () => {
     expect(selectBoardPlacement(state.placementByThreadKey, sameIdElsewhere)).toBe("ready");
     expect(state.laneEntryByThreadKey["env-a:thread-1"]).toBeUndefined();
     expect(state.orderByLaneId).toEqual({ ready: ["env-b:thread-1"] });
+  });
+
+  it("keeps adjacent lane moves scoped for sessions in the same logical project", () => {
+    const store = useBoardLaneStore.getState();
+    const firstTarget = adjacentBoardWorkflowLane("ready", store.lanes, "right");
+    const secondTarget = adjacentBoardWorkflowLane("ready", store.lanes, "left");
+    expect(firstTarget).toBe("in-progress");
+    expect(secondTarget).toBe("blocked");
+
+    // The sidebar may group these environment-local project clones together,
+    // but their board placement still belongs to each scoped session.
+    store.setPlacement(firstThread, firstTarget!);
+    store.setPlacement(sameIdElsewhere, secondTarget!);
+
+    const { placementByThreadKey } = useBoardLaneStore.getState();
+    expect(selectBoardPlacement(placementByThreadKey, firstThread)).toBe("in-progress");
+    expect(selectBoardPlacement(placementByThreadKey, sameIdElsewhere)).toBe("blocked");
   });
 
   it("records a fresh lane-entry time and removes stale manual order on placement", () => {

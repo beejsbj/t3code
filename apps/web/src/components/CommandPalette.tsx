@@ -103,6 +103,7 @@ import {
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { dispatchBoardNavigation } from "../board/boardNavigationBus";
 import { useBoardFocusStore } from "../board/boardFocusStore";
+import { useBoardLaneStore } from "../board/boardLaneStore";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
@@ -599,6 +600,7 @@ function OpenCommandPaletteDialog(props: {
         ? null
         : state.focusedThreadKey,
   );
+  const boardOrganization = useBoardLaneStore((state) => state.organization);
   const { clearOpenIntent, openIntent, openOverlayMode, setOpen } = props;
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query);
@@ -1603,6 +1605,16 @@ function OpenCommandPaletteDialog(props: {
         icon: <ArrowDownIcon className={ITEM_ICON_CLASS} />,
       },
       {
+        command: "board.moveFocusedLeft" as const,
+        title: "Board: move focused card left",
+        icon: <ArrowLeftIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
+        command: "board.moveFocusedRight" as const,
+        title: "Board: move focused card right",
+        icon: <ArrowRightIcon className={ITEM_ICON_CLASS} />,
+      },
+      {
         command: "board.toggleExpanded" as const,
         title: "Board: expand or collapse focused session",
         icon: <Maximize2Icon className={ITEM_ICON_CLASS} />,
@@ -1615,6 +1627,16 @@ function OpenCommandPaletteDialog(props: {
         searchTerms: ["board", "keyboard", "spatial", "navigate", action.title],
         title: action.title,
         icon: action.icon,
+        description:
+          (action.command === "board.moveFocusedLeft" ||
+            action.command === "board.moveFocusedRight") &&
+          boardOrganization.columns !== "workflow"
+            ? "Switch columns to workflow to move cards between local lanes"
+            : undefined,
+        disabled:
+          (action.command === "board.moveFocusedLeft" ||
+            action.command === "board.moveFocusedRight") &&
+          boardOrganization.columns !== "workflow",
         shortcutCommand: action.command,
         run: async () => dispatchBoardNavigation(action.command),
       });

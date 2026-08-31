@@ -6,6 +6,8 @@ export type BoardNavigationCommand = Extract<
   | "board.focusRight"
   | "board.focusUp"
   | "board.focusDown"
+  | "board.moveFocusedLeft"
+  | "board.moveFocusedRight"
   | "board.toggleExpanded"
   | "board.openFocusedFullscreen"
 >;

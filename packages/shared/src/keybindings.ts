@@ -49,6 +49,16 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+alt+arrowright", command: "board.focusRight", when: "boardOpen" },
   { key: "mod+alt+arrowup", command: "board.focusUp", when: "boardOpen" },
   { key: "mod+alt+arrowdown", command: "board.focusDown", when: "boardOpen" },
+  {
+    key: "mod+alt+shift+arrowleft",
+    command: "board.moveFocusedLeft",
+    when: "boardOpen",
+  },
+  {
+    key: "mod+alt+shift+arrowright",
+    command: "board.moveFocusedRight",
+    when: "boardOpen",
+  },
   { key: "mod+alt+enter", command: "board.toggleExpanded", when: "boardOpen" },
   {
     key: "mod+alt+shift+enter",
