@@ -412,6 +412,7 @@ function overlayModeForCommand(command: string | null): SearchOverlayMode | null
 
 export function CommandPalette({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const isBoardRoute = useLocation({ select: (location) => location.pathname === "/board" });
   const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
     open: false,
     mode: "command",
@@ -467,6 +468,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
+          boardOpen: isBoardRoute,
         },
       });
       if (command === "themeEditor.toggle") {
@@ -499,6 +501,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   }, [
     keybindings,
     navigate,
+    isBoardRoute,
     previewOpen,
     resolvedTheme,
     setOpen,

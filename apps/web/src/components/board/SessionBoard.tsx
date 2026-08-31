@@ -136,6 +136,7 @@ import {
   resolveBoardScrollBehavior,
   resolveBoardFullscreenThreadKey,
   resolveBoardScrollTarget,
+  resolveBoardThreadFocus,
   resolveBoardViewport,
   resolveSpatialBoardTarget,
   resolveBoardThreadVisibility,
@@ -245,6 +246,7 @@ export function SessionBoard() {
   );
   const expandedTarget = useBoardFocusStore((state) => state.expandedTarget);
   const setExpandedTarget = useBoardFocusStore((state) => state.setExpanded);
+  const setFocusedThreadKey = useBoardFocusStore((state) => state.setFocused);
   const expandedDraft = useComposerDraftStore((state) =>
     expandedTarget?.kind === "draft" ? state.getDraftSession(expandedTarget.draftId) : null,
   );
@@ -656,6 +658,25 @@ export function SessionBoard() {
   );
 
   useEffect(() => {
+    const current = useBoardFocusStore.getState();
+    const next = resolveBoardThreadFocus({
+      boardThreadKeys: new Set(placedThreads.map((entry) => entry.key)),
+      focusedThreadKey: current.focusedThreadKey,
+      expandedThreadKey:
+        current.expandedTarget?.kind === "thread" ? current.expandedTarget.threadKey : null,
+    });
+    if (next.focusedThreadKey !== current.focusedThreadKey) {
+      setFocusedThreadKey(next.focusedThreadKey);
+    }
+    if (
+      current.expandedTarget?.kind === "thread" &&
+      next.expandedThreadKey !== current.expandedTarget.threadKey
+    ) {
+      setExpandedTarget(null);
+    }
+  }, [placedThreads, setExpandedTarget, setFocusedThreadKey]);
+
+  useEffect(() => {
     for (const entry of placed) {
       const expectedSourceKey =
         entry.kind === "thread" ? changeRequestSourceKeyByThreadKey.get(entry.key) : undefined;
@@ -804,7 +825,6 @@ export function SessionBoard() {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const focusRequest = useBoardFocusStore((state) => state.request);
   const clearFocusRequest = useBoardFocusStore((state) => state.clearRequest);
-  const setFocusedThreadKey = useBoardFocusStore((state) => state.setFocused);
   const setExpandedThread = useBoardFocusStore((state) => state.setExpanded);
   const placedRef = useRef(orderedPlaced);
   placedRef.current = orderedPlaced;
