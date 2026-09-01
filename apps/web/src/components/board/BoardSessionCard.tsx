@@ -33,12 +33,14 @@ import { useInViewport } from "./useInViewport";
 import { useEnvironmentThread } from "../../state/threads";
 
 const statusLabels = {
-  approval: "Needs approval",
-  input: "Awaiting input",
+  approval: "Approval",
+  input: "Input",
   working: "Working",
   monitoring: "Monitoring",
-  failed: "Error",
-  completed: "Completed",
+  failed: "Failed",
+  plan: "Plan Ready",
+  woke: "Woke",
+  completed: "Done",
   ready: "Ready",
 } as const;
 
@@ -46,10 +48,12 @@ const statusStyles = {
   approval:
     "border-amber-500/35 bg-amber-500/8 text-amber-700 dark:bg-amber-500/16 dark:text-amber-300",
   input:
-    "border-indigo-500/35 bg-indigo-500/8 text-indigo-700 dark:bg-indigo-500/16 dark:text-indigo-300",
-  working: "border-sky-500/35 bg-sky-500/8 text-sky-700 dark:bg-sky-500/16 dark:text-sky-300",
-  monitoring: "border-sky-500/35 bg-sky-500/8 text-sky-700 dark:bg-sky-500/16 dark:text-sky-300",
+    "border-indigo-500/35 bg-indigo-500/8 text-indigo-600 dark:bg-indigo-500/16 dark:text-indigo-300",
+  working: "border-sky-500/35 bg-sky-500/8 text-sky-600 dark:bg-sky-500/16 dark:text-sky-400",
+  monitoring: "border-sky-500/35 bg-sky-500/8 text-sky-600 dark:bg-sky-500/16 dark:text-sky-400",
   failed: "border-red-500/35 bg-red-500/8 text-red-700 dark:bg-red-500/16 dark:text-red-300",
+  plan: "border-violet-500/35 bg-violet-500/8 text-violet-600 dark:bg-violet-500/16 dark:text-violet-300",
+  woke: "border-amber-500/35 bg-amber-500/8 text-amber-700 dark:bg-amber-500/16 dark:text-amber-300",
   completed:
     "border-emerald-500/35 bg-emerald-500/8 text-emerald-700 dark:bg-emerald-500/16 dark:text-emerald-300",
   ready: "border-border bg-muted/45 text-muted-foreground dark:bg-muted/45",
@@ -58,7 +62,11 @@ const statusStyles = {
 const EMPTY_REVERT_TURN_COUNTS = new Map<MessageId, number>();
 const NOOP = () => {};
 
-export type BoardThreadStatus = ReturnType<typeof resolveSidebarThreadStatus> | "completed";
+export type BoardThreadStatus =
+  | ReturnType<typeof resolveSidebarThreadStatus>
+  | "plan"
+  | "woke"
+  | "completed";
 
 type BoardSessionCardProps = {
   readonly card: BoardCard<EnvironmentThreadShell, EnvironmentProject>;

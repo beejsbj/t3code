@@ -3,7 +3,7 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { FolderIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { isElectron } from "../env";
 import { useEnvironments } from "../state/environments";
 import {
@@ -13,21 +13,47 @@ import {
   useThreadShells,
 } from "../state/entities";
 import { useUiStateStore } from "../uiStateStore";
-import { hasUnseenCompletion, resolveSidebarThreadStatus } from "./Sidebar.logic";
+import {
+  hasUnseenCompletion,
+  resolveSidebarThreadStatus,
+  resolveThreadStatusPill,
+} from "./Sidebar.logic";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import { buildBoardCards, groupBoardCardsByProject } from "../board/board.logic";
 import { BoardSessionCard, type BoardThreadStatus } from "./board/BoardSessionCard";
 
-const attentionStatuses = new Set<BoardThreadStatus>(["approval", "input", "failed", "completed"]);
+const attentionStatuses = new Set<BoardThreadStatus>([
+  "approval",
+  "input",
+  "failed",
+  "plan",
+  "woke",
+  "completed",
+]);
 
 function resolveBoardThreadStatus(
   thread: EnvironmentThreadShell,
   lastVisitedAt: string | undefined,
+  now: string,
 ): BoardThreadStatus {
   const status = resolveSidebarThreadStatus(thread);
   if (status !== "ready") return status;
+  if (resolveThreadStatusPill({ thread: { ...thread, lastVisitedAt } })?.label === "Plan Ready") {
+    return "plan";
+  }
+  const wokeAt = threadWokeAt(thread, { now });
+  if (wokeAt !== null) {
+    const wokeAtMs = Date.parse(wokeAt);
+    const lastVisitedAtMs = Date.parse(lastVisitedAt ?? "");
+    if (
+      Number.isFinite(wokeAtMs) &&
+      (!Number.isFinite(lastVisitedAtMs) || lastVisitedAtMs < wokeAtMs)
+    ) {
+      return "woke";
+    }
+  }
   return hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "completed" : "ready";
 }
 
@@ -37,6 +63,14 @@ export function SessionBoard() {
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
   const { environments, presentationById } = useEnvironments();
+  const connectingEnvironmentCount = useMemo(
+    () =>
+      environments.filter((environment) => {
+        const phase = presentationById.get(environment.environmentId)?.connection.phase;
+        return phase === "connecting" || phase === "reconnecting";
+      }).length,
+    [environments, presentationById],
+  );
   const lastVisitedAtByThreadKey = useUiStateStore((state) => state.threadLastVisitedAtById);
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   const environmentLabels = useMemo(
@@ -93,14 +127,21 @@ export function SessionBoard() {
     let attention = 0;
     let working = 0;
     const environmentIds = new Set<string>();
+    const statusByThreadKey = new Map<string, BoardThreadStatus>();
+    const now = new Date().toISOString();
     for (const card of cards) {
       const threadKey = scopedThreadKey(scopeThreadRef(card.thread.environmentId, card.thread.id));
-      const status = resolveBoardThreadStatus(card.thread, lastVisitedAtByThreadKey[threadKey]);
+      const status = resolveBoardThreadStatus(
+        card.thread,
+        lastVisitedAtByThreadKey[threadKey],
+        now,
+      );
+      statusByThreadKey.set(threadKey, status);
       if (attentionStatuses.has(status)) attention += 1;
       if (status === "working") working += 1;
       environmentIds.add(card.thread.environmentId);
     }
-    return { attention, working, environments: environmentIds.size };
+    return { attention, working, environments: environmentIds.size, statusByThreadKey };
   }, [cards, lastVisitedAtByThreadKey]);
 
   return (
@@ -125,14 +166,24 @@ export function SessionBoard() {
           {bootstrapped && summary.environments > 1 ? (
             <span>{summary.environments} environments</span>
           ) : null}
+          {connectingEnvironmentCount > 0 ? (
+            <span>
+              {connectingEnvironmentCount}{" "}
+              {connectingEnvironmentCount === 1 ? "environment" : "environments"} connecting…
+            </span>
+          ) : null}
         </div>
       </WorkspacePageHeader>
       {!bootstrapped ? null : sections.length === 0 ? (
         <Empty>
           <EmptyHeader>
-            <EmptyTitle className="text-lg">No active sessions</EmptyTitle>
+            <EmptyTitle className="text-lg">
+              {connectingEnvironmentCount > 0 ? "Connecting to sessions…" : "No active sessions"}
+            </EmptyTitle>
             <EmptyDescription>
-              Active sessions will appear here across your connected environments.
+              {connectingEnvironmentCount > 0
+                ? "Live chats will appear as their environments reconnect."
+                : "Active sessions will appear here across your connected environments."}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
@@ -166,10 +217,9 @@ export function SessionBoard() {
                         key={JSON.stringify([card.thread.environmentId, card.thread.id])}
                         card={card}
                         environmentConnection={environmentConnection}
-                        status={resolveBoardThreadStatus(
-                          card.thread,
-                          lastVisitedAtByThreadKey[scopedThreadKey(threadRef)],
-                        )}
+                        status={
+                          summary.statusByThreadKey.get(scopedThreadKey(threadRef)) ?? "ready"
+                        }
                       />
                     );
                   })}

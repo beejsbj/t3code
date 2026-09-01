@@ -33,7 +33,6 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import { Kbd } from "../ui/kbd";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
@@ -145,10 +144,7 @@ function SidebarUtilityItem({
           }
         />
         <TooltipPopup side="top">
-          <span className="flex items-center gap-2">
-            {label}
-            {shortcutLabel ? <Kbd>{shortcutLabel}</Kbd> : null}
-          </span>
+          {shortcutLabel ? `${label} (${shortcutLabel})` : label}
         </TooltipPopup>
       </Tooltip>
     </SidebarMenuItem>

@@ -433,19 +433,15 @@ const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
   meta: boolean;
   shift: boolean;
   control: boolean;
-  alt: boolean;
 }> = Object.freeze([
   // mod+shift+J → preview.toggle
-  { key: "j", meta: true, shift: true, control: false, alt: false },
+  { key: "j", meta: true, shift: true, control: false },
   // mod+K → command palette
-  { key: "k", meta: true, shift: false, control: false, alt: false },
+  { key: "k", meta: true, shift: false, control: false },
   // mod+, → settings (macOS convention)
-  { key: ",", meta: true, shift: false, control: false, alt: false },
+  { key: ",", meta: true, shift: false, control: false },
   // mod+W → close tab/panel
-  { key: "w", meta: true, shift: false, control: false, alt: false },
-  // mod+alt+shift+B → board.open
-  { key: "b", meta: true, shift: true, control: false, alt: true },
-  { key: "b", meta: false, shift: true, control: true, alt: true },
+  { key: "w", meta: true, shift: false, control: false },
 ]);
 
 /**
@@ -1439,8 +1435,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         shortcut.key.toLowerCase() === input.key.toLowerCase() &&
         shortcut.meta === input.meta &&
         shortcut.shift === input.shift &&
-        shortcut.control === input.control &&
-        shortcut.alt === input.alt,
+        shortcut.control === input.control,
     );
 
   const computeNavStatus = (wc: Electron.WebContents): PreviewNavStatus => {
