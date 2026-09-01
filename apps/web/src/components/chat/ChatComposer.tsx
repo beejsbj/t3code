@@ -727,6 +727,12 @@ export interface ChatComposerProps {
   onExpandImage: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   openingVideoAttachmentId: string | null;
+  /**
+   * A compact composer rendered alongside other durable threads. Its keyboard
+   * shortcuts are scoped to its own focused form so another board card cannot
+   * claim them.
+   */
+  embedded?: boolean;
 }
 
 // --------------------------------------------------------------------------
@@ -806,6 +812,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
     openingVideoAttachmentId,
+    embedded = false,
   } = props;
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
@@ -1205,8 +1212,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null,
   );
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
-  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
-  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+  const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(embedded);
+  const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(embedded);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
@@ -2929,6 +2936,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (embedded) {
+        const composerForm = composerFormRef.current;
+        if (
+          composerForm === null ||
+          !(event.target instanceof Node) ||
+          !composerForm.contains(event.target)
+        ) {
+          return;
+        }
+      }
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
@@ -2957,6 +2974,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return () => window.removeEventListener("keydown", handler, true);
   }, [
     activePendingProgress,
+    embedded,
     isComposerApprovalState,
     isComposerModelPickerOpen,
     keybindings,
@@ -3426,8 +3444,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onDragOverCapture={composerMentionDragHandlers.onDragOver}
       onDragLeaveCapture={onComposerMentionDragLeaveCapture}
       onDropCapture={composerMentionDragHandlers.onDrop}
-      className="mx-auto w-full min-w-0 max-w-3xl"
+      className={cn("mx-auto w-full min-w-0", embedded ? "max-w-full" : "max-w-3xl")}
       data-chat-composer-form="true"
+      data-chat-composer-embedded={embedded ? "true" : undefined}
     >
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
