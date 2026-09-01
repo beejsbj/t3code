@@ -13,6 +13,7 @@ import {
   resolveBoardAttachmentUploadCapabilities,
   resolveBoardExpiredTerminalContextToastCopy,
   resolveBoardLocalCheckoutStatusGuard,
+  resolveBoardTimelineWorkingState,
   resolveBoardComposerModes,
 } from "./useThreadComposer";
 
@@ -246,5 +247,34 @@ describe("board thread composer", () => {
         summaryInteractionMode: "default",
       }),
     ).toEqual({ runtimeMode: "approval-required", interactionMode: "plan" });
+  });
+
+  it("shows local send work until the server timeline takes over", () => {
+    const localSendStartedAt = "2026-09-01T12:00:00.000Z";
+
+    expect(
+      resolveBoardTimelineWorkingState({
+        serverIsWorking: false,
+        serverActiveTurnStartedAt: null,
+        isLocalSendBusy: true,
+        localSendStartedAt,
+      }),
+    ).toEqual({ isWorking: true, activeTurnStartedAt: localSendStartedAt });
+    expect(
+      resolveBoardTimelineWorkingState({
+        serverIsWorking: true,
+        serverActiveTurnStartedAt: "2026-09-01T12:00:03.000Z",
+        isLocalSendBusy: true,
+        localSendStartedAt,
+      }),
+    ).toEqual({ isWorking: true, activeTurnStartedAt: "2026-09-01T12:00:03.000Z" });
+    expect(
+      resolveBoardTimelineWorkingState({
+        serverIsWorking: false,
+        serverActiveTurnStartedAt: null,
+        isLocalSendBusy: false,
+        localSendStartedAt: null,
+      }),
+    ).toEqual({ isWorking: false, activeTurnStartedAt: null });
   });
 });

@@ -297,6 +297,19 @@ export function canBeginBoardComposerSend(
   return connection.phase === "connected" && !sendInFlight;
 }
 
+export function resolveBoardTimelineWorkingState(input: {
+  readonly serverIsWorking: boolean;
+  readonly serverActiveTurnStartedAt: string | null;
+  readonly isLocalSendBusy: boolean;
+  readonly localSendStartedAt: string | null;
+}): { readonly isWorking: boolean; readonly activeTurnStartedAt: string | null } {
+  return {
+    isWorking: input.serverIsWorking || input.isLocalSendBusy,
+    activeTurnStartedAt:
+      input.serverActiveTurnStartedAt ?? (input.isLocalSendBusy ? input.localSendStartedAt : null),
+  };
+}
+
 export function useThreadComposerRouteState(thread: Thread | null | undefined) {
   const threadActivities = thread?.activities ?? EMPTY_ACTIVITIES;
   const pendingApprovals = useMemo(
@@ -427,6 +440,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const isConnecting = phase === "connecting";
   const sendInFlightRef = useRef(false);
   const [isSendBusy, setIsSendBusy] = useState(false);
+  const [localSendStartedAt, setLocalSendStartedAt] = useState<string | null>(null);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
@@ -612,7 +626,9 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       }
 
       sendInFlightRef.current = true;
+      const sendStartedAt = new Date().toISOString();
       setIsSendBusy(true);
+      setLocalSendStartedAt(sendStartedAt);
       let optimisticMessageId: MessageId | null = null;
       let sentDraft: {
         readonly prompt: string;
@@ -725,7 +741,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         }
         const modelSelection = requestedModelSelection;
         const messageId = newMessageId();
-        const createdAt = new Date().toISOString();
+        const createdAt = sendStartedAt;
         const optimisticAttachments = draft.images.map((image) => ({
           type: "image" as const,
           id: image.id,
@@ -933,6 +949,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         }
         sendInFlightRef.current = false;
         setIsSendBusy(false);
+        setLocalSendStartedAt(null);
       }
     },
     [
@@ -1256,6 +1273,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   return {
     chatComposerProps,
     composerRef,
+    localSendStartedAt,
     hasRetainedOptimisticMessages: optimisticUserMessages.length > 0,
     timelineMessages,
     timelineAnchorMessageId,

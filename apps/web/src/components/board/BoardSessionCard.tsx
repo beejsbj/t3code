@@ -44,7 +44,11 @@ import { ChatComposer } from "../chat/ChatComposer";
 import { ExpandedImageDialog } from "../chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
 import { MessagesTimeline } from "../chat/MessagesTimeline";
-import { boardComposerDraftCanBeRestored, useBoardThreadComposer } from "../chat/useThreadComposer";
+import {
+  boardComposerDraftCanBeRestored,
+  resolveBoardTimelineWorkingState,
+  useBoardThreadComposer,
+} from "../chat/useThreadComposer";
 import { useThreadTimeline } from "../chat/useThreadTimeline";
 import { useInViewport } from "./useInViewport";
 import { useEnvironmentThread } from "../../state/threads";
@@ -345,6 +349,7 @@ const BoardCardChatContent = memo(function BoardCardChatContent(props: {
   const {
     chatComposerProps,
     composerRef,
+    localSendStartedAt,
     hasRetainedOptimisticMessages,
     timelineMessages,
     timelineAnchorMessageId,
@@ -401,6 +406,12 @@ const BoardCardChatContent = memo(function BoardCardChatContent(props: {
     thread: fullThread,
     timelineMessages,
     resolvedTheme,
+  });
+  const timelineWorkingState = resolveBoardTimelineWorkingState({
+    serverIsWorking: isWorking,
+    serverActiveTurnStartedAt: activeTurnStartedAt,
+    isLocalSendBusy: chatComposerProps.isSendBusy,
+    localSendStartedAt,
   });
 
   const onOpenTurnDiff = useCallback(
@@ -459,8 +470,8 @@ const BoardCardChatContent = memo(function BoardCardChatContent(props: {
           density="compact"
           agentPanelModel={agentPanelModel}
           onOpenAgents={onOpenAgents}
-          isWorking={isWorking}
-          activeTurnStartedAt={activeTurnStartedAt}
+          isWorking={timelineWorkingState.isWorking}
+          activeTurnStartedAt={timelineWorkingState.activeTurnStartedAt}
           listRef={legendListRef}
           timelineEntries={timelineEntries}
           latestTurn={latestTurn}
