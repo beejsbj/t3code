@@ -845,12 +845,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     supportsAttachmentUploads,
     maxFileAttachmentBytes,
   });
-  const fileCapabilityBlockReason = fileAttachmentCapabilityBlockReason({
-    files: composerFiles,
-    attachmentUploadsCapabilityKnown,
-    supportsAttachmentUploads,
-    maxFileAttachmentBytes,
-  });
+  const fileCapabilityBlockReason =
+    embedded && composerFiles.length > 0
+      ? "Send file attachments from the full thread"
+      : fileAttachmentCapabilityBlockReason({
+          files: composerFiles,
+          attachmentUploadsCapabilityKnown,
+          supportsAttachmentUploads,
+          maxFileAttachmentBytes,
+        });
   const attachmentBlockReason =
     fileCapabilityBlockReason ??
     (supportsAttachmentUploads

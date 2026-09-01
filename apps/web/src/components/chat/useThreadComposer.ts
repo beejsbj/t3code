@@ -30,7 +30,8 @@ import { useEnvironmentSettings } from "../../hooks/useSettings.ts";
 import { newMessageId } from "../../lib/utils.ts";
 import { primaryServerKeybindingsAtom } from "../../state/server.ts";
 import { useProject, useServerConfigs } from "../../state/entities.ts";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import {
@@ -79,6 +80,7 @@ import {
 import type { ChatComposerProps } from "./ChatComposer.tsx";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview.tsx";
 import { toastManager } from "../ui/toast.tsx";
+import { useUiStateStore } from "../../uiStateStore.ts";
 
 // Hoisted so `thread?.activities ?? []` doesn't allocate a fresh array (and
 // bust the memos keyed on it) on every render when a thread has no activities.
@@ -229,6 +231,7 @@ export type UseBoardThreadComposerInput = {
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly resolvedTheme: "light" | "dark";
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
+  readonly onFileOpen: ChatComposerProps["onFileOpen"];
 };
 
 export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
@@ -240,6 +243,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     environmentConnection,
     resolvedTheme,
     onExpandImage,
+    onFileOpen,
   } = input;
   const environmentId = threadRef.environmentId;
   const settings = useEnvironmentSettings(environmentId);
@@ -651,6 +655,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           }
           return;
         }
+        const wokeAt = threadWokeAt(summary, { now: createdAt });
+        if (wokeAt !== null) {
+          useUiStateStore.getState().markThreadVisited(scopedThreadKey(threadRef), wokeAt);
+        }
         sendSucceeded = true;
       } catch (error) {
         sendError = error;
@@ -945,7 +953,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       scheduleComposerFocus: focusComposer,
       setThreadError: NOOP,
       onExpandImage,
-      onFileOpen: NOOP,
+      onFileOpen,
       openingVideoAttachmentId: null,
       embedded: true,
     }),
@@ -986,6 +994,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       handleInteractionModeChange,
       focusComposer,
       onExpandImage,
+      onFileOpen,
     ],
   );
 

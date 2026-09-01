@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -20,6 +20,7 @@ import { useThread } from "../../state/entities";
 import { useComposerThreadDraft } from "../../composerDraftStore";
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { useRightPanelStore } from "../../rightPanelStore";
+import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Badge } from "../ui/badge";
@@ -85,15 +86,24 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   const runtime = thread.session?.providerName ?? String(thread.modelSelection.instanceId);
   const projectCwd = project?.workspaceRoot ?? thread.worktreePath ?? "";
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const composerDraft = useComposerThreadDraft(threadRef);
   const hasDraft = !boardComposerDraftCanBeRestored(composerDraft);
   const shouldMountChat = isNearViewport || hasFocus || hasDraft || chatRequestsMount;
+  const acknowledgeLatestCompletion = useCallback(() => {
+    const completedAt = thread.latestTurn?.completedAt;
+    if (completedAt) markThreadVisited(scopedThreadKey(threadRef), completedAt);
+  }, [markThreadVisited, thread.latestTurn?.completedAt, threadRef]);
 
   return (
     <article
       ref={slotRef}
       data-board-card={thread.id}
-      onFocusCapture={() => setHasFocus(true)}
+      onFocusCapture={() => {
+        setHasFocus(true);
+        acknowledgeLatestCompletion();
+      }}
+      onPointerDownCapture={acknowledgeLatestCompletion}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setHasFocus(false);
       }}
@@ -216,6 +226,12 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
+  const onFileOpen = useCallback(() => {
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: threadRef.environmentId, threadId: threadRef.threadId },
+    });
+  }, [navigate, threadRef]);
   const { chatComposerProps, timelineMessages, timelineAnchorMessageId, clearTimelineAnchor } =
     useBoardThreadComposer({
       threadRef,
@@ -225,6 +241,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
       environmentConnection,
       resolvedTheme,
       onExpandImage: onExpandTimelineImage,
+      onFileOpen,
     });
   const {
     timelineEntries,
@@ -307,6 +324,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
           onRevertUserMessage={NOOP}
           isRevertingCheckpoint={false}
           onImageExpand={onExpandTimelineImage}
+          onFileOpen={onFileOpen}
           openingVideoAttachmentId={null}
           activeThreadEnvironmentId={activeThreadEnvironmentId}
           markdownCwd={markdownCwd}
