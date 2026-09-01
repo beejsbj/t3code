@@ -8,6 +8,7 @@ import {
   commandLabel,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
+  isKeybindingCommandSupportedByServer,
   parseWhenExpressionDraft,
   shortcutToKeybindingInput,
   unknownWhenVariables,
@@ -154,6 +155,12 @@ describe("KeybindingsSettings.logic", () => {
     expect(options).toEqual(
       expect.arrayContaining(["chat.new", "rightPanel.toggleMaximized", "script.setup-db.run"]),
     );
+  });
+
+  it("does not offer board customization to servers that do not support it", () => {
+    expect(isKeybindingCommandSupportedByServer("board.open", false)).toBe(false);
+    expect(isKeybindingCommandSupportedByServer("board.open", true)).toBe(true);
+    expect(isKeybindingCommandSupportedByServer("chat.new", false)).toBe(true);
   });
 
   it("reports unknown when variables without rejecting parseable expressions", () => {
