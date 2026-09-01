@@ -552,9 +552,11 @@ export function laneIdForName(name: string, lanes: ReadonlyArray<BoardLane>): Bo
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "lane";
   const existingIds = new Set(lanes.map((lane) => lane.id));
-  if (!existingIds.has(base)) return base;
+  if (!existingIds.has(base) && !isObsoleteBoardLaneId(base)) return base;
   let suffix = 2;
-  while (existingIds.has(`${base}-${suffix}`)) suffix += 1;
+  while (existingIds.has(`${base}-${suffix}`) || isObsoleteBoardLaneId(`${base}-${suffix}`)) {
+    suffix += 1;
+  }
   return `${base}-${suffix}`;
 }
 

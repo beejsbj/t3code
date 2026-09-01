@@ -242,6 +242,19 @@ describe("boardLaneStore", () => {
     ).toBeUndefined();
   });
 
+  it.each(["snoozed", "settled"])("does not create the reserved %s lane", (laneId) => {
+    const original = useBoardLaneStore.getState().lanes;
+
+    useBoardLaneStore.getState().createLane({
+      id: laneId,
+      name: laneId,
+      description: "Reserved legacy lifecycle lane",
+      order: 10,
+    });
+
+    expect(useBoardLaneStore.getState().lanes).toEqual(original);
+  });
+
   it("protects fixed lanes from updates and archival", () => {
     const original = useBoardLaneStore.getState().lanes;
     useBoardLaneStore.getState().updateLane("triage", {

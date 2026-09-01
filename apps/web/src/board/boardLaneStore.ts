@@ -578,7 +578,12 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
         }),
       createLane: (lane) =>
         set((state) => {
-          if (state.lanes.some((existing) => existing.id === lane.id)) return state;
+          if (
+            isObsoleteBoardLaneId(lane.id) ||
+            state.lanes.some((existing) => existing.id === lane.id)
+          ) {
+            return state;
+          }
           return { lanes: [...state.lanes, lane] };
         }),
       updateLane: (laneId, draft) =>

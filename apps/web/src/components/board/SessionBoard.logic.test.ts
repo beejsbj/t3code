@@ -341,6 +341,8 @@ describe("laneIdForName", () => {
   it("creates a readable unique lane id without exposing id as an authoring field", () => {
     expect(laneIdForName("To Review", lanes)).toBe("to-review");
     expect(laneIdForName("Ready", lanes)).toBe("ready-2");
+    expect(laneIdForName("Snoozed", lanes)).toBe("snoozed-2");
+    expect(laneIdForName("Settled", [])).toBe("settled-2");
   });
 });
 
