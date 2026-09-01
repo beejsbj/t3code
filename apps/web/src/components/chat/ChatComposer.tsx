@@ -857,6 +857,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     maxFileAttachmentBytes,
     allowGenericFileAttachments,
   });
+  const attachmentPickerLabel = allowGenericFileAttachments ? "Attach files" : "Attach images";
   const fileCapabilityBlockReason = fileAttachmentCapabilityBlockReason({
     files: composerFiles,
     attachmentUploadsCapabilityKnown,
@@ -4248,13 +4249,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               size="icon-sm"
                               onPointerDown={(event) => event.preventDefault()}
                               onClick={() => attachmentInputRef.current?.click()}
-                              aria-label="Attach files"
+                              aria-label={attachmentPickerLabel}
                             />
                           }
                         >
                           <PaperclipIcon />
                         </TooltipTrigger>
-                        <TooltipPopup>Attach files</TooltipPopup>
+                        <TooltipPopup>{attachmentPickerLabel}</TooltipPopup>
                       </Tooltip>
                     </>
                   ) : null}
