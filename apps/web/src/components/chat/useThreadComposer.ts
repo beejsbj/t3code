@@ -75,6 +75,12 @@ import {
   type TerminalContextDraft,
 } from "../../lib/terminalContext.ts";
 import {
+  awaitAttachmentUploads,
+  getUploadedAttachments,
+  releaseDraftAttachments,
+  startAttachmentUpload,
+} from "../../lib/attachmentUploadQueue.ts";
+import {
   appendElementContextsToPrompt,
   type ElementContextDraft,
 } from "../../lib/elementContext.ts";
@@ -185,6 +191,25 @@ export function resolveBoardExpiredTerminalContextToastCopy(
     expiredTerminalContextCount,
     hasSendableContent ? "omitted" : "empty",
   );
+}
+
+export function resolveBoardAttachmentUploadCapabilities(
+  config:
+    | {
+        readonly environment: {
+          readonly capabilities: { readonly attachmentUploads?: boolean };
+        };
+      }
+    | null
+    | undefined,
+): {
+  readonly attachmentUploadsCapabilityKnown: boolean;
+  readonly supportsAttachmentUploads: boolean;
+} {
+  return {
+    attachmentUploadsCapabilityKnown: config !== null && config !== undefined,
+    supportsAttachmentUploads: config?.environment.capabilities.attachmentUploads === true,
+  };
 }
 
 export function resolveBoardComposerModes(input: {
@@ -341,6 +366,8 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     () => [...(serverConfigs.get(environmentId)?.providers ?? EMPTY_PROVIDER_STATUSES)],
     [environmentId, serverConfigs],
   );
+  const { attachmentUploadsCapabilityKnown, supportsAttachmentUploads } =
+    resolveBoardAttachmentUploadCapabilities(serverConfigs.get(environmentId));
 
   const project = useProject(scopeProjectRef(summary.environmentId, summary.projectId));
   const gitCwd = project
@@ -761,15 +788,35 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             return;
           }
         }
-        const attachments = await Promise.all(
-          draft.images.map(async (image) => ({
-            type: "image" as const,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-            dataUrl: await readFileAsDataUrl(image.file),
-          })),
-        );
+        const images = [...draft.images];
+        let attachments;
+        if (supportsAttachmentUploads && images.length > 0) {
+          for (const image of images) {
+            // ChatComposer normally starts this when the image enters the
+            // draft. Repeating it closes the add-to-send race; the queue is
+            // idempotent for an existing job or ready upload.
+            startAttachmentUpload({
+              environmentId,
+              image,
+              draftTarget: threadRef,
+            });
+          }
+          await awaitAttachmentUploads(images.map((image) => image.id));
+          attachments = getUploadedAttachments({ environmentId, images });
+          if (attachments === null) {
+            throw new Error("Retry or remove failed uploads before sending.");
+          }
+        } else {
+          attachments = await Promise.all(
+            images.map(async (image) => ({
+              type: "image" as const,
+              name: image.name,
+              mimeType: image.mimeType,
+              sizeBytes: image.sizeBytes,
+              dataUrl: await readFileAsDataUrl(image.file),
+            })),
+          );
+        }
         const result = await startThreadTurn({
           environmentId: threadRef.environmentId,
           input: {
@@ -798,6 +845,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           useUiStateStore.getState().markThreadVisited(scopedThreadKey(threadRef), wokeAt);
         }
         sendSucceeded = true;
+        // A ready upload can outlive a capability change while this send is
+        // in flight. Release any queue state only after the turn owns the
+        // message, whether the message used upload references or data URLs.
+        releaseDraftAttachments(images);
         if (expiredTerminalContextToast !== null) {
           toastManager.add({
             type: "warning",
@@ -863,6 +914,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       providerStatuses,
       runtimeMode,
       settings.planModeEnabled,
+      supportsAttachmentUploads,
       setThreadInteractionMode,
       setThreadRuntimeMode,
       startThreadTurn,
@@ -1039,14 +1091,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       composerRef,
       composerDraftTarget: threadRef,
       environmentId,
-      // Board cards send images through the existing data-URL fallback. They
-      // do not start the route's upload lifecycle, which would otherwise
-      // duplicate bytes and leave uploaded assets unreleased.
-      attachmentUploadsCapabilityKnown: true,
-      supportsAttachmentUploads: false,
-      // The embedded board sender currently serializes images directly. Keep
-      // generic files visible in retained drafts, but require the full thread
-      // route to send them instead of silently dropping them.
+      attachmentUploadsCapabilityKnown,
+      supportsAttachmentUploads,
+      // Generic files stay visible in retained drafts, but require the full
+      // thread route to send them instead of silently dropping them.
       maxFileAttachmentBytes: null,
       routeKind: "server",
       routeThreadRef: threadRef,
@@ -1134,6 +1182,8 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       composerRef,
       threadRef,
       environmentId,
+      attachmentUploadsCapabilityKnown,
+      supportsAttachmentUploads,
       thread,
       phase,
       isConnecting,

@@ -9,6 +9,7 @@ import {
   parseBoardCodexFeedbackCommand,
   parseBoardStandaloneComposerSlashCommand,
   removeBoardAttachmentPreviewHandoff,
+  resolveBoardAttachmentUploadCapabilities,
   resolveBoardExpiredTerminalContextToastCopy,
   resolveBoardComposerModes,
 } from "./useThreadComposer";
@@ -132,6 +133,27 @@ describe("board thread composer", () => {
       description: "Re-add it if you want that terminal output included.",
     });
     expect(resolveBoardExpiredTerminalContextToastCopy(0, true)).toBeNull();
+  });
+
+  it("uses the server attachment-upload capability when it is known", () => {
+    expect(resolveBoardAttachmentUploadCapabilities(undefined)).toEqual({
+      attachmentUploadsCapabilityKnown: false,
+      supportsAttachmentUploads: false,
+    });
+    expect(resolveBoardAttachmentUploadCapabilities({ environment: { capabilities: {} } })).toEqual(
+      {
+        attachmentUploadsCapabilityKnown: true,
+        supportsAttachmentUploads: false,
+      },
+    );
+    expect(
+      resolveBoardAttachmentUploadCapabilities({
+        environment: { capabilities: { attachmentUploads: true } },
+      }),
+    ).toEqual({
+      attachmentUploadsCapabilityKnown: true,
+      supportsAttachmentUploads: true,
+    });
   });
 
   it("falls back to build mode when a retained plan mode is disabled", () => {
