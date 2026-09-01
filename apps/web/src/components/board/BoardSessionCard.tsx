@@ -180,6 +180,14 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
         >
           Answer requested input in the full thread
         </Link>
+      ) : status === "plan" ? (
+        <Link
+          to="/$environmentId/$threadId"
+          params={{ environmentId: thread.environmentId, threadId: thread.id }}
+          className="shrink-0 border-b border-violet-500/20 bg-violet-500/5 px-3 py-1.5 text-xs font-medium text-violet-600 hover:bg-violet-500/10 dark:text-violet-300"
+        >
+          Open the full thread to implement this plan
+        </Link>
       ) : null}
       {shouldMountChat ? (
         <BoardCardChatSurface

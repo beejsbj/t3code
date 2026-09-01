@@ -7,6 +7,7 @@ import {
   boardComposerDraftCanBeRestored,
   mergeBoardTimelineMessages,
   parseBoardCodexFeedbackCommand,
+  removeBoardAttachmentPreviewHandoff,
   resolveBoardComposerModes,
 } from "./useThreadComposer";
 
@@ -69,6 +70,19 @@ describe("board thread composer", () => {
         {},
       ),
     ).toEqual([projected, stillPending]);
+  });
+
+  it("removes a preview handoff while returning its blob URLs for cleanup", () => {
+    const handoffs = {
+      projected: ["blob:preview-1", "blob:preview-2"],
+      pending: ["blob:preview-3"],
+    } as const;
+
+    expect(removeBoardAttachmentPreviewHandoff(handoffs, "projected")).toEqual({
+      next: { pending: ["blob:preview-3"] },
+      previewUrls: ["blob:preview-1", "blob:preview-2"],
+    });
+    expect(removeBoardAttachmentPreviewHandoff(handoffs, "missing")).toBeNull();
   });
 
   it("falls back to build mode when a retained plan mode is disabled", () => {

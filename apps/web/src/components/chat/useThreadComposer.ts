@@ -31,6 +31,8 @@ import { useEnvironmentSettings } from "../../hooks/useSettings.ts";
 import { newMessageId } from "../../lib/utils.ts";
 import { primaryServerKeybindingsAtom } from "../../state/server.ts";
 import { useProject, useServerConfigs } from "../../state/entities.ts";
+import { useEnvironmentQuery } from "../../state/query.ts";
+import { vcsEnvironment } from "../../state/vcs.ts";
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadEnvironment } from "../../state/threads.ts";
@@ -58,6 +60,7 @@ import {
   formatOutgoingPrompt,
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
 } from "../ChatView.logic.ts";
+import { resolveLocalCheckoutBranchMismatch } from "../BranchToolbar.logic.ts";
 import {
   useComposerDraftStore,
   type ComposerFileAttachment,
@@ -210,6 +213,20 @@ export function mergeBoardTimelineMessages(
     : [...serverMessagesWithPreviewHandoff, ...pendingMessages];
 }
 
+export function removeBoardAttachmentPreviewHandoff(
+  handoffs: Readonly<Record<string, ReadonlyArray<string>>>,
+  messageId: string,
+): {
+  readonly next: Readonly<Record<string, ReadonlyArray<string>>>;
+  readonly previewUrls: ReadonlyArray<string>;
+} | null {
+  const previewUrls = handoffs[messageId];
+  if (!previewUrls) return null;
+  const next = { ...handoffs };
+  delete next[messageId];
+  return { next, previewUrls };
+}
+
 export function canBeginBoardComposerSend(
   connection: EnvironmentConnectionPresentation,
   sendInFlight: boolean,
@@ -308,6 +325,24 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         worktreePath: summary.worktreePath ?? null,
       })
     : null;
+  const gitStatusQuery = useEnvironmentQuery(
+    summary.worktreePath === null && summary.branch !== null && gitCwd !== null
+      ? vcsEnvironment.status({
+          environmentId,
+          input: { cwd: gitCwd },
+        })
+      : null,
+  );
+  const localCheckoutBranchMismatch = useMemo(
+    () =>
+      resolveLocalCheckoutBranchMismatch({
+        effectiveEnvMode: "local",
+        activeWorktreePath: summary.worktreePath,
+        activeThreadBranch: summary.branch,
+        currentGitBranch: gitStatusQuery.data?.refName ?? null,
+      }),
+    [gitStatusQuery.data?.refName, summary.branch, summary.worktreePath],
+  );
 
   const lockedProvider = deriveLockedProvider({
     thread,
@@ -426,6 +461,17 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       }
       let cancelled = false;
       const images: HTMLImageElement[] = [];
+      const clearHandoff = () => {
+        if (cancelled) return;
+        const removed = removeBoardAttachmentPreviewHandoff(
+          attachmentPreviewHandoffByMessageIdRef.current,
+          messageId,
+        );
+        if (!removed) return;
+        attachmentPreviewHandoffByMessageIdRef.current = removed.next;
+        setAttachmentPreviewHandoffByMessageId(removed.next);
+        for (const previewUrl of removed.previewUrls) revokeBlobPreviewUrl(previewUrl);
+      };
       void Promise.all(
         serverPreviewUrls.map(
           (previewUrl) =>
@@ -437,19 +483,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
               image.src = previewUrl;
             }),
         ),
-      ).then(
-        () => {
-          if (cancelled) return;
-          setAttachmentPreviewHandoffByMessageId((existing) => {
-            if (!(messageId in existing)) return existing;
-            const next = { ...existing };
-            delete next[messageId];
-            return next;
-          });
-          for (const previewUrl of handoffPreviewUrls) revokeBlobPreviewUrl(previewUrl);
-        },
-        () => {},
-      );
+      ).then(clearHandoff, clearHandoff);
       cleanups.push(() => {
         cancelled = true;
         for (const image of images) image.src = "";
@@ -575,9 +609,15 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           currentProviderInstanceId: summary.session?.providerInstanceId ?? null,
           nextModelSelection: requestedModelSelection,
         });
-        const modelSelection = modelChangeBlockReason
-          ? summary.modelSelection
-          : requestedModelSelection;
+        if (modelChangeBlockReason) {
+          toastManager.add({
+            type: "warning",
+            title: modelChangeBlockReason.title,
+            description: modelChangeBlockReason.description,
+          });
+          return;
+        }
+        const modelSelection = requestedModelSelection;
         const messageId = newMessageId();
         const createdAt = new Date().toISOString();
         const optimisticAttachments = draft.images.map((image) => ({
@@ -618,6 +658,9 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
 
         const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
           currentModelSelection: summary.modelSelection,
+          ...(localCheckoutBranchMismatch
+            ? { nextBranch: localCheckoutBranchMismatch.currentBranch }
+            : {}),
           nextModelSelection: modelSelection,
           currentBranch: summary.branch,
         });
@@ -758,7 +801,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     [
       environmentConnection.phase,
       environmentId,
+      interactionMode,
+      localCheckoutBranchMismatch,
       providerStatuses,
+      runtimeMode,
       setThreadInteractionMode,
       setThreadRuntimeMode,
       startThreadTurn,
@@ -977,6 +1023,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       activePendingDraftAnswers: EMPTY_PENDING_USER_INPUT_DRAFT_ANSWERS,
       activePendingQuestionIndex: 0,
       respondingRequestIds,
+      // Plan implementation is owned by the full-thread route: the embedded
+      // sender cannot carry sourceProposedPlan safely. Plan Ready cards expose
+      // an explicit link to that route instead of rendering a misleading
+      // inline Implement action.
       showPlanFollowUpPrompt: false,
       activeProposedPlan: null,
       activeTasksProgress: null,
