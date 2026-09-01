@@ -107,7 +107,7 @@ export function resolvePrimaryServerKeybindings(
   ) {
     return resolved;
   }
-  return DEFAULT_BOARD_OPEN_KEYBINDING ? [...resolved, DEFAULT_BOARD_OPEN_KEYBINDING] : resolved;
+  return DEFAULT_BOARD_OPEN_KEYBINDING ? [DEFAULT_BOARD_OPEN_KEYBINDING, ...resolved] : resolved;
 }
 
 export const primaryServerKeybindingsAtom = Atom.make((get): ServerConfig["keybindings"] => {
