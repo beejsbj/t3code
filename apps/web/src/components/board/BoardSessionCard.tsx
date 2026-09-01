@@ -10,10 +10,6 @@ import {
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
@@ -26,20 +22,13 @@ import type {
 } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import {
-  CircleDashedIcon,
-  ExternalLinkIcon,
-  GitBranchIcon,
-  RefreshCwIcon,
-  ServerIcon,
-} from "lucide-react";
+import { CircleDashedIcon, ExternalLinkIcon, GitBranchIcon, ServerIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { BoardCard } from "../../board/board.logic";
 import { useTheme } from "../../hooks/useTheme";
 import { useThread } from "../../state/entities";
-import { environmentCatalog } from "../../connection/catalog";
 import { useComposerThreadDraft } from "../../composerDraftStore";
 import { codexArtifactTemplatePromptToAppend } from "../ChatView.logic";
 import { useDiffPanelStore } from "../../diffPanelStore";
@@ -59,7 +48,6 @@ import { boardComposerDraftCanBeRestored, useBoardThreadComposer } from "../chat
 import { useThreadTimeline } from "../chat/useThreadTimeline";
 import { useInViewport } from "./useInViewport";
 import { useEnvironmentThread } from "../../state/threads";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { derivePhase } from "../../session-logic";
 
 const statusLabels = {
@@ -97,10 +85,7 @@ export function resolveBoardCardVisitedAt(thread: ThreadSnoozeShell, now: string
   return threadWokeAt(thread, { now }) ?? thread.latestTurn?.completedAt ?? null;
 }
 
-export function BoardCardDetailLoadFailure(props: {
-  readonly error: string;
-  readonly onRetry: () => void;
-}) {
+export function BoardCardDetailLoadFailure(props: { readonly error: string }) {
   return (
     <div
       className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center"
@@ -108,10 +93,7 @@ export function BoardCardDetailLoadFailure(props: {
     >
       <p className="text-sm font-medium text-foreground">Could not load conversation</p>
       <p className="max-w-md text-xs text-muted-foreground">{props.error}</p>
-      <Button size="xs" variant="outline" onClick={props.onRetry}>
-        <RefreshCwIcon aria-hidden className="size-3" />
-        Retry
-      </Button>
+      <p className="max-w-md text-[10px] text-muted-foreground/70">Trying again automatically…</p>
     </div>
   );
 }
@@ -279,24 +261,10 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
     props;
   const fullThread = useThread(threadRef);
   const threadState = useEnvironmentThread(threadRef.environmentId, threadRef.threadId);
-  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
-  const retryThreadDetail = useCallback(async () => {
-    const result = await retryEnvironment(threadRef.environmentId);
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: "Could not retry conversation",
-        description: error instanceof Error ? error.message : "Failed to reconnect.",
-      });
-    }
-  }, [retryEnvironment, threadRef.environmentId]);
   if (fullThread === null) {
     const detailError = Option.getOrNull(threadState.error);
     if (detailError !== null) {
-      return (
-        <BoardCardDetailLoadFailure error={detailError} onRetry={() => void retryThreadDetail()} />
-      );
+      return <BoardCardDetailLoadFailure error={detailError} />;
     }
     return (
       <div
