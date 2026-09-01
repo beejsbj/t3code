@@ -23,6 +23,7 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 import { ChatComposer } from "../chat/ChatComposer";
 import { ExpandedImageDialog } from "../chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
@@ -107,9 +108,9 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
         />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <h2 className="min-w-0 flex-1 truncate text-xs font-semibold" title={thread.title}>
+            <h3 className="min-w-0 flex-1 truncate text-xs font-semibold" title={thread.title}>
               {thread.title}
-            </h2>
+            </h3>
             <Badge className={statusStyles[status]} size="sm" variant="outline">
               {statusLabels[status]}
             </Badge>
@@ -133,14 +134,20 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
             ) : null}
           </div>
         </div>
-        <Link
-          to="/$environmentId/$threadId"
-          params={{ environmentId: thread.environmentId, threadId: thread.id }}
+        <Button
+          render={
+            <Link
+              to="/$environmentId/$threadId"
+              params={{ environmentId: thread.environmentId, threadId: thread.id }}
+            />
+          }
+          size="icon-xs"
+          variant="ghost"
           aria-label={`Open ${thread.title} in the full thread view`}
-          className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mt-0.5 shrink-0 text-muted-foreground"
         >
           <ExternalLinkIcon className="size-3.5" />
-        </Link>
+        </Button>
       </header>
       {status === "input" ? (
         <Link
