@@ -6,6 +6,7 @@ import type { ChatMessage } from "../../types";
 import {
   boardComposerDraftCanBeRestored,
   mergeBoardTimelineMessages,
+  parseBoardCodexFeedbackCommand,
   resolveBoardComposerModes,
 } from "./useThreadComposer";
 
@@ -19,6 +20,33 @@ describe("board thread composer", () => {
         images: [{} as never],
       }),
     ).toBe(false);
+  });
+
+  it("recognizes feedback only for a plain Codex board draft", () => {
+    expect(
+      parseBoardCodexFeedbackCommand({
+        provider: "codex",
+        prompt: "/feedback The agent stopped early.",
+        hasAttachments: false,
+        hasContexts: false,
+      }),
+    ).toEqual({ reason: "The agent stopped early." });
+    expect(
+      parseBoardCodexFeedbackCommand({
+        provider: "claude",
+        prompt: "/feedback",
+        hasAttachments: false,
+        hasContexts: false,
+      }),
+    ).toBeNull();
+    expect(
+      parseBoardCodexFeedbackCommand({
+        provider: "codex",
+        prompt: "/feedback",
+        hasAttachments: true,
+        hasContexts: false,
+      }),
+    ).toBeNull();
   });
 
   it("removes only the optimistic message that the server has projected", () => {

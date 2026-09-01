@@ -19,6 +19,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { parseCodexFeedbackCommand } from "@t3tools/client-runtime/state/threads";
 
 import {
   derivePendingApprovals,
@@ -47,6 +48,7 @@ import {
   buildThreadTurnInterruptInput,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
+  buildExpiredTerminalContextToastCopy,
   getStartedThreadModelChangeBlockReason,
   readFileAsDataUrl,
   revokeBlobPreviewUrl,
@@ -144,6 +146,18 @@ export function boardComposerDraftCanBeRestored(
       (draft.previewAnnotations?.length ?? 0) === 0 &&
       (draft.reviewComments?.length ?? 0) === 0)
   );
+}
+
+export function parseBoardCodexFeedbackCommand(input: {
+  readonly provider: string;
+  readonly prompt: string;
+  readonly hasAttachments: boolean;
+  readonly hasContexts: boolean;
+}): { readonly reason?: string } | null {
+  if (input.provider !== "codex" || input.hasAttachments || input.hasContexts) {
+    return null;
+  }
+  return parseCodexFeedbackCommand(input.prompt);
 }
 
 export function resolveBoardComposerModes(input: {
@@ -506,7 +520,38 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             draft.previewAnnotations.length +
             draft.reviewComments.length,
         });
+        if (sendState.expiredTerminalContextCount > 0) {
+          const toastCopy = buildExpiredTerminalContextToastCopy(
+            sendState.expiredTerminalContextCount,
+            "empty",
+          );
+          toastManager.add({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          });
+          return;
+        }
         if (!sendState.hasSendableContent) return;
+        const feedbackCommand = parseBoardCodexFeedbackCommand({
+          provider: draft.selectedProvider,
+          prompt: sendState.trimmedPrompt,
+          hasAttachments: draft.images.length > 0,
+          hasContexts:
+            draft.terminalContexts.length > 0 ||
+            draft.elementContexts.length > 0 ||
+            draft.previewAnnotations.length > 0 ||
+            draft.reviewComments.length > 0,
+        });
+        if (feedbackCommand !== null) {
+          toastManager.add({
+            type: "warning",
+            title: "Submit feedback from the full thread",
+            description:
+              "Open this thread to use the Codex feedback flow instead of sending it as a message.",
+          });
+          return;
+        }
         const messageTextWithContexts = buildBoardComposerMessageText({
           prompt: draft.prompt,
           terminalContexts: sendState.sendableTerminalContexts,
@@ -664,17 +709,18 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         sendError = error;
       } finally {
         if (!sendSucceeded && optimisticMessageId !== null && sentDraft !== null) {
-          setOptimisticUserMessages((existing) =>
-            existing.filter((message) => message.id !== optimisticMessageId),
-          );
-          setTimelineAnchorMessageId((current) =>
-            current === optimisticMessageId ? null : current,
-          );
-
           const currentDraft = useComposerDraftStore.getState().getComposerDraft(threadRef);
-          if (boardComposerDraftCanBeRestored(currentDraft)) {
+          const canRestoreDraft = boardComposerDraftCanBeRestored(currentDraft);
+          if (canRestoreDraft) {
+            setOptimisticUserMessages((existing) => {
+              const removed = existing.filter((message) => message.id === optimisticMessageId);
+              for (const message of removed) revokeUserMessagePreviewUrls(message);
+              return existing.filter((message) => message.id !== optimisticMessageId);
+            });
+            setTimelineAnchorMessageId((current) =>
+              current === optimisticMessageId ? null : current,
+            );
             const retryImages = sentDraft.images.map(cloneComposerImageForRetry);
-            for (const image of sentDraft.images) revokeBlobPreviewUrl(image.previewUrl);
             promptRef.current = sentDraft.prompt;
             composerImagesRef.current = retryImages;
             composerTerminalContextsRef.current = sentDraft.terminalContexts;
@@ -691,15 +737,17 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
               cursor: sentDraft.prompt.length,
               detectTrigger: true,
             });
-          } else {
-            for (const image of sentDraft.images) revokeBlobPreviewUrl(image.previewUrl);
           }
           if (sendError !== null) {
             toastManager.add({
               type: "error",
               title: "Failed to send message",
               description:
-                sendError instanceof Error ? sendError.message : "The message was restored.",
+                sendError instanceof Error
+                  ? sendError.message
+                  : canRestoreDraft
+                    ? "The message was restored."
+                    : "The failed message remains in the timeline; try again from the full thread.",
             });
           }
         }
@@ -721,11 +769,28 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   );
 
   const onInterrupt = useCallback(async () => {
-    await interruptThreadTurn({
+    const result = await interruptThreadTurn({
       environmentId,
       input: buildThreadTurnInterruptInput(summary),
     });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Failed to interrupt current turn",
+        description: error instanceof Error ? error.message : "Try again from the full thread.",
+      });
+    }
   }, [environmentId, interruptThreadTurn, summary]);
+
+  const setThreadError = useCallback<ChatComposerProps["setThreadError"]>((_threadId, error) => {
+    if (error === null) return;
+    toastManager.add({
+      type: "error",
+      title: "Attachment not added",
+      description: error,
+    });
+  }, []);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -951,7 +1016,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       handleInteractionModeChange,
       focusComposer,
       scheduleComposerFocus: focusComposer,
-      setThreadError: NOOP,
+      setThreadError,
       onExpandImage,
       onFileOpen,
       openingVideoAttachmentId: null,
@@ -993,6 +1058,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       handleRuntimeModeChange,
       handleInteractionModeChange,
       focusComposer,
+      setThreadError,
       onExpandImage,
       onFileOpen,
     ],
