@@ -47,6 +47,7 @@ const statusStyles = {
 } as const;
 
 const EMPTY_REVERT_TURN_COUNTS = new Map<MessageId, number>();
+const NOOP = () => {};
 
 export const BoardSessionCard = memo(function BoardSessionCard(props: {
   readonly card: BoardCard<EnvironmentThreadShell, EnvironmentProject>;
@@ -55,7 +56,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: {
   const { card, environmentConnection } = props;
   const { project, thread } = card;
   const slotRef = useRef<HTMLDivElement | null>(null);
-  const isNearViewport = useInViewport(slotRef, { rootMargin: "300px" });
+  const isNearViewport = useInViewport(slotRef, { once: true, rootMargin: "300px" });
   const status = resolveSidebarThreadStatus(thread);
   const runtime = thread.session?.providerName ?? String(thread.modelSelection.instanceId);
   const projectCwd = project?.workspaceRoot ?? thread.worktreePath ?? "";
@@ -155,12 +156,6 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
       resolvedTheme,
       onExpandImage: onExpandTimelineImage,
     });
-  const deferCheckpointRevertToFullThread = useCallback(() => {
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: { environmentId: threadRef.environmentId, threadId: threadRef.threadId },
-    });
-  }, [navigate, threadRef.environmentId, threadRef.threadId]);
   const {
     timelineEntries,
     latestTurn,
@@ -168,7 +163,6 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
     isWorking,
     activeTurnStartedAt,
     turnDiffSummaryByAssistantMessageId,
-    onRevertUserMessage,
     markdownCwd,
     workspaceRoot,
     resolvedTheme: timelineTheme,
@@ -176,13 +170,10 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
     skills,
     routeThreadKey,
     activeThreadEnvironmentId,
-    isRevertingCheckpoint,
   } = useThreadTimeline({
     threadRef,
     thread: fullThread,
     timelineMessages,
-    isRevertingCheckpoint: false,
-    onRevertToTurnCount: deferCheckpointRevertToFullThread,
     resolvedTheme,
   });
 
@@ -239,8 +230,8 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
           routeThreadKey={routeThreadKey}
           onOpenTurnDiff={onOpenTurnDiff}
           revertTurnCountByUserMessageId={EMPTY_REVERT_TURN_COUNTS}
-          onRevertUserMessage={onRevertUserMessage}
-          isRevertingCheckpoint={isRevertingCheckpoint}
+          onRevertUserMessage={NOOP}
+          isRevertingCheckpoint={false}
           onImageExpand={onExpandTimelineImage}
           openingVideoAttachmentId={null}
           activeThreadEnvironmentId={activeThreadEnvironmentId}

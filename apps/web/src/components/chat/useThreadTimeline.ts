@@ -7,7 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
-import { useCallback, useMemo, useRef } from "react";
+import { useMemo } from "react";
 
 import { useTheme } from "../../hooks/useTheme.ts";
 import { useClientSettings } from "../../hooks/useSettings.ts";
@@ -25,49 +25,10 @@ import type { TimelineLatestTurn } from "./MessagesTimeline.logic.ts";
 const EMPTY_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 
-export function deriveRevertTurnCountByUserMessageId(
-  timelineEntries: ReturnType<typeof deriveTimelineEntries>,
-  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>,
-  inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number>>,
-): Map<MessageId, number> {
-  const byUserMessageId = new Map<MessageId, number>();
-  let userMessageId: MessageId | null = null;
-
-  for (const entry of timelineEntries) {
-    if (entry.kind !== "message") {
-      continue;
-    }
-
-    if (entry.message.role === "user") {
-      userMessageId = entry.message.id;
-      continue;
-    }
-    if (userMessageId === null) {
-      continue;
-    }
-
-    const summary = turnDiffSummaryByAssistantMessageId.get(entry.message.id);
-    if (!summary) {
-      continue;
-    }
-
-    const turnCount =
-      summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-    if (typeof turnCount === "number") {
-      byUserMessageId.set(userMessageId, Math.max(0, turnCount - 1));
-    }
-    userMessageId = null;
-  }
-
-  return byUserMessageId;
-}
-
 export type UseThreadTimelineInput = {
   readonly threadRef: ScopedThreadRef;
   readonly thread: Thread | null | undefined;
   readonly timelineMessages: ReadonlyArray<ChatMessage>;
-  readonly isRevertingCheckpoint: boolean;
-  readonly onRevertToTurnCount: (turnCount: number) => void | Promise<void>;
   readonly resolvedTheme?: "light" | "dark";
   readonly timestampFormat?: TimestampFormat;
   readonly skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
@@ -141,8 +102,7 @@ export function useThreadTimeline(input: UseThreadTimelineInput) {
   const session = thread?.session ?? null;
   const latestTurnSettled = isLatestTurnSettled(latestTurn, session);
 
-  const sessionIsWorking =
-    session?.status === "running" || session?.status === "starting" || input.isRevertingCheckpoint;
+  const sessionIsWorking = session?.status === "running" || session?.status === "starting";
 
   const isWorking = input.isWorking ?? sessionIsWorking;
   const activeTurnInProgress = input.activeTurnInProgress ?? (isWorking || !latestTurnSettled);
@@ -152,7 +112,7 @@ export function useThreadTimeline(input: UseThreadTimelineInput) {
 
   const runningTurnId = session?.status === "running" ? (session.activeTurnId ?? null) : null;
 
-  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } = useTurnDiffSummaries(thread);
+  const { turnDiffSummaries } = useTurnDiffSummaries(thread);
 
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
     const byMessageId = new Map<MessageId, TurnDiffSummary>();
@@ -162,29 +122,6 @@ export function useThreadTimeline(input: UseThreadTimelineInput) {
     }
     return byMessageId;
   }, [turnDiffSummaries]);
-
-  const revertTurnCountByUserMessageId = useMemo(
-    () =>
-      deriveRevertTurnCountByUserMessageId(
-        timelineEntries,
-        turnDiffSummaryByAssistantMessageId,
-        inferredCheckpointTurnCountByTurnId,
-      ),
-    [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId],
-  );
-
-  const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
-  revertTurnCountRef.current = revertTurnCountByUserMessageId;
-  const onRevertToTurnCountRef = useRef(input.onRevertToTurnCount);
-  onRevertToTurnCountRef.current = input.onRevertToTurnCount;
-
-  const onRevertUserMessage = useCallback((messageId: MessageId) => {
-    const targetTurnCount = revertTurnCountRef.current.get(messageId);
-    if (typeof targetTurnCount !== "number") {
-      return;
-    }
-    void onRevertToTurnCountRef.current(targetTurnCount);
-  }, []);
 
   const activeThreadEnvironmentId = threadRef.environmentId;
 
@@ -196,8 +133,6 @@ export function useThreadTimeline(input: UseThreadTimelineInput) {
     activeTurnInProgress,
     activeTurnStartedAt,
     turnDiffSummaryByAssistantMessageId,
-    revertTurnCountByUserMessageId,
-    onRevertUserMessage,
     markdownCwd,
     workspaceRoot,
     resolvedTheme,
@@ -205,6 +140,5 @@ export function useThreadTimeline(input: UseThreadTimelineInput) {
     skills,
     routeThreadKey,
     activeThreadEnvironmentId,
-    isRevertingCheckpoint: input.isRevertingCheckpoint,
   };
 }
