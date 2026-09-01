@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { isElectron } from "../env";
-import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments } from "../state/environments";
 import {
   useAllEnvironmentShellsBootstrapped,
@@ -19,9 +18,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import { buildBoardCards, groupBoardCardsByProject } from "../board/board.logic";
-import { BoardSessionCard } from "./board/BoardSessionCard";
-
-type BoardThreadStatus = ReturnType<typeof resolveSidebarThreadStatus> | "completed";
+import { BoardSessionCard, type BoardThreadStatus } from "./board/BoardSessionCard";
 
 const attentionStatuses = new Set<BoardThreadStatus>(["approval", "input", "failed", "completed"]);
 
@@ -41,7 +38,6 @@ export function SessionBoard() {
   const serverConfigs = useServerConfigs();
   const { environments, presentationById } = useEnvironments();
   const lastVisitedAtByThreadKey = useUiStateStore((state) => state.threadLastVisitedAtById);
-  useNowMinute();
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   const environmentLabels = useMemo(
     () =>
@@ -160,6 +156,7 @@ export function SessionBoard() {
                 </div>
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,22rem),1fr))] gap-3">
                   {section.cards.map((card) => {
+                    const threadRef = scopeThreadRef(card.thread.environmentId, card.thread.id);
                     const environmentConnection = presentationById.get(
                       card.thread.environmentId,
                     )?.connection;
@@ -169,6 +166,10 @@ export function SessionBoard() {
                         key={JSON.stringify([card.thread.environmentId, card.thread.id])}
                         card={card}
                         environmentConnection={environmentConnection}
+                        status={resolveBoardThreadStatus(
+                          card.thread,
+                          lastVisitedAtByThreadKey[scopedThreadKey(threadRef)],
+                        )}
                       />
                     );
                   })}

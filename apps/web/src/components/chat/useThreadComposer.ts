@@ -24,7 +24,6 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
-  type PendingApproval,
   type PendingUserInput,
 } from "../../session-logic.ts";
 import { useEnvironmentSettings } from "../../hooks/useSettings.ts";
@@ -37,7 +36,6 @@ import { useAtomCommand } from "../../state/use-atom-command.ts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
-  type SessionPhase,
   type SidebarThreadSummary,
   type ChatMessage,
   type Thread,
@@ -54,6 +52,8 @@ import {
   revokeUserMessagePreviewUrls,
   resolveThreadMetadataUpdateForNextTurn,
   deriveComposerSendState,
+  formatOutgoingPrompt,
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
 } from "../ChatView.logic.ts";
 import {
   useComposerDraftStore,
@@ -88,9 +88,7 @@ const EMPTY_PENDING_USER_INPUT_DRAFT_ANSWERS = {} as const;
 // Board composer never surfaces inline approvals/user-input prompts (that UI
 // lives on the route only), so these are always-empty by construction. Hoisted
 // so `ChatComposer`'s `memo` sees a stable reference for them across renders.
-const EMPTY_PENDING_APPROVALS: PendingApproval[] = [];
 const EMPTY_PENDING_USER_INPUTS: PendingUserInput[] = [];
-const EMPTY_RESPONDING_REQUEST_IDS: ApprovalRequestId[] = [];
 const EMPTY_PROVIDER_STATUSES: ServerProvider[] = [];
 const EMPTY_CHAT_MESSAGES: ReadonlyArray<ChatMessage> = [];
 const EMPTY_COMPOSER_BANNER_ITEMS = [] as const;
@@ -99,17 +97,6 @@ const EMPTY_COMPOSER_BANNER_ITEMS = [] as const;
 // zero-arg function is structurally assignable to every callback prop type
 // below regardless of its arity, so one constant covers all of them.
 const NOOP = () => {};
-
-export type ThreadComposerSurface = "route" | "board";
-
-export function resolveBoardComposerSubmission(input: {
-  readonly prompt: string;
-  readonly imageCount: number;
-}): { readonly text: string } | null {
-  const text = input.prompt.trim();
-  if (text.length === 0 && input.imageCount === 0) return null;
-  return { text };
-}
 
 export function buildBoardComposerMessageText(input: {
   readonly prompt: string;
@@ -199,16 +186,6 @@ export function canBeginBoardComposerSend(
   return connection.phase === "connected" && !sendInFlight;
 }
 
-export function resolveBoardComposerModelSelection(
-  draft: {
-    readonly activeProvider: ProviderInstanceId | null;
-    readonly modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
-  },
-  fallback: ModelSelection,
-): ModelSelection {
-  return (draft.activeProvider && draft.modelSelectionByProvider[draft.activeProvider]) || fallback;
-}
-
 export function useThreadComposerRouteState(thread: Thread | null | undefined) {
   const threadActivities = thread?.activities ?? EMPTY_ACTIVITIES;
   const pendingApprovals = useMemo(
@@ -253,7 +230,6 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const settings = useEnvironmentSettings(environmentId);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const serverConfigs = useServerConfigs();
-  const environmentConfig = serverConfigs.get(environmentId);
 
   const composerRef = useRef<import("./ChatComposer.tsx").ChatComposerHandle | null>(null);
   const promptRef = useRef("");
@@ -306,10 +282,11 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     threadProvider: summary.modelSelection.instanceId,
   });
 
-  const phase: SessionPhase = derivePhase(summary.session ?? null);
+  const { pendingApprovals, activePendingApproval, phase } = useThreadComposerRouteState(thread);
   const isConnecting = phase === "connecting";
   const sendInFlightRef = useRef(false);
   const [isSendBusy, setIsSendBusy] = useState(false);
+  const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
@@ -483,8 +460,8 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       let sendSucceeded = false;
       let sendError: unknown = null;
       try {
-        const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
-        if (!draft) return;
+        const draft = composerRef.current?.getSendContext();
+        if (!draft?.providerAvailable) return;
         const sendState = deriveComposerSendState({
           prompt: draft.prompt,
           imageCount: draft.images.length,
@@ -495,17 +472,22 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             draft.reviewComments.length,
         });
         if (!sendState.hasSendableContent) return;
-        const outgoingMessageText = buildBoardComposerMessageText({
+        const messageTextWithContexts = buildBoardComposerMessageText({
           prompt: draft.prompt,
           terminalContexts: sendState.sendableTerminalContexts,
           elementContexts: draft.elementContexts,
           previewAnnotations: draft.previewAnnotations,
           reviewComments: draft.reviewComments,
         });
-        const requestedModelSelection = resolveBoardComposerModelSelection(
-          draft,
-          summary.modelSelection,
-        );
+        const outgoingMessageText = formatOutgoingPrompt({
+          provider: draft.selectedProvider,
+          model: draft.selectedModel,
+          models: draft.selectedProviderModels,
+          effort: draft.selectedPromptEffort,
+          text: messageTextWithContexts || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+        });
+        if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) return;
+        const requestedModelSelection = draft.selectedModelSelection;
         const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
           providers: providerStatuses,
           hasStartedSession: summary.session !== null,
@@ -674,10 +656,23 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
-      await respondToThreadApproval({
+      setRespondingRequestIds((existing) =>
+        existing.includes(requestId) ? existing : [...existing, requestId],
+      );
+      const result = await respondToThreadApproval({
         environmentId,
         input: { threadId: threadRef.threadId, requestId, decision },
       });
+      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Failed to submit approval",
+          description: error instanceof Error ? error.message : "Try again from the full thread.",
+        });
+      }
+      return result;
     },
     [environmentId, respondToThreadApproval, threadRef],
   );
@@ -804,9 +799,11 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       composerRef,
       composerDraftTarget: threadRef,
       environmentId,
-      attachmentUploadsCapabilityKnown: environmentConfig !== undefined,
-      supportsAttachmentUploads:
-        environmentConfig?.environment.capabilities.attachmentUploads === true,
+      // Board cards send images through the existing data-URL fallback. They
+      // do not start the route's upload lifecycle, which would otherwise
+      // duplicate bytes and leave uploaded assets unreleased.
+      attachmentUploadsCapabilityKnown: true,
+      supportsAttachmentUploads: false,
       // The embedded board sender currently serializes images directly. Keep
       // generic files visible in retained drafts, but require the full thread
       // route to send them instead of silently dropping them.
@@ -833,15 +830,15 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         environmentConnection.phase === "connected"
           ? null
           : { label: environmentLabel, connection: environmentConnection },
-      activePendingApproval: null,
-      pendingApprovals: EMPTY_PENDING_APPROVALS,
+      activePendingApproval,
+      pendingApprovals,
       pendingUserInputs: EMPTY_PENDING_USER_INPUTS,
       activePendingProgress: null,
       activePendingResolvedAnswers: null,
       activePendingIsResponding: false,
       activePendingDraftAnswers: EMPTY_PENDING_USER_INPUT_DRAFT_ANSWERS,
       activePendingQuestionIndex: 0,
-      respondingRequestIds: EMPTY_RESPONDING_REQUEST_IDS,
+      respondingRequestIds,
       showPlanFollowUpPrompt: false,
       activeProposedPlan: null,
       activeTasksProgress: null,
@@ -891,11 +888,12 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       composerRef,
       threadRef,
       environmentId,
-      environmentConfig,
       thread,
       phase,
       isConnecting,
       isSendBusy,
+      activePendingApproval,
+      pendingApprovals,
       environmentConnection,
       environmentLabel,
       runtimeMode,
@@ -915,6 +913,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       onSend,
       onInterrupt,
       onRespondToApproval,
+      respondingRequestIds,
       onProviderModelSelect,
       getModelDisabledReason,
       toggleInteractionMode,

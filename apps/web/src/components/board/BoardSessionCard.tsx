@@ -4,15 +4,20 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import {
+  requestOlderThreadTurns,
+  threadHasOlderTurns,
+} from "@t3tools/client-runtime/state/threads";
 import type { MessageId, ScopedThreadRef, TurnId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleDashedIcon, ExternalLinkIcon, GitBranchIcon, ServerIcon } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { BoardCard } from "../../board/board.logic";
 import { useTheme } from "../../hooks/useTheme";
 import { useThread } from "../../state/entities";
+import { useComposerThreadDraft } from "../../composerDraftStore";
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
@@ -22,9 +27,10 @@ import { ChatComposer } from "../chat/ChatComposer";
 import { ExpandedImageDialog } from "../chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
 import { MessagesTimeline } from "../chat/MessagesTimeline";
-import { useBoardThreadComposer } from "../chat/useThreadComposer";
+import { boardComposerDraftCanBeRestored, useBoardThreadComposer } from "../chat/useThreadComposer";
 import { useThreadTimeline } from "../chat/useThreadTimeline";
 import { useInViewport } from "./useInViewport";
+import { useEnvironmentThread } from "../../state/threads";
 
 const statusLabels = {
   approval: "Needs approval",
@@ -32,6 +38,7 @@ const statusLabels = {
   working: "Working",
   monitoring: "Monitoring",
   failed: "Error",
+  completed: "Completed",
   ready: "Ready",
 } as const;
 
@@ -43,29 +50,44 @@ const statusStyles = {
   working: "border-sky-500/35 bg-sky-500/8 text-sky-700 dark:bg-sky-500/16 dark:text-sky-300",
   monitoring: "border-sky-500/35 bg-sky-500/8 text-sky-700 dark:bg-sky-500/16 dark:text-sky-300",
   failed: "border-red-500/35 bg-red-500/8 text-red-700 dark:bg-red-500/16 dark:text-red-300",
+  completed:
+    "border-emerald-500/35 bg-emerald-500/8 text-emerald-700 dark:bg-emerald-500/16 dark:text-emerald-300",
   ready: "border-border bg-muted/45 text-muted-foreground dark:bg-muted/45",
 } as const;
 
 const EMPTY_REVERT_TURN_COUNTS = new Map<MessageId, number>();
 const NOOP = () => {};
 
-export const BoardSessionCard = memo(function BoardSessionCard(props: {
+export type BoardThreadStatus = ReturnType<typeof resolveSidebarThreadStatus> | "completed";
+
+type BoardSessionCardProps = {
   readonly card: BoardCard<EnvironmentThreadShell, EnvironmentProject>;
   readonly environmentConnection: EnvironmentConnectionPresentation;
-}) {
-  const { card, environmentConnection } = props;
+  readonly status: BoardThreadStatus;
+};
+
+export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessionCardProps) {
+  const { card, environmentConnection, status } = props;
   const { project, thread } = card;
   const slotRef = useRef<HTMLDivElement | null>(null);
-  const isNearViewport = useInViewport(slotRef, { once: true, rootMargin: "300px" });
-  const status = resolveSidebarThreadStatus(thread);
+  const isNearViewport = useInViewport(slotRef, { rootMargin: "300px" });
+  const [hasFocus, setHasFocus] = useState(false);
+  const [chatRequestsMount, setChatRequestsMount] = useState(false);
   const runtime = thread.session?.providerName ?? String(thread.modelSelection.instanceId);
   const projectCwd = project?.workspaceRoot ?? thread.worktreePath ?? "";
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  const composerDraft = useComposerThreadDraft(threadRef);
+  const hasDraft = !boardComposerDraftCanBeRestored(composerDraft);
+  const shouldMountChat = isNearViewport || hasFocus || hasDraft || chatRequestsMount;
 
   return (
     <article
       ref={slotRef}
       data-board-card={thread.id}
+      onFocusCapture={() => setHasFocus(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setHasFocus(false);
+      }}
       className="flex h-[34rem] min-w-0 flex-col overflow-hidden rounded-xl border border-border/80 bg-card shadow-sm/5"
     >
       <header className="flex shrink-0 items-start gap-2 border-b border-border/60 px-3 py-2">
@@ -112,12 +134,13 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: {
           <ExternalLinkIcon className="size-3.5" />
         </Link>
       </header>
-      {isNearViewport ? (
+      {shouldMountChat ? (
         <BoardCardChatSurface
           threadRef={threadRef}
           thread={thread}
           environmentLabel={card.environmentLabel ?? thread.environmentId}
           environmentConnection={environmentConnection}
+          onMountRequestChange={setChatRequestsMount}
         />
       ) : (
         <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground/55">
@@ -126,22 +149,45 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: {
       )}
     </article>
   );
-});
+}, boardSessionCardPropsEqual);
+
+function boardSessionCardPropsEqual(
+  previous: BoardSessionCardProps,
+  next: BoardSessionCardProps,
+): boolean {
+  return (
+    previous.card.thread === next.card.thread &&
+    previous.card.project === next.card.project &&
+    previous.card.environmentLabel === next.card.environmentLabel &&
+    previous.environmentConnection === next.environmentConnection &&
+    previous.status === next.status
+  );
+}
 
 const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
   readonly threadRef: ScopedThreadRef;
   readonly thread: EnvironmentThreadShell;
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
+  readonly onMountRequestChange: (requested: boolean) => void;
 }) {
-  const { threadRef, thread, environmentLabel, environmentConnection } = props;
+  const { threadRef, thread, environmentLabel, environmentConnection, onMountRequestChange } =
+    props;
   const navigate = useNavigate();
   const fullThread = useThread(threadRef);
+  const threadState = useEnvironmentThread(threadRef.environmentId, threadRef.threadId);
   const { resolvedTheme } = useTheme();
   const legendListRef = useRef<LegendListRef | null>(null);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [liveFollowEnabled, setLiveFollowEnabled] = useState(true);
   const anchorRef = useRef<MessageId | null>(null);
+  const loadEarlier = useMemo(() => {
+    if (!threadHasOlderTurns(threadState)) return null;
+    return {
+      loading: threadState.page._tag === "Some" && threadState.page.value.loadingOlder,
+      onLoadEarlier: () => requestOlderThreadTurns(threadRef.environmentId, threadRef.threadId),
+    };
+  }, [threadRef.environmentId, threadRef.threadId, threadState]);
 
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
@@ -214,6 +260,10 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
     },
     [clearTimelineAnchor],
   );
+  useEffect(() => {
+    onMountRequestChange(chatComposerProps.isSendBusy || !liveFollowEnabled);
+    return () => onMountRequestChange(false);
+  }, [chatComposerProps.isSendBusy, liveFollowEnabled, onMountRequestChange]);
 
   return (
     <>
@@ -247,6 +297,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
           onIsAtEndChange={onIsAtEndChange}
           onManualNavigation={onManualNavigation}
           topFadeEnabled={false}
+          loadEarlier={loadEarlier}
         />
       </div>
       {expandedImage ? (

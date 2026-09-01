@@ -1,19 +1,11 @@
+import { MessageId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  boardComposerDraftCanBeRestored,
-  resolveBoardComposerSubmission,
-} from "./useThreadComposer";
+import type { ChatMessage } from "../../types";
+
+import { boardComposerDraftCanBeRestored, mergeBoardTimelineMessages } from "./useThreadComposer";
 
 describe("board thread composer", () => {
-  it("keeps blank board submissions from starting a turn but allows an image-only turn", () => {
-    expect(resolveBoardComposerSubmission({ prompt: "   ", imageCount: 0 })).toBeNull();
-    expect(resolveBoardComposerSubmission({ prompt: "  Fix this  ", imageCount: 0 })).toEqual({
-      text: "Fix this",
-    });
-    expect(resolveBoardComposerSubmission({ prompt: "  ", imageCount: 1 })).toEqual({ text: "" });
-  });
-
   it("only restores a failed board send when the user has not typed into that card again", () => {
     expect(boardComposerDraftCanBeRestored({ prompt: "", images: [] })).toBe(true);
     expect(boardComposerDraftCanBeRestored({ prompt: "new work", images: [] })).toBe(false);
@@ -23,5 +15,27 @@ describe("board thread composer", () => {
         images: [{} as never],
       }),
     ).toBe(false);
+  });
+
+  it("removes only the optimistic message that the server has projected", () => {
+    const message = (id: string, text: string): ChatMessage => ({
+      id: MessageId.make(id),
+      role: "user",
+      text,
+      turnId: null,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      streaming: false,
+    });
+    const projected = message("projected", "server copy");
+    const stillPending = message("pending", "another pending send");
+
+    expect(
+      mergeBoardTimelineMessages(
+        [projected],
+        [message("projected", "optimistic copy"), stillPending],
+        {},
+      ),
+    ).toEqual([projected, stillPending]);
   });
 });

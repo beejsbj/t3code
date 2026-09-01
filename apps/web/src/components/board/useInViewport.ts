@@ -8,15 +8,12 @@ import { useEffect, useState, type RefObject } from "react";
  * without bound, and viewport gating is the cheapest honest way to cap it: a
  * card you cannot see is not a card you are talking to.
  *
- * With `once`, the hook latches on first intersection and stops observing, so
- * scrolling a lane up and down does not repeatedly tear down and re-establish
- * per-thread websocket subscriptions.
  */
 export function useInViewport(
   ref: RefObject<Element | null>,
-  options: { readonly once?: boolean; readonly rootMargin?: string } = {},
+  options: { readonly rootMargin?: string } = {},
 ): boolean {
-  const { once = false, rootMargin = "0px" } = options;
+  const { rootMargin = "0px" } = options;
   const [inViewport, setInViewport] = useState(false);
 
   useEffect(() => {
@@ -33,19 +30,14 @@ export function useInViewport(
       (entries) => {
         const entry = entries[0];
         if (!entry) return;
-        if (entry.isIntersecting) {
-          setInViewport(true);
-          if (once) observer.disconnect();
-        } else if (!once) {
-          setInViewport(false);
-        }
+        setInViewport(entry.isIntersecting);
       },
       { rootMargin },
     );
 
     observer.observe(node);
     return () => observer.disconnect();
-  }, [once, ref, rootMargin]);
+  }, [ref, rootMargin]);
 
   return inViewport;
 }
