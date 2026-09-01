@@ -1123,6 +1123,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       environmentId,
       attachmentUploadsCapabilityKnown,
       supportsAttachmentUploads,
+      allowGenericFileAttachments: false,
       // Generic files stay visible in retained drafts, but require the full
       // thread route to send them instead of silently dropping them.
       maxFileAttachmentBytes: null,
