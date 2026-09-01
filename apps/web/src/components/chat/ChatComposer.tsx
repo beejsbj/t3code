@@ -95,6 +95,7 @@ import {
 } from "@t3tools/client-runtime/state/attachments";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
+  canShowComposerAttachmentPicker,
   classifyComposerAttachmentFile,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
@@ -617,6 +618,8 @@ export interface ChatComposerProps {
   attachmentUploadsCapabilityKnown: boolean;
   supportsAttachmentUploads: boolean;
   maxFileAttachmentBytes: number | null;
+  /** Embedded surfaces can offer image uploads without accepting generic files. */
+  allowGenericFileAttachments?: boolean;
   routeKind: "server" | "draft";
   routeThreadRef: ScopedThreadRef;
   draftId: DraftId | null;
@@ -746,6 +749,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     attachmentUploadsCapabilityKnown,
     supportsAttachmentUploads,
     maxFileAttachmentBytes,
+    allowGenericFileAttachments = true,
     routeKind,
     routeThreadRef,
     draftId,
@@ -840,20 +844,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const needsReattachFileCount = composerFiles.filter(composerFileNeedsReattach).length;
-  const fileStagingLimit = fileAttachmentStagingLimit({
+  const fileStagingLimit = allowGenericFileAttachments
+    ? fileAttachmentStagingLimit({
+        attachmentUploadsCapabilityKnown,
+        supportsAttachmentUploads,
+        maxFileAttachmentBytes,
+      })
+    : null;
+  const attachmentPickerVisible = canShowComposerAttachmentPicker({
     attachmentUploadsCapabilityKnown,
     supportsAttachmentUploads,
     maxFileAttachmentBytes,
+    allowGenericFileAttachments,
   });
-  const fileCapabilityBlockReason =
-    embedded && composerFiles.length > 0
-      ? "Send file attachments from the full thread"
-      : fileAttachmentCapabilityBlockReason({
-          files: composerFiles,
-          attachmentUploadsCapabilityKnown,
-          supportsAttachmentUploads,
-          maxFileAttachmentBytes,
-        });
+  const fileCapabilityBlockReason = fileAttachmentCapabilityBlockReason({
+    files: composerFiles,
+    attachmentUploadsCapabilityKnown,
+    supportsAttachmentUploads,
+    maxFileAttachmentBytes,
+    allowGenericFileAttachments,
+  });
   const attachmentBlockReason =
     fileCapabilityBlockReason ??
     (supportsAttachmentUploads
@@ -3053,6 +3063,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (attachmentKind === "image") {
         acceptedImages.push(normalizeComposerImageFileMimeType(file));
       } else {
+        if (!allowGenericFileAttachments) {
+          error = "Send file attachments from the full thread";
+          continue;
+        }
         if (fileStagingLimit === null) {
           error = "This server does not support file attachments.";
           continue;
@@ -4210,13 +4224,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
-                  {fileStagingLimit !== null && pendingUserInputs.length === 0 ? (
+                  {attachmentPickerVisible && pendingUserInputs.length === 0 ? (
                     <>
                       <input
                         ref={attachmentInputRef}
                         type="file"
                         multiple
                         className="hidden"
+                        accept={allowGenericFileAttachments ? undefined : "image/*"}
                         onChange={(event) => {
                           const files = Array.from(event.currentTarget.files ?? []);
                           event.currentTarget.value = "";
