@@ -337,7 +337,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     const attachmentIds = new Set<string>();
     for (const message of serverMessages) {
       for (const attachment of message.attachments ?? []) {
-        attachmentIds.add(attachment.id);
+        if (isImageAttachment(attachment)) attachmentIds.add(attachment.id);
       }
     }
     return [...attachmentIds];
