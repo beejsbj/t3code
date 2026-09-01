@@ -1,22 +1,17 @@
 import {
-  SETTLED_BOARD_LANE_ID,
-  SNOOZED_BOARD_LANE_ID,
   TRIAGE_BOARD_LANE_ID,
   type BoardLane,
   type BoardLaneId,
+  isObsoleteBoardLaneId,
 } from "./boardLaneStore.ts";
 
-export function isBoardLifecycleLaneId(laneId: BoardLaneId): boolean {
-  return laneId === SNOOZED_BOARD_LANE_ID || laneId === SETTLED_BOARD_LANE_ID;
-}
-
 export function isBoardFixedLaneId(laneId: BoardLaneId): boolean {
-  return laneId === TRIAGE_BOARD_LANE_ID || isBoardLifecycleLaneId(laneId);
+  return laneId === TRIAGE_BOARD_LANE_ID;
 }
 
-/** Triage is a fixed-position workflow lane; only lifecycle lanes are excluded. */
+/** Triage is a fixed-position workflow lane. */
 export function isBoardWorkflowLane(lane: BoardLane): boolean {
-  return !isBoardLifecycleLaneId(lane.id);
+  return !isObsoleteBoardLaneId(lane.id);
 }
 
 export function workflowBoardLanes(lanes: ReadonlyArray<BoardLane>): ReadonlyArray<BoardLane> {
@@ -58,22 +53,15 @@ export function resolveWorkflowBoardLane(
 }
 
 /**
- * One canonical column order: fixed Triage, user-ordered workflow, then the
- * two fixed lifecycle tails. Persisted `order` values never move fixed lanes.
+ * One canonical column order: fixed Triage, then user-ordered workflow.
+ * Persisted `order` values never move Triage.
  */
 export function orderBoardLanes(lanes: ReadonlyArray<BoardLane>): ReadonlyArray<BoardLane> {
   const triage = lanes.find((lane) => lane.id === TRIAGE_BOARD_LANE_ID);
-  const snoozed = lanes.find((lane) => lane.id === SNOOZED_BOARD_LANE_ID);
-  const settled = lanes.find((lane) => lane.id === SETTLED_BOARD_LANE_ID);
   const workflow = lanes
-    .filter((lane) => !isBoardFixedLaneId(lane.id))
+    .filter((lane) => !isBoardFixedLaneId(lane.id) && !isObsoleteBoardLaneId(lane.id))
     .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id));
-  return [
-    ...(triage === undefined ? [] : [triage]),
-    ...workflow,
-    ...(snoozed === undefined ? [] : [snoozed]),
-    ...(settled === undefined ? [] : [settled]),
-  ];
+  return [...(triage === undefined ? [] : [triage]), ...workflow];
 }
 
 /**
@@ -86,7 +74,7 @@ export function resolveBoardLane(
 ): BoardLaneId | null {
   if (
     placement !== undefined &&
-    !isBoardLifecycleLaneId(placement) &&
+    !isObsoleteBoardLaneId(placement) &&
     lanes.some((lane) => lane.id === placement)
   ) {
     return placement;
@@ -100,8 +88,7 @@ export function leftmostLane(lanes: ReadonlyArray<BoardLane>): BoardLaneId | nul
 }
 
 /**
- * Finds the neighboring displayed workflow lane. Lifecycle lanes are derived
- * from server state, so card moves never target them or alter that state.
+ * Finds the neighboring displayed workflow lane.
  */
 export function adjacentBoardWorkflowLane(
   laneId: BoardLaneId,

@@ -23,7 +23,6 @@ beforeEach(() => {
     laneEntryByThreadKey: {},
     orderByLaneId: {},
     byLaneColumnKey: {},
-    collapsedLifecycleLaneIds: [],
     organization: DEFAULT_BOARD_ORGANIZATION,
   });
   useBoardFocusStore.setState({
