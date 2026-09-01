@@ -1,7 +1,8 @@
-import { MessageId } from "@t3tools/contracts";
+import { MessageId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ChatMessage } from "../../types";
+import { deriveComposerSendState } from "../ChatView.logic";
 
 import {
   boardComposerDraftCanBeRestored,
@@ -52,6 +53,35 @@ describe("board thread composer", () => {
         hasContexts: false,
       }),
     ).toBeNull();
+  });
+
+  it("treats expired terminal context as absent for feedback detection", () => {
+    const sendState = deriveComposerSendState({
+      prompt: "/feedback The agent stopped early.",
+      imageCount: 0,
+      terminalContexts: [
+        {
+          id: "expired-terminal-context",
+          threadId: ThreadId.make("thread-1"),
+          terminalId: "terminal-1",
+          terminalLabel: "Terminal 1",
+          lineStart: 1,
+          lineEnd: 1,
+          text: "",
+          createdAt: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    expect(sendState.sendableTerminalContexts).toEqual([]);
+    expect(
+      parseBoardCodexFeedbackCommand({
+        provider: "codex",
+        prompt: sendState.trimmedPrompt,
+        hasAttachments: false,
+        hasContexts: sendState.sendableTerminalContexts.length > 0,
+      }),
+    ).toEqual({ reason: "The agent stopped early." });
   });
 
   it("recognizes standalone mode commands only for an empty enabled-plan draft", () => {

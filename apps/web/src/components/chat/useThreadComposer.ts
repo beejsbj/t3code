@@ -645,7 +645,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           prompt: sendState.trimmedPrompt,
           hasAttachments: draft.images.length > 0,
           hasContexts:
-            draft.terminalContexts.length > 0 ||
+            sendState.sendableTerminalContexts.length > 0 ||
             draft.elementContexts.length > 0 ||
             draft.previewAnnotations.length > 0 ||
             draft.reviewComments.length > 0,
