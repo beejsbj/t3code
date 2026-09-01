@@ -142,6 +142,15 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           <ExternalLinkIcon className="size-3.5" />
         </Link>
       </header>
+      {status === "input" ? (
+        <Link
+          to="/$environmentId/$threadId"
+          params={{ environmentId: thread.environmentId, threadId: thread.id }}
+          className="shrink-0 border-b border-indigo-500/20 bg-indigo-500/5 px-3 py-1.5 text-xs font-medium text-indigo-600 hover:bg-indigo-500/10 dark:text-indigo-300"
+        >
+          Answer requested input in the full thread
+        </Link>
+      ) : null}
       {shouldMountChat ? (
         <BoardCardChatSurface
           threadRef={threadRef}

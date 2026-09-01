@@ -466,7 +466,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
-  const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
+  const minimapItems = useMemo(
+    () => (isCompact ? [] : deriveTimelineMinimapItems(rows)),
+    [isCompact, rows],
+  );
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
@@ -526,7 +529,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }, [handleScroll, rows.length]);
 
   useEffect(() => {
-    if (!timelineViewportElement) {
+    if (isCompact || !timelineViewportElement) {
       return;
     }
 
@@ -548,7 +551,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [timelineViewportElement, rows.length]);
+  }, [isCompact, timelineViewportElement, rows.length]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({

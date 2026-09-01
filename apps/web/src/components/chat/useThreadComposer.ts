@@ -282,7 +282,8 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     threadProvider: summary.modelSelection.instanceId,
   });
 
-  const { pendingApprovals, activePendingApproval, phase } = useThreadComposerRouteState(thread);
+  const { pendingApprovals, activePendingApproval } = useThreadComposerRouteState(thread);
+  const phase = derivePhase(thread?.session ?? summary.session ?? null);
   const isConnecting = phase === "connecting";
   const sendInFlightRef = useRef(false);
   const [isSendBusy, setIsSendBusy] = useState(false);
@@ -823,7 +824,9 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       isSendBusy,
       // Board cards mount their own timeline rather than the route's thread
       // detail, so there is no loading gate to report here.
-      sendDisabledReason: null,
+      sendDisabledReason: summary.hasPendingUserInput
+        ? "Answer requested input in the full thread"
+        : null,
       isPreparingWorktree: false,
       bannerItems: EMPTY_COMPOSER_BANNER_ITEMS,
       environmentUnavailable:
