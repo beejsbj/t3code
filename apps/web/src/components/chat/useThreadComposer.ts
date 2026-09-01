@@ -144,6 +144,21 @@ export function boardComposerDraftCanBeRestored(
   );
 }
 
+export function resolveBoardComposerModes(input: {
+  readonly planModeEnabled: boolean;
+  readonly draftRuntimeMode: RuntimeMode | null | undefined;
+  readonly draftInteractionMode: ProviderInteractionMode | null | undefined;
+  readonly summaryRuntimeMode: RuntimeMode | null | undefined;
+  readonly summaryInteractionMode: ProviderInteractionMode | null | undefined;
+}): { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode } {
+  return {
+    runtimeMode: input.draftRuntimeMode ?? input.summaryRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+    interactionMode: input.planModeEnabled
+      ? (input.draftInteractionMode ?? input.summaryInteractionMode ?? DEFAULT_INTERACTION_MODE)
+      : DEFAULT_INTERACTION_MODE,
+  };
+}
+
 export function mergeBoardTimelineMessages(
   serverMessages: ReadonlyArray<ChatMessage>,
   optimisticUserMessages: ReadonlyArray<ChatMessage>,
@@ -439,8 +454,19 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     [],
   );
 
-  const runtimeMode = summary.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode = summary.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const composerRuntimeMode = useComposerDraftStore(
+    (state) => state.getComposerDraft(threadRef)?.runtimeMode ?? null,
+  );
+  const composerInteractionMode = useComposerDraftStore(
+    (state) => state.getComposerDraft(threadRef)?.interactionMode ?? null,
+  );
+  const { runtimeMode, interactionMode } = resolveBoardComposerModes({
+    planModeEnabled: settings.planModeEnabled,
+    draftRuntimeMode: composerRuntimeMode,
+    draftInteractionMode: composerInteractionMode,
+    summaryRuntimeMode: summary.runtimeMode,
+    summaryInteractionMode: summary.interactionMode,
+  });
 
   const onSend = useCallback(
     async (event?: { preventDefault: () => void }) => {
@@ -561,6 +587,38 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             return;
           }
         }
+        if (runtimeMode !== (summary.runtimeMode ?? DEFAULT_RUNTIME_MODE)) {
+          const runtimeModeResult = await setThreadRuntimeMode({
+            environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              runtimeMode,
+              createdAt,
+            },
+          });
+          if (runtimeModeResult._tag === "Failure") {
+            if (!isAtomCommandInterrupted(runtimeModeResult)) {
+              sendError = squashAtomCommandFailure(runtimeModeResult);
+            }
+            return;
+          }
+        }
+        if (interactionMode !== (summary.interactionMode ?? DEFAULT_INTERACTION_MODE)) {
+          const interactionModeResult = await setThreadInteractionMode({
+            environmentId,
+            input: {
+              threadId: threadRef.threadId,
+              interactionMode,
+              createdAt,
+            },
+          });
+          if (interactionModeResult._tag === "Failure") {
+            if (!isAtomCommandInterrupted(interactionModeResult)) {
+              sendError = squashAtomCommandFailure(interactionModeResult);
+            }
+            return;
+          }
+        }
         const attachments = await Promise.all(
           draft.images.map(async (image) => ({
             type: "image" as const,
@@ -582,8 +640,8 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             },
             modelSelection,
             titleSeed: summary.title,
-            runtimeMode: summary.runtimeMode,
-            interactionMode: summary.interactionMode,
+            runtimeMode,
+            interactionMode,
             createdAt,
           },
         });
@@ -645,6 +703,8 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       environmentConnection.phase,
       environmentId,
       providerStatuses,
+      setThreadInteractionMode,
+      setThreadRuntimeMode,
       startThreadTurn,
       summary,
       threadRef,
@@ -683,6 +743,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   );
 
   const setComposerDraftModelSelection = useComposerDraftStore((state) => state.setModelSelection);
+  const setComposerDraftRuntimeMode = useComposerDraftStore((state) => state.setRuntimeMode);
+  const setComposerDraftInteractionMode = useComposerDraftStore(
+    (state) => state.setInteractionMode,
+  );
   const onProviderModelSelect = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
       const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
@@ -763,34 +827,28 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     [providerStatuses, summary],
   );
 
-  const toggleInteractionMode = useCallback(() => {
-    const next: ProviderInteractionMode =
-      interactionMode === "plan" ? DEFAULT_INTERACTION_MODE : "plan";
-    void setThreadInteractionMode({
-      environmentId,
-      input: { threadId: threadRef.threadId, interactionMode: next },
-    });
-  }, [environmentId, interactionMode, setThreadInteractionMode, threadRef]);
-
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
-      void setThreadRuntimeMode({
-        environmentId,
-        input: { threadId: threadRef.threadId, runtimeMode: mode },
-      });
+      if (mode === runtimeMode) return;
+      setComposerDraftRuntimeMode(threadRef, mode);
     },
-    [environmentId, setThreadRuntimeMode, threadRef],
+    [runtimeMode, setComposerDraftRuntimeMode, threadRef],
   );
 
   const handleInteractionModeChange = useCallback(
     (mode: ProviderInteractionMode) => {
-      void setThreadInteractionMode({
-        environmentId,
-        input: { threadId: threadRef.threadId, interactionMode: mode },
-      });
+      if (!settings.planModeEnabled && mode === "plan") return;
+      if (mode === interactionMode) return;
+      setComposerDraftInteractionMode(threadRef, mode);
     },
-    [environmentId, setThreadInteractionMode, threadRef],
+    [interactionMode, setComposerDraftInteractionMode, settings.planModeEnabled, threadRef],
   );
+
+  const toggleInteractionMode = useCallback(() => {
+    const next: ProviderInteractionMode =
+      interactionMode === "plan" ? DEFAULT_INTERACTION_MODE : "plan";
+    handleInteractionModeChange(next);
+  }, [handleInteractionModeChange, interactionMode]);
 
   // `ChatComposer` is wrapped in `React.memo`, and a board renders one live
   // instance of it per card, so this object must not be rebuilt on every
