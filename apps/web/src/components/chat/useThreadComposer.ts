@@ -212,6 +212,20 @@ export function resolveBoardAttachmentUploadCapabilities(
   };
 }
 
+export function resolveBoardLocalCheckoutStatusGuard(input: {
+  readonly activeWorktreePath: string | null;
+  readonly activeBranch: string | null;
+  readonly gitCwd: string | null;
+  readonly statusData: unknown | null;
+  readonly statusError: string | null;
+}): "pending" | "error" | null {
+  if (input.activeWorktreePath !== null || input.activeBranch === null || input.gitCwd === null) {
+    return null;
+  }
+  if (input.statusError !== null) return "error";
+  return input.statusData === null ? "pending" : null;
+}
+
 export function resolveBoardComposerModes(input: {
   readonly planModeEnabled: boolean;
   readonly draftRuntimeMode: RuntimeMode | null | undefined;
@@ -384,6 +398,13 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         })
       : null,
   );
+  const localCheckoutStatusGuard = resolveBoardLocalCheckoutStatusGuard({
+    activeWorktreePath: summary.worktreePath,
+    activeBranch: summary.branch,
+    gitCwd,
+    statusData: gitStatusQuery.data,
+    statusError: gitStatusQuery.error,
+  });
   const localCheckoutBranchMismatch = useMemo(
     () =>
       resolveLocalCheckoutBranchMismatch({
@@ -581,6 +602,20 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     async (event?: { preventDefault: () => void }) => {
       event?.preventDefault();
       if (!canBeginBoardComposerSend(environmentConnection, sendInFlightRef.current)) return;
+      if (localCheckoutStatusGuard !== null) {
+        toastManager.add({
+          type: "warning",
+          title:
+            localCheckoutStatusGuard === "error"
+              ? "Could not check local checkout"
+              : "Checking local checkout",
+          description:
+            localCheckoutStatusGuard === "error"
+              ? `Sending is paused until checkout status is available. ${gitStatusQuery.error ?? "Try again."}`
+              : "Wait for the local checkout status, then try again.",
+        });
+        return;
+      }
 
       sendInFlightRef.current = true;
       setIsSendBusy(true);
@@ -909,8 +944,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     [
       environmentConnection.phase,
       environmentId,
+      gitStatusQuery.error,
       interactionMode,
       localCheckoutBranchMismatch,
+      localCheckoutStatusGuard,
       providerStatuses,
       runtimeMode,
       settings.planModeEnabled,

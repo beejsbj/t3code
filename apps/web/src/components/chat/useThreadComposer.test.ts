@@ -11,6 +11,7 @@ import {
   removeBoardAttachmentPreviewHandoff,
   resolveBoardAttachmentUploadCapabilities,
   resolveBoardExpiredTerminalContextToastCopy,
+  resolveBoardLocalCheckoutStatusGuard,
   resolveBoardComposerModes,
 } from "./useThreadComposer";
 
@@ -154,6 +155,43 @@ describe("board thread composer", () => {
       attachmentUploadsCapabilityKnown: true,
       supportsAttachmentUploads: true,
     });
+  });
+
+  it("waits for local checkout status but leaves worktrees and resolved status alone", () => {
+    const base = {
+      activeWorktreePath: null,
+      activeBranch: "main",
+      gitCwd: "/repo",
+    } as const;
+    expect(
+      resolveBoardLocalCheckoutStatusGuard({
+        ...base,
+        statusData: null,
+        statusError: null,
+      }),
+    ).toBe("pending");
+    expect(
+      resolveBoardLocalCheckoutStatusGuard({
+        ...base,
+        statusData: null,
+        statusError: "status failed",
+      }),
+    ).toBe("error");
+    expect(
+      resolveBoardLocalCheckoutStatusGuard({
+        ...base,
+        statusData: { refName: "main" },
+        statusError: null,
+      }),
+    ).toBeNull();
+    expect(
+      resolveBoardLocalCheckoutStatusGuard({
+        ...base,
+        activeWorktreePath: "/repo/.worktrees/feature",
+        statusData: null,
+        statusError: null,
+      }),
+    ).toBeNull();
   });
 
   it("falls back to build mode when a retained plan mode is disabled", () => {
