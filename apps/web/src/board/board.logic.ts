@@ -32,7 +32,7 @@ export interface BoardProjectSection<
 }
 
 function projectKey(environmentId: EnvironmentId, projectId: string): string {
-  return `${environmentId}:${projectId}`;
+  return JSON.stringify([environmentId, projectId]);
 }
 
 export function buildBoardCards<
@@ -76,11 +76,18 @@ export function groupBoardCardsByProject<
 >(
   cards: ReadonlyArray<BoardCard<TThread, TProject>>,
 ): ReadonlyArray<BoardProjectSection<TThread, TProject>> {
-  const grouped = new Map<string, BoardProjectSection<TThread, TProject>>();
+  const grouped = new Map<
+    string,
+    {
+      readonly projectKey: string;
+      readonly projectTitle: string;
+      readonly cards: Array<BoardCard<TThread, TProject>>;
+    }
+  >();
   for (const card of cards) {
     const existing = grouped.get(card.projectKey);
     if (existing) {
-      grouped.set(card.projectKey, { ...existing, cards: [...existing.cards, card] });
+      existing.cards.push(card);
       continue;
     }
     grouped.set(card.projectKey, {

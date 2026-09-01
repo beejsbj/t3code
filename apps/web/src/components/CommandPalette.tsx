@@ -69,6 +69,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { readLocalApi } from "../localApi";
+import { isModelPickerOpen } from "../modelPickerVisibility";
 import { desktopLocalBackendId } from "../connection/desktopLocal";
 import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
@@ -448,6 +449,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         context: {
           terminalFocus: isTerminalFocused(),
           terminalOpen,
+          modelPickerOpen: isModelPickerOpen(),
           previewFocus: isPreviewFocused(),
           previewOpen,
         },

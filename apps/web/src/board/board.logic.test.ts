@@ -58,7 +58,7 @@ describe("board logic", () => {
     });
 
     expect(cards[0]).toMatchObject({
-      projectKey: "local:project-2",
+      projectKey: '["local","project-2"]',
       projectTitle: "Docs",
       environmentLabel: "Laptop",
     });
@@ -66,5 +66,27 @@ describe("board logic", () => {
       "Docs",
       "T3 Code",
     ]);
+  });
+
+  it("keeps scoped project identities distinct when ids contain separators", () => {
+    const environmentAB = EnvironmentId.make("a:b");
+    const environmentA = EnvironmentId.make("a");
+    const cards = buildBoardCards({
+      projects: [
+        project({ environmentId: environmentAB, id: ProjectId.make("c"), title: "First" }),
+        project({ environmentId: environmentA, id: ProjectId.make("b:c"), title: "Second" }),
+      ],
+      threads: [
+        thread({ environmentId: environmentAB, projectId: ProjectId.make("c") }),
+        thread({
+          id: ThreadId.make("thread-2"),
+          environmentId: environmentA,
+          projectId: ProjectId.make("b:c"),
+        }),
+      ],
+    });
+
+    expect(cards.map((card) => card.projectTitle).toSorted()).toEqual(["First", "Second"]);
+    expect(groupBoardCardsByProject(cards)).toHaveLength(2);
   });
 });

@@ -2,17 +2,24 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { RuntimeMode } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CircleDashedIcon, FolderIcon, GitBranchIcon, ServerIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { isElectron } from "../env";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments } from "../state/environments";
-import { useProjects, useServerConfigs, useThreadShells } from "../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useProjects,
+  useServerConfigs,
+  useThreadShells,
+} from "../state/entities";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { Badge } from "./ui/badge";
@@ -39,12 +46,14 @@ const statusLabels = {
 } as const;
 
 const statusStyles = {
-  approval: "border-amber-500/35 bg-amber-500/8 text-amber-700 dark:text-amber-300",
-  input: "border-indigo-500/35 bg-indigo-500/8 text-indigo-700 dark:text-indigo-300",
-  working: "border-sky-500/35 bg-sky-500/8 text-sky-700 dark:text-sky-300",
-  monitoring: "border-sky-500/35 bg-sky-500/8 text-sky-700 dark:text-sky-300",
-  failed: "border-red-500/35 bg-red-500/8 text-red-700 dark:text-red-300",
-  ready: "border-border bg-muted/45 text-muted-foreground",
+  approval:
+    "border-amber-500/35 bg-amber-500/8 text-amber-700 dark:bg-amber-500/16 dark:text-amber-300",
+  input:
+    "border-indigo-500/35 bg-indigo-500/8 text-indigo-700 dark:bg-indigo-500/16 dark:text-indigo-300",
+  working: "border-sky-500/35 bg-sky-500/8 text-sky-700 dark:bg-sky-500/16 dark:text-sky-300",
+  monitoring: "border-sky-500/35 bg-sky-500/8 text-sky-700 dark:bg-sky-500/16 dark:text-sky-300",
+  failed: "border-red-500/35 bg-red-500/8 text-red-700 dark:bg-red-500/16 dark:text-red-300",
+  ready: "border-border bg-muted/45 text-muted-foreground dark:bg-muted/45",
 } as const;
 
 const attentionStatuses = new Set<ReturnType<typeof resolveSidebarThreadStatus>>([
@@ -57,10 +66,12 @@ export function SessionBoard() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const threads = useThreadShells();
+  const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
   const { environments } = useEnvironments();
   useNowMinute();
+  const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   const environmentLabels = useMemo(
     () =>
       new Map(environments.map((environment) => [environment.environmentId, environment.label])),
@@ -80,7 +91,25 @@ export function SessionBoard() {
 
       return capabilities?.threadSettlement !== true || thread.settledOverride !== "settled";
     });
-  }, [serverConfigs, threads]);
+  }, [serverConfigs, snoozeWakeTick, threads]);
+  const nextWakeAtMs = useMemo(() => {
+    let next = Number.POSITIVE_INFINITY;
+    const now = Date.now();
+    for (const thread of threads) {
+      if (serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSnooze !== true) {
+        continue;
+      }
+      const wakeAt = Date.parse(thread.snoozedUntil ?? "");
+      if (wakeAt > now && wakeAt < next) next = wakeAt;
+    }
+    return next;
+  }, [serverConfigs, threads, snoozeWakeTick]);
+  useEffect(() => {
+    if (!Number.isFinite(nextWakeAtMs)) return;
+    const delayMs = Math.min(Math.max(0, nextWakeAtMs - Date.now()) + 50, 2_147_483_647);
+    const id = window.setTimeout(() => bumpSnoozeWakeTick((tick) => tick + 1), delayMs);
+    return () => window.clearTimeout(id);
+  }, [nextWakeAtMs]);
   const cards = useMemo(
     () =>
       buildBoardCards({
@@ -105,6 +134,11 @@ export function SessionBoard() {
   }, [cards]);
 
   const openThread = (thread: EnvironmentThreadShell) => {
+    const selection = useThreadSelectionStore.getState();
+    if (selection.selectedThreadKeys.size > 0) {
+      selection.clearSelection();
+    }
+    selection.setAnchor(scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)));
     if (isMobile) {
       setOpenMobile(false);
     }
@@ -115,7 +149,7 @@ export function SessionBoard() {
   };
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
       <WorkspacePageHeader electron={isElectron}>
         <div
           aria-live="polite"
@@ -123,18 +157,22 @@ export function SessionBoard() {
         >
           <h1 className="truncate text-sm font-semibold">Board view</h1>
           <span>
-            {cards.length} active {cards.length === 1 ? "session" : "sessions"}
+            {bootstrapped
+              ? `${cards.length} active ${cards.length === 1 ? "session" : "sessions"}`
+              : "Loading sessions…"}
           </span>
-          {summary.attention > 0 ? (
+          {bootstrapped && summary.attention > 0 ? (
             <span className="text-amber-700 dark:text-amber-300">
               {summary.attention} need attention
             </span>
           ) : null}
-          {summary.working > 0 ? <span>{summary.working} working</span> : null}
-          {summary.environments > 1 ? <span>{summary.environments} environments</span> : null}
+          {bootstrapped && summary.working > 0 ? <span>{summary.working} working</span> : null}
+          {bootstrapped && summary.environments > 1 ? (
+            <span>{summary.environments} environments</span>
+          ) : null}
         </div>
       </WorkspacePageHeader>
-      {sections.length === 0 ? (
+      {!bootstrapped ? null : sections.length === 0 ? (
         <Empty>
           <EmptyHeader>
             <EmptyTitle className="text-lg">No active sessions</EmptyTitle>
@@ -144,17 +182,17 @@ export function SessionBoard() {
           </EmptyHeader>
         </Empty>
       ) : (
-        <main className="min-h-0 flex-1 overflow-auto px-4 py-5 sm:px-6 sm:py-7">
+        <div className="topbar-scroll-fade scrollbar-gutter-both min-h-0 flex-1 overflow-auto px-4 py-5 sm:px-6 sm:py-7">
           <div className="mx-auto flex max-w-7xl flex-col gap-8">
             {sections.map((section) => (
               <section
                 key={section.projectKey}
-                aria-labelledby={`board-project-${section.projectKey}`}
+                aria-labelledby={`board-project-${encodeURIComponent(section.projectKey)}`}
               >
                 <div className="mb-3 flex items-center gap-2">
                   <FolderIcon aria-hidden className="size-4 text-muted-foreground" />
                   <h2
-                    id={`board-project-${section.projectKey}`}
+                    id={`board-project-${encodeURIComponent(section.projectKey)}`}
                     className="text-sm font-semibold tracking-tight"
                   >
                     {section.projectTitle}
@@ -164,7 +202,7 @@ export function SessionBoard() {
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,22rem),1fr))] gap-3">
                   {section.cards.map((card) => (
                     <SessionBoardCard
-                      key={`${card.thread.environmentId}:${card.thread.id}`}
+                      key={JSON.stringify([card.thread.environmentId, card.thread.id])}
                       card={card}
                       onOpen={openThread}
                     />
@@ -173,7 +211,7 @@ export function SessionBoard() {
               </section>
             ))}
           </div>
-        </main>
+        </div>
       )}
     </SidebarInset>
   );
@@ -196,7 +234,6 @@ function SessionBoardCard({
     <button
       type="button"
       className="group flex min-h-36 min-w-0 cursor-pointer flex-col rounded-xl border border-border/80 bg-card p-4 text-left shadow-sm/5 outline-none transition-colors hover:border-foreground/20 hover:bg-accent/35 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-      aria-label={`Open session ${thread.title}`}
       onClick={() => onOpen(thread)}
     >
       <div className="flex min-w-0 items-start gap-2">
