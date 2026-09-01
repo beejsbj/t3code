@@ -13,6 +13,7 @@ import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
+import { threadWokeAt, type ThreadSnoozeShell } from "@t3tools/client-runtime/state/thread-settled";
 import type {
   MessageId,
   OrchestrationThreadActivity,
@@ -78,6 +79,10 @@ const EMPTY_REVERT_TURN_COUNTS = new Map<MessageId, number>();
 const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = [];
 const NOOP = () => {};
 
+export function resolveBoardCardVisitedAt(thread: ThreadSnoozeShell, now: string): string | null {
+  return threadWokeAt(thread, { now }) ?? thread.latestTurn?.completedAt ?? null;
+}
+
 export type BoardThreadStatus =
   | ReturnType<typeof resolveSidebarThreadStatus>
   | "plan"
@@ -104,10 +109,10 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   const composerDraft = useComposerThreadDraft(threadRef);
   const hasDraft = !boardComposerDraftCanBeRestored(composerDraft);
   const shouldMountChat = isNearViewport || hasFocus || hasDraft || chatRequestsMount;
-  const acknowledgeLatestCompletion = useCallback(() => {
-    const completedAt = thread.latestTurn?.completedAt;
-    if (completedAt) markThreadVisited(scopedThreadKey(threadRef), completedAt);
-  }, [markThreadVisited, thread.latestTurn?.completedAt, threadRef]);
+  const acknowledgeThreadAttention = useCallback(() => {
+    const visitedAt = resolveBoardCardVisitedAt(thread, new Date().toISOString());
+    if (visitedAt) markThreadVisited(scopedThreadKey(threadRef), visitedAt);
+  }, [markThreadVisited, thread, threadRef]);
 
   return (
     <article
@@ -115,9 +120,9 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
       data-board-card={thread.id}
       onFocusCapture={() => {
         setHasFocus(true);
-        acknowledgeLatestCompletion();
+        acknowledgeThreadAttention();
       }}
-      onPointerDownCapture={acknowledgeLatestCompletion}
+      onPointerDownCapture={acknowledgeThreadAttention}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setHasFocus(false);
       }}
@@ -239,11 +244,55 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
 }) {
   const { threadRef, thread, environmentLabel, environmentConnection, onMountRequestChange } =
     props;
-  const navigate = useNavigate();
   const fullThread = useThread(threadRef);
   const threadState = useEnvironmentThread(threadRef.environmentId, threadRef.threadId);
-  const threadActivities = fullThread?.activities ?? EMPTY_ACTIVITIES;
-  const agentSessionLive = derivePhase(fullThread?.session ?? null) !== "disconnected";
+  if (fullThread === null) {
+    return (
+      <div
+        role="status"
+        className="flex flex-1 items-center justify-center text-xs text-muted-foreground/55"
+      >
+        {threadState.status === "deleted"
+          ? "Conversation no longer available"
+          : "Loading conversation…"}
+      </div>
+    );
+  }
+
+  return (
+    <BoardCardChatContent
+      threadRef={threadRef}
+      thread={thread}
+      fullThread={fullThread}
+      threadState={threadState}
+      environmentLabel={environmentLabel}
+      environmentConnection={environmentConnection}
+      onMountRequestChange={onMountRequestChange}
+    />
+  );
+});
+
+const BoardCardChatContent = memo(function BoardCardChatContent(props: {
+  readonly threadRef: ScopedThreadRef;
+  readonly thread: EnvironmentThreadShell;
+  readonly fullThread: NonNullable<ReturnType<typeof useThread>>;
+  readonly threadState: ReturnType<typeof useEnvironmentThread>;
+  readonly environmentLabel: string;
+  readonly environmentConnection: EnvironmentConnectionPresentation;
+  readonly onMountRequestChange: (requested: boolean) => void;
+}) {
+  const {
+    threadRef,
+    thread,
+    fullThread,
+    threadState,
+    environmentLabel,
+    environmentConnection,
+    onMountRequestChange,
+  } = props;
+  const navigate = useNavigate();
+  const threadActivities = fullThread.activities ?? EMPTY_ACTIVITIES;
+  const agentSessionLive = derivePhase(fullThread.session) !== "disconnected";
   const agentPanelModel = useMemo(
     () =>
       deriveAgentPanelModel({
