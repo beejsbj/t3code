@@ -36,6 +36,7 @@ import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ChatComposer } from "../chat/ChatComposer";
 import { ExpandedImageDialog } from "../chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "../chat/ExpandedImagePreview";
@@ -131,9 +132,14 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
         />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2">
-            <h3 className="min-w-0 flex-1 truncate text-xs font-semibold" title={thread.title}>
-              {thread.title}
-            </h3>
+            <Tooltip>
+              <TooltipTrigger
+                render={<h3 className="min-w-0 flex-1 truncate text-xs font-semibold" />}
+              >
+                {thread.title}
+              </TooltipTrigger>
+              <TooltipPopup side="top">{thread.title}</TooltipPopup>
+            </Tooltip>
             <Badge className={statusStyles[status]} size="sm" variant="outline">
               {statusLabels[status]}
             </Badge>
@@ -145,9 +151,14 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
             </span>
             <span className="inline-flex min-w-0 items-center gap-1 truncate">
               <CircleDashedIcon aria-hidden className="size-3 shrink-0" />
-              <span className="truncate" title={`${runtime} · ${thread.modelSelection.model}`}>
-                {runtime} · {thread.modelSelection.model}
-              </span>
+              <Tooltip>
+                <TooltipTrigger render={<span className="truncate" />}>
+                  {runtime} · {thread.modelSelection.model}
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  {runtime} · {thread.modelSelection.model}
+                </TooltipPopup>
+              </Tooltip>
             </span>
             {thread.branch ? (
               <span className="inline-flex min-w-0 items-center gap-1 truncate">
