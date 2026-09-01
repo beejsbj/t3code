@@ -3,12 +3,22 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
+import {
+  deriveAgentPanelModel,
+  foldSubagentActivities,
+} from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
   requestOlderThreadTurns,
   threadHasOlderTurns,
 } from "@t3tools/client-runtime/state/threads";
-import type { MessageId, ScopedThreadRef, TurnId } from "@t3tools/contracts";
+import type {
+  MessageId,
+  OrchestrationThreadActivity,
+  ScopedThreadRef,
+  TurnId,
+} from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { CircleDashedIcon, ExternalLinkIcon, GitBranchIcon, ServerIcon } from "lucide-react";
@@ -18,6 +28,7 @@ import type { BoardCard } from "../../board/board.logic";
 import { useTheme } from "../../hooks/useTheme";
 import { useThread } from "../../state/entities";
 import { useComposerThreadDraft } from "../../composerDraftStore";
+import { codexArtifactTemplatePromptToAppend } from "../ChatView.logic";
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { useRightPanelStore } from "../../rightPanelStore";
 import { useUiStateStore } from "../../uiStateStore";
@@ -33,6 +44,7 @@ import { boardComposerDraftCanBeRestored, useBoardThreadComposer } from "../chat
 import { useThreadTimeline } from "../chat/useThreadTimeline";
 import { useInViewport } from "./useInViewport";
 import { useEnvironmentThread } from "../../state/threads";
+import { derivePhase } from "../../session-logic";
 
 const statusLabels = {
   approval: "Approval",
@@ -62,6 +74,7 @@ const statusStyles = {
 } as const;
 
 const EMPTY_REVERT_TURN_COUNTS = new Map<MessageId, number>();
+const EMPTY_ACTIVITIES: ReadonlyArray<OrchestrationThreadActivity> = [];
 const NOOP = () => {};
 
 export type BoardThreadStatus =
@@ -210,6 +223,15 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
   const navigate = useNavigate();
   const fullThread = useThread(threadRef);
   const threadState = useEnvironmentThread(threadRef.environmentId, threadRef.threadId);
+  const threadActivities = fullThread?.activities ?? EMPTY_ACTIVITIES;
+  const agentSessionLive = derivePhase(fullThread?.session ?? null) !== "disconnected";
+  const agentPanelModel = useMemo(
+    () =>
+      deriveAgentPanelModel({
+        agents: foldSubagentActivities(threadActivities, { sessionLive: agentSessionLive }),
+      }),
+    [agentSessionLive, threadActivities],
+  );
   const { resolvedTheme } = useTheme();
   const legendListRef = useRef<LegendListRef | null>(null);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
@@ -226,23 +248,47 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
-  const onFileOpen = useCallback(() => {
+  const openCanonicalThread = useCallback(() => {
     void navigate({
       to: "/$environmentId/$threadId",
       params: { environmentId: threadRef.environmentId, threadId: threadRef.threadId },
     });
   }, [navigate, threadRef]);
-  const { chatComposerProps, timelineMessages, timelineAnchorMessageId, clearTimelineAnchor } =
-    useBoardThreadComposer({
-      threadRef,
-      thread: fullThread,
-      summary: thread,
-      environmentLabel,
-      environmentConnection,
-      resolvedTheme,
-      onExpandImage: onExpandTimelineImage,
-      onFileOpen,
-    });
+  const onFileOpen = openCanonicalThread;
+  const {
+    chatComposerProps,
+    composerRef,
+    timelineMessages,
+    timelineAnchorMessageId,
+    clearTimelineAnchor,
+  } = useBoardThreadComposer({
+    threadRef,
+    thread: fullThread,
+    summary: thread,
+    environmentLabel,
+    environmentConnection,
+    resolvedTheme,
+    onExpandImage: onExpandTimelineImage,
+    onFileOpen,
+  });
+  const onOpenAgents = useCallback(() => {
+    useRightPanelStore.getState().open(threadRef, "agents");
+    openCanonicalThread();
+  }, [openCanonicalThread, threadRef]);
+  const onUseArtifactTemplate = useCallback(
+    (template: CodexArtifactTemplate) => {
+      const composer = composerRef.current;
+      if (composer) {
+        const currentDraft = composer.getSendContext().prompt;
+        const prompt = codexArtifactTemplatePromptToAppend(currentDraft, template);
+        if (prompt !== null) {
+          composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true });
+        }
+      }
+      openCanonicalThread();
+    },
+    [composerRef, openCanonicalThread],
+  );
   const {
     timelineEntries,
     latestTurn,
@@ -311,6 +357,8 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
       <div className="min-h-0 flex-1">
         <MessagesTimeline
           density="compact"
+          agentPanelModel={agentPanelModel}
+          onOpenAgents={onOpenAgents}
           isWorking={isWorking}
           activeTurnStartedAt={activeTurnStartedAt}
           listRef={legendListRef}
@@ -325,6 +373,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface(props: {
           isRevertingCheckpoint={false}
           onImageExpand={onExpandTimelineImage}
           onFileOpen={onFileOpen}
+          onUseArtifactTemplate={onUseArtifactTemplate}
           openingVideoAttachmentId={null}
           activeThreadEnvironmentId={activeThreadEnvironmentId}
           markdownCwd={markdownCwd}
