@@ -463,6 +463,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       try {
         const draft = composerRef.current?.getSendContext();
         if (!draft?.providerAvailable) return;
+        // Generic files stay attached to the durable draft for the full-thread
+        // composer. The board's inline sender only serializes images, so it
+        // must never clear or partially send a draft that still owns files.
+        if (draft.files.length > 0) return;
         const sendState = deriveComposerSendState({
           prompt: draft.prompt,
           imageCount: draft.images.length,

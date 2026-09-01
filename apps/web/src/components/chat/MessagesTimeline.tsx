@@ -498,6 +498,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     const isAtEnd = resolveTimelineIsAtEnd(state, contentInsetEndAdjustment);
     if (isAtEnd !== undefined) {
       onIsAtEndChange(isAtEnd);
+      // Compact timelines have no minimap, so ordinary wheel, touch, keyboard,
+      // and scrollbar navigation is their only way to leave the live edge.
+      // Do not treat the deliberate post-send anchor scroll as manual reading.
+      if (isCompact && !isAtEnd && anchorMessageId === null) {
+        onManualNavigation();
+      }
     }
     if (!state || minimapItems.length === 0) {
       return;
@@ -521,7 +527,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
       strip.dataset.inView = inView ? "true" : "false";
     }
-  }, [contentInsetEndAdjustment, listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+  }, [
+    anchorMessageId,
+    contentInsetEndAdjustment,
+    isCompact,
+    listRef,
+    minimapItems,
+    minimapStripMap,
+    onIsAtEndChange,
+    onManualNavigation,
+  ]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
