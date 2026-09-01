@@ -12,6 +12,8 @@ import * as Path from "effect/Path";
 
 import type { McpProviderSessionConfig } from "../mcp/McpProviderSession.ts";
 
+const agentBoardCommand = "t3-board";
+
 // Provider children use this directory for their whole lifetime, so it must
 // remain available until the server process exits.
 let runtimeBinDir: string | undefined;
@@ -22,36 +24,36 @@ const ensureRuntimeBin = Effect.gen(function* () {
   if (runtimeBinDir) return runtimeBinDir;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const directory = yield* fs.makeTempDirectory({ prefix: "t3-agent-bin-" });
+  const directory = yield* fs.makeTempDirectory({ prefix: "t3-agent-board-bin-" });
   const executable = yield* HostProcessExecutablePath;
   const entrypoint = (yield* HostProcessArguments)[1];
   if (!entrypoint) return yield* Effect.die("T3 agent CLI entrypoint is unavailable.");
-  const posix = path.join(directory, "t3");
+  const posix = path.join(directory, agentBoardCommand);
   yield* fs.writeFileString(
     posix,
     `#!/bin/sh
-case "$1:$2:$#" in
-  board:lanes:2|board:lane:2|board:move:3) ;;
+case "$1:$#" in
+  lanes:1|lane:1|move:2) ;;
   *)
-    echo "The scoped T3 agent launcher supports only: t3 board lanes, t3 board lane, and t3 board move <lane>." >&2
+    echo "The scoped T3 board launcher supports only: t3-board lanes, t3-board lane, and t3-board move <lane>." >&2
     exit 2
     ;;
 esac
-exec ${shellQuote(executable)} ${shellQuote(entrypoint)} "$@"
+exec ${shellQuote(executable)} ${shellQuote(entrypoint)} board "$@"
 `,
   );
   yield* fs.chmod(posix, 0o755);
   yield* fs.writeFileString(
-    path.join(directory, "t3.cmd"),
+    path.join(directory, `${agentBoardCommand}.cmd`),
     [
       "@echo off",
-      'if /I "%~1:%~2"=="board:lanes" if "%~3"=="" goto run',
-      'if /I "%~1:%~2"=="board:lane" if "%~3"=="" goto run',
-      'if /I "%~1:%~2"=="board:move" if not "%~3"=="" if "%~4"=="" goto run',
-      "echo The scoped T3 agent launcher supports only: t3 board lanes, t3 board lane, and t3 board move ^<lane^>. 1>&2",
+      'if /I "%~1"=="lanes" if "%~2"=="" goto run',
+      'if /I "%~1"=="lane" if "%~2"=="" goto run',
+      'if /I "%~1"=="move" if not "%~2"=="" if "%~3"=="" goto run',
+      "echo The scoped T3 board launcher supports only: t3-board lanes, t3-board lane, and t3-board move ^<lane^>. 1>&2",
       "exit /b 2",
       ":run",
-      `@"${executable.replaceAll('"', '""')}" "${entrypoint.replaceAll('"', '""')}" %*`,
+      `@"${executable.replaceAll('"', '""')}" "${entrypoint.replaceAll('"', '""')}" board %*`,
       "",
     ].join("\r\n"),
   );
@@ -59,7 +61,7 @@ exec ${shellQuote(executable)} ${shellQuote(entrypoint)} "$@"
   return directory;
 }).pipe(Effect.provide(NodeServices.layer));
 
-/** Environment shared by every local provider process for the opt-in `t3 board` CLI. */
+/** Environment shared by every local provider process for the opt-in `t3-board` CLI. */
 export const agentCommandEnvironment = Effect.fn("provider.agentCommandEnvironment")(function* (
   session: McpProviderSessionConfig | undefined,
   base?: NodeJS.ProcessEnv,
@@ -70,7 +72,7 @@ export const agentCommandEnvironment = Effect.fn("provider.agentCommandEnvironme
   const launcherDirectory = yield* ensureRuntimeBin.pipe(
     Effect.map(Option.some),
     Effect.catchCause((cause) =>
-      Effect.logWarning("Could not create the scoped T3 agent launcher.", { cause }).pipe(
+      Effect.logWarning("Could not create the scoped T3 board launcher.", { cause }).pipe(
         Effect.as(Option.none<string>()),
       ),
     ),

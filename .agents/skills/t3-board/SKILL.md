@@ -1,6 +1,6 @@
 ---
 name: t3-board
-description: Inspect or move T3 Code threads on the client-local board with `t3 board`. Use only after an explicit user request.
+description: Inspect or move T3 Code threads on the client-local board with `t3-board`. Use only after an explicit user request.
 ---
 
 # T3 Board
@@ -11,9 +11,9 @@ The board is client-local. Every active sidebar thread is already on the board; 
 
 ## Commands
 
-- `t3 board lanes` lists current workflow lanes with their stable IDs, live names, and descriptions.
-- `t3 board lane` reports the current thread's effective lane and whether it uses a local override.
-- `t3 board move <lane-id-or-exact-name>` moves the current thread. Prefer a stable lane ID after listing lanes; an exact unambiguous live name also works. Moving to Triage clears the override because Triage is the default lane.
+- `t3-board lanes` lists current workflow lanes with their stable IDs, live names, and descriptions.
+- `t3-board lane` reports the current thread's effective lane and whether it uses a local override.
+- `t3-board move <lane-id-or-exact-name>` moves the current thread. Prefer a stable lane ID after listing lanes; an exact unambiguous live name also works. Moving to Triage clears the override because Triage is the default lane.
 
 Run one command at a time and report its receipt faithfully. Do not infer success from an exit code if the command printed an error.
 
