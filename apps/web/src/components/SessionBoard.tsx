@@ -1,26 +1,24 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import type { RuntimeMode } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { useAtomValue } from "@effect/atom-react";
 import { CircleDashedIcon, FolderIcon, GitBranchIcon, ServerIcon } from "lucide-react";
 import { useMemo } from "react";
 
-import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { isElectron } from "../env";
-import { useClientSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells } from "../state/entities";
+import { formatRelativeTimeLabel } from "../timestampFormat";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import { ProjectFavicon } from "./ProjectFavicon";
-import { threadChangeRequestSnapshotsAtom } from "./ThreadStatusIndicators";
 import { Badge } from "./ui/badge";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset, useSidebar } from "./ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import { buildBoardCards, groupBoardCardsByProject, type BoardCard } from "../board/board.logic";
 
@@ -49,24 +47,26 @@ const statusStyles = {
   ready: "border-border bg-muted/45 text-muted-foreground",
 } as const;
 
+const attentionStatuses = new Set<ReturnType<typeof resolveSidebarThreadStatus>>([
+  "approval",
+  "input",
+  "failed",
+]);
+
 export function SessionBoard() {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
   const threads = useThreadShells();
   const projects = useProjects();
   const serverConfigs = useServerConfigs();
-  const changeRequestSnapshotByKey = useAtomValue(threadChangeRequestSnapshotsAtom);
   const { environments } = useEnvironments();
-  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
-  const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
-  const nowMinute = useNowMinute();
+  useNowMinute();
   const environmentLabels = useMemo(
     () =>
       new Map(environments.map((environment) => [environment.environmentId, environment.label])),
     [environments],
   );
   const activeThreads = useMemo(() => {
-    const now = `${nowMinute}:00.000Z`;
     const preciseNow = new Date().toISOString();
     // Lifecycle remains server-backed and follows the same client projection
     // as the sidebar. The board only reads this state; it never mutates it.
@@ -78,35 +78,9 @@ export function SessionBoard() {
         return false;
       }
 
-      if (capabilities?.threadSettlement !== true) return true;
-
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      const snapshot = changeRequestSnapshotByKey.get(threadKey);
-      const changeRequest =
-        snapshot != null &&
-        (thread.linkedPullRequest == null
-          ? thread.worktreePath === null || snapshot.branch === thread.branch
-          : snapshot.linkedPullRequest?.projectId === thread.linkedPullRequest.projectId &&
-            snapshot.linkedPullRequest.repository === thread.linkedPullRequest.repository &&
-            snapshot.linkedPullRequest.number === thread.linkedPullRequest.number)
-          ? snapshot.pr
-          : null;
-
-      return !effectiveSettled(thread, {
-        now,
-        autoSettleAfterDays,
-        autoSettleOnMerge,
-        changeRequest,
-      });
+      return capabilities?.threadSettlement !== true || thread.settledOverride !== "settled";
     });
-  }, [
-    autoSettleAfterDays,
-    autoSettleOnMerge,
-    changeRequestSnapshotByKey,
-    nowMinute,
-    serverConfigs,
-    threads,
-  ]);
+  }, [serverConfigs, threads]);
   const cards = useMemo(
     () =>
       buildBoardCards({
@@ -117,6 +91,18 @@ export function SessionBoard() {
     [activeThreads, environmentLabels, projects],
   );
   const sections = useMemo(() => groupBoardCardsByProject(cards), [cards]);
+  const summary = useMemo(() => {
+    let attention = 0;
+    let working = 0;
+    const environmentIds = new Set<string>();
+    for (const card of cards) {
+      const status = resolveSidebarThreadStatus(card.thread);
+      if (attentionStatuses.has(status)) attention += 1;
+      if (status === "working" || status === "monitoring") working += 1;
+      environmentIds.add(card.thread.environmentId);
+    }
+    return { attention, working, environments: environmentIds.size };
+  }, [cards]);
 
   const openThread = (thread: EnvironmentThreadShell) => {
     if (isMobile) {
@@ -131,11 +117,21 @@ export function SessionBoard() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       <WorkspacePageHeader electron={isElectron}>
-        <div className="flex min-w-0 items-center gap-2">
+        <div
+          aria-live="polite"
+          className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground"
+        >
           <h1 className="truncate text-sm font-semibold">Board view</h1>
-          <span className="text-xs text-muted-foreground">
+          <span>
             {cards.length} active {cards.length === 1 ? "session" : "sessions"}
           </span>
+          {summary.attention > 0 ? (
+            <span className="text-amber-700 dark:text-amber-300">
+              {summary.attention} need attention
+            </span>
+          ) : null}
+          {summary.working > 0 ? <span>{summary.working} working</span> : null}
+          {summary.environments > 1 ? <span>{summary.environments} environments</span> : null}
         </div>
       </WorkspacePageHeader>
       {sections.length === 0 ? (
@@ -232,8 +228,14 @@ function SessionBoardCard({
           {thread.branch ? <GitBranchIcon aria-hidden className="size-3.5 shrink-0" /> : null}
           <span className="truncate">{thread.branch ?? "No branch"}</span>
         </span>
-        <span className="shrink-0 text-muted-foreground/70">
-          {runtimeModeLabels[thread.runtimeMode]}
+        <span className="flex shrink-0 flex-col items-end gap-0.5 text-muted-foreground/70">
+          <span>{runtimeModeLabels[thread.runtimeMode]}</span>
+          <Tooltip>
+            <TooltipTrigger
+              render={<span>Updated {formatRelativeTimeLabel(thread.updatedAt)}</span>}
+            />
+            <TooltipPopup>{new Date(thread.updatedAt).toLocaleString()}</TooltipPopup>
+          </Tooltip>
         </span>
       </div>
     </button>

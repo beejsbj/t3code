@@ -38,6 +38,9 @@ where progress depends on you. **Monitoring** identifies a session following bac
 **Ready** is active but currently idle. A failed turn remains visible as **Error** so it is not lost
 among idle sessions.
 
+The page header summarizes sessions that need attention or are still working. Each card also shows
+when its session last changed, so an older idle session does not look equivalent to fresh activity.
+
 Environment names remain visible even when projects share a title. This matters when a local server,
 a desktop-hosted server, and a remote environment expose similar workspaces: selecting the card still
 routes to the environment that owns the session.
