@@ -71,7 +71,7 @@ import {
   type PromptStashEntry,
 } from "../../promptStashStore";
 import { ComposerStashBadge } from "./ComposerStashBadge";
-import { ComposerStashMenu } from "./ComposerStashMenu";
+import { claimComposerStashMenuForOwner, ComposerStashMenu } from "./ComposerStashMenu";
 import {
   ComposerTasksBadge,
   ComposerTasksContent,
@@ -3441,6 +3441,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ref={composerFormRef}
       onSubmit={submitComposer}
       onFocusCapture={(event) => {
+        claimComposerStashMenuForOwner(composerTargetKey(composerDraftTarget));
         const activeElement = event.target;
         if (
           isComposerCollapsedMobile &&
@@ -3699,6 +3700,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         modelPickerOpen: false,
                       },
                     })}
+                    ownerKey={composerTargetKey(composerDraftTarget)}
                     onRestore={restoreStashEntry}
                     onDelete={deleteStashEntry}
                     onClose={() => setIsStashMenuOpen(false)}

@@ -28,26 +28,47 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
   return `(${attachmentCount} ${label}${attachmentCount === 1 ? "" : "s"})`;
 }
 
-/** Keyboard ownership follows the most recently opened/focused stash menu. */
+/** Keyboard ownership belongs to the menu whose composer or drawer has focus. */
 export function createComposerStashMenuOwnership() {
-  const openMenuIds: symbol[] = [];
+  let activeMenuId: symbol | null = null;
+  const menuIdByOwner = new Map<string, symbol>();
+  const claim = (menuId: symbol) => {
+    activeMenuId = menuId;
+  };
+  const release = (menuId: symbol) => {
+    if (activeMenuId === menuId) activeMenuId = null;
+    for (const [ownerKey, registeredMenuId] of menuIdByOwner) {
+      if (registeredMenuId === menuId) menuIdByOwner.delete(ownerKey);
+    }
+  };
+  const register = (menuId: symbol, ownerKey: string) => {
+    const previousMenuId = menuIdByOwner.get(ownerKey);
+    if (previousMenuId !== undefined && previousMenuId !== menuId) {
+      release(previousMenuId);
+    }
+    menuIdByOwner.set(ownerKey, menuId);
+    claim(menuId);
+  };
+  const claimForOwner = (ownerKey: string) => {
+    const menuId = menuIdByOwner.get(ownerKey);
+    activeMenuId = menuId ?? null;
+  };
+  const isActive = (menuId: symbol) => activeMenuId === menuId;
   return {
-    claim(menuId: symbol) {
-      const existingIndex = openMenuIds.indexOf(menuId);
-      if (existingIndex !== -1) openMenuIds.splice(existingIndex, 1);
-      openMenuIds.push(menuId);
-    },
-    release(menuId: symbol) {
-      const existingIndex = openMenuIds.indexOf(menuId);
-      if (existingIndex !== -1) openMenuIds.splice(existingIndex, 1);
-    },
-    isActive(menuId: symbol) {
-      return openMenuIds[openMenuIds.length - 1] === menuId;
-    },
+    claim,
+    register,
+    release,
+    claimForOwner,
+    isActive,
   };
 }
 
 const composerStashMenuOwnership = createComposerStashMenuOwnership();
+
+/** Restore keyboard ownership when focus returns from a portaled drawer. */
+export function claimComposerStashMenuForOwner(ownerKey: string): void {
+  composerStashMenuOwnership.claimForOwner(ownerKey);
+}
 
 /**
  * Attached banner listing the stashed prompts. Keyboard-first: opened by ⌘S on an
@@ -58,11 +79,12 @@ const composerStashMenuOwnership = createComposerStashMenuOwnership();
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
   stashShortcutLabel: string | null;
+  ownerKey: string;
   onRestore: (entry: PromptStashEntry) => void;
   onDelete: (entry: PromptStashEntry) => void;
   onClose: () => void;
 }) {
-  const { entries, stashShortcutLabel, onRestore, onDelete, onClose } = props;
+  const { entries, stashShortcutLabel, ownerKey, onRestore, onDelete, onClose } = props;
   const drawerRef = useRef<HTMLDivElement>(null);
   const menuId = useRef(Symbol("composer-stash-menu")).current;
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
@@ -70,9 +92,9 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   const highlightedEntry = entries.find((entry) => entry.id === highlightedId) ?? entries[0];
 
   useEffect(() => {
-    composerStashMenuOwnership.claim(menuId);
+    composerStashMenuOwnership.register(menuId, ownerKey);
     return () => composerStashMenuOwnership.release(menuId);
-  }, [menuId]);
+  }, [menuId, ownerKey]);
 
   useEffect(() => {
     const closeOnOutsidePointer = (event: PointerEvent) => {

@@ -5,23 +5,33 @@ import { describe, expect, it } from "vite-plus/test";
 import { ComposerStashMenu, createComposerStashMenuOwnership } from "./ComposerStashMenu";
 
 describe("ComposerStashMenu", () => {
-  it("gives keyboard ownership to the newest open menu and restores the previous one", () => {
+  it("returns keyboard ownership to the composer that regains focus", () => {
     const ownership = createComposerStashMenuOwnership();
     const firstMenu = Symbol("first-menu");
     const secondMenu = Symbol("second-menu");
 
-    ownership.claim(firstMenu);
+    ownership.register(firstMenu, "composer-a");
     expect(ownership.isActive(firstMenu)).toBe(true);
-    ownership.claim(secondMenu);
+    ownership.register(secondMenu, "composer-b");
     expect(ownership.isActive(firstMenu)).toBe(false);
     expect(ownership.isActive(secondMenu)).toBe(true);
-    ownership.release(secondMenu);
+
+    // The drawers are portaled, so focus returning to A must explicitly
+    // reactivate A before the window-level Enter handler runs.
+    ownership.claimForOwner("composer-a");
     expect(ownership.isActive(firstMenu)).toBe(true);
+    expect(ownership.isActive(secondMenu)).toBe(false);
+
+    // Closing A must not fall back to B while focus is still in A's composer.
+    ownership.release(firstMenu);
+    expect(ownership.isActive(firstMenu)).toBe(false);
+    expect(ownership.isActive(secondMenu)).toBe(false);
   });
 
   it("shows saved image thumbnails and incomplete image states", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashMenu
+        ownerKey="test-with-images"
         entries={[
           {
             id: "with-images",
@@ -65,6 +75,7 @@ describe("ComposerStashMenu", () => {
   it("labels mixed file and image stashes without treating images as files", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashMenu
+        ownerKey="test-mixed-attachments"
         entries={[
           {
             id: "mixed-attachments",
