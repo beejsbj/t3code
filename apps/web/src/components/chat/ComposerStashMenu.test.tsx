@@ -2,9 +2,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ComposerStashMenu } from "./ComposerStashMenu";
+import { ComposerStashMenu, createComposerStashMenuOwnership } from "./ComposerStashMenu";
 
 describe("ComposerStashMenu", () => {
+  it("gives keyboard ownership to the newest open menu and restores the previous one", () => {
+    const ownership = createComposerStashMenuOwnership();
+    const firstMenu = Symbol("first-menu");
+    const secondMenu = Symbol("second-menu");
+
+    ownership.claim(firstMenu);
+    expect(ownership.isActive(firstMenu)).toBe(true);
+    ownership.claim(secondMenu);
+    expect(ownership.isActive(firstMenu)).toBe(false);
+    expect(ownership.isActive(secondMenu)).toBe(true);
+    ownership.release(secondMenu);
+    expect(ownership.isActive(firstMenu)).toBe(true);
+  });
+
   it("shows saved image thumbnails and incomplete image states", () => {
     const markup = renderToStaticMarkup(
       <ComposerStashMenu

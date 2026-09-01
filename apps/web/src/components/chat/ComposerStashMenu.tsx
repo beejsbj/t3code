@@ -28,6 +28,27 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
   return `(${attachmentCount} ${label}${attachmentCount === 1 ? "" : "s"})`;
 }
 
+/** Keyboard ownership follows the most recently opened/focused stash menu. */
+export function createComposerStashMenuOwnership() {
+  const openMenuIds: symbol[] = [];
+  return {
+    claim(menuId: symbol) {
+      const existingIndex = openMenuIds.indexOf(menuId);
+      if (existingIndex !== -1) openMenuIds.splice(existingIndex, 1);
+      openMenuIds.push(menuId);
+    },
+    release(menuId: symbol) {
+      const existingIndex = openMenuIds.indexOf(menuId);
+      if (existingIndex !== -1) openMenuIds.splice(existingIndex, 1);
+    },
+    isActive(menuId: symbol) {
+      return openMenuIds[openMenuIds.length - 1] === menuId;
+    },
+  };
+}
+
+const composerStashMenuOwnership = createComposerStashMenuOwnership();
+
 /**
  * Attached banner listing the stashed prompts. Keyboard-first: opened by ⌘S on an
  * empty composer, navigated with arrows, restored with Enter, dismissed
@@ -43,9 +64,15 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
 }) {
   const { entries, stashShortcutLabel, onRestore, onDelete, onClose } = props;
   const drawerRef = useRef<HTMLDivElement>(null);
+  const menuId = useRef(Symbol("composer-stash-menu")).current;
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
 
   const highlightedEntry = entries.find((entry) => entry.id === highlightedId) ?? entries[0];
+
+  useEffect(() => {
+    composerStashMenuOwnership.claim(menuId);
+    return () => composerStashMenuOwnership.release(menuId);
+  }, [menuId]);
 
   useEffect(() => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
@@ -65,6 +92,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (!composerStashMenuOwnership.isActive(menuId)) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
@@ -109,10 +137,15 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [entries, highlightedEntry, onClose, onDelete, onRestore]);
+  }, [entries, highlightedEntry, menuId, onClose, onDelete, onRestore]);
 
   return (
-    <ComposerBanner.Root ref={drawerRef} data-composer-stash-drawer="true">
+    <ComposerBanner.Root
+      ref={drawerRef}
+      data-composer-stash-drawer="true"
+      onPointerDownCapture={() => composerStashMenuOwnership.claim(menuId)}
+      onFocusCapture={() => composerStashMenuOwnership.claim(menuId)}
+    >
       <ComposerBanner.Row
         render={<button type="button" />}
         aria-label="Close stash"
