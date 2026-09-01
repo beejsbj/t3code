@@ -325,6 +325,28 @@ describe("boardLaneStore", () => {
     });
   });
 
+  it("preserves version five board organization while dropping lifecycle collapse state", () => {
+    const persistApi = useBoardLaneStore.persist as unknown as {
+      getOptions: () => {
+        migrate: (persistedState: unknown, version: number) => unknown;
+      };
+    };
+
+    expect(
+      persistApi.getOptions().migrate(
+        {
+          lanes: DEFAULT_BOARD_LANES,
+          collapsedLifecycleLaneIds: ["snoozed"],
+          organization: { columns: "state", rows: "project" },
+        },
+        5,
+      ),
+    ).toEqual({
+      lanes: DEFAULT_BOARD_LANES,
+      organization: { columns: "state", rows: "project" },
+    });
+  });
+
   it("normalizes malformed and state-by-state organization to the default", () => {
     const persistApi = useBoardLaneStore.persist as unknown as {
       getOptions: () => {

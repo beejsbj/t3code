@@ -399,6 +399,7 @@ function migrateBoardLaneState(persistedState: unknown, version: number): unknow
     groupByProject?: unknown;
     byLaneColumnKey?: unknown;
     collapsedLifecycleLaneIds?: unknown;
+    organization?: unknown;
   } | null;
   const versionTwoState =
     version < 2
@@ -435,18 +436,21 @@ function migrateBoardLaneState(persistedState: unknown, version: number): unknow
             byLaneColumnKey: remapLegacyDefaultLaneKeyedState(versionThreeState?.byLaneColumnKey),
             collapsedLifecycleLaneIds: [],
           };
-  const {
-    groupByProject,
-    collapsedLifecycleLaneIds: _collapsed,
-    ...versionFiveState
-  } = versionFourState ?? {};
-  return {
-    ...versionFiveState,
-    organization: {
-      columns: "workflow",
-      rows: groupByProject === false ? "none" : "project",
-    },
-  };
+  const versionFiveState =
+    version >= 5
+      ? versionFourState
+      : (() => {
+          const { groupByProject, ...state } = versionFourState ?? {};
+          return {
+            ...state,
+            organization: {
+              columns: "workflow",
+              rows: groupByProject === false ? "none" : "project",
+            },
+          };
+        })();
+  const { collapsedLifecycleLaneIds: _collapsed, ...versionSixState } = versionFiveState ?? {};
+  return versionSixState;
 }
 
 export interface BoardLaneOrderedEntry {
