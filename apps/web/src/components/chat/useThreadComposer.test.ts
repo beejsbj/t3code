@@ -262,6 +262,14 @@ describe("board thread composer", () => {
     ).toEqual({ isWorking: true, activeTurnStartedAt: localSendStartedAt });
     expect(
       resolveBoardTimelineWorkingState({
+        serverIsWorking: false,
+        serverActiveTurnStartedAt: "2026-09-01T11:00:00.000Z",
+        isLocalSendBusy: true,
+        localSendStartedAt,
+      }),
+    ).toEqual({ isWorking: true, activeTurnStartedAt: localSendStartedAt });
+    expect(
+      resolveBoardTimelineWorkingState({
         serverIsWorking: true,
         serverActiveTurnStartedAt: "2026-09-01T12:00:03.000Z",
         isLocalSendBusy: true,

@@ -303,10 +303,12 @@ export function resolveBoardTimelineWorkingState(input: {
   readonly isLocalSendBusy: boolean;
   readonly localSendStartedAt: string | null;
 }): { readonly isWorking: boolean; readonly activeTurnStartedAt: string | null } {
+  const localStartedAt = input.isLocalSendBusy ? input.localSendStartedAt : null;
   return {
     isWorking: input.serverIsWorking || input.isLocalSendBusy,
-    activeTurnStartedAt:
-      input.serverActiveTurnStartedAt ?? (input.isLocalSendBusy ? input.localSendStartedAt : null),
+    activeTurnStartedAt: input.serverIsWorking
+      ? (input.serverActiveTurnStartedAt ?? localStartedAt)
+      : localStartedAt,
   };
 }
 
