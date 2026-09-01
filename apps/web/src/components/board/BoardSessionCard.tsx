@@ -37,6 +37,7 @@ import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ChatComposer } from "../chat/ChatComposer";
 import { ExpandedImageDialog } from "../chat/ExpandedImageDialog";
@@ -349,8 +350,13 @@ const BoardCardChatContent = memo(function BoardCardChatContent(props: {
       if (composer) {
         const currentDraft = composer.getSendContext().prompt;
         const prompt = codexArtifactTemplatePromptToAppend(currentDraft, template);
-        if (prompt !== null) {
-          composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true });
+        if (prompt !== null && !composer.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
+          toastManager.add({
+            type: "error",
+            title: "Unable to add to chat",
+            description: "The composer is busy; try again once it is ready.",
+          });
+          return;
         }
       }
       openCanonicalThread();
