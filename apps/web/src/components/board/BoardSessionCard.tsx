@@ -345,6 +345,7 @@ const BoardCardChatContent = memo(function BoardCardChatContent(props: {
   const {
     chatComposerProps,
     composerRef,
+    hasRetainedOptimisticMessages,
     timelineMessages,
     timelineAnchorMessageId,
     clearTimelineAnchor,
@@ -440,9 +441,16 @@ const BoardCardChatContent = memo(function BoardCardChatContent(props: {
     [clearTimelineAnchor],
   );
   useEffect(() => {
-    onMountRequestChange(chatComposerProps.isSendBusy || !liveFollowEnabled);
+    onMountRequestChange(
+      chatComposerProps.isSendBusy || !liveFollowEnabled || hasRetainedOptimisticMessages,
+    );
     return () => onMountRequestChange(false);
-  }, [chatComposerProps.isSendBusy, liveFollowEnabled, onMountRequestChange]);
+  }, [
+    chatComposerProps.isSendBusy,
+    hasRetainedOptimisticMessages,
+    liveFollowEnabled,
+    onMountRequestChange,
+  ]);
 
   return (
     <>

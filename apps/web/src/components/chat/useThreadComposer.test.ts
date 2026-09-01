@@ -157,7 +157,7 @@ describe("board thread composer", () => {
     });
   });
 
-  it("waits for local checkout status but leaves worktrees and resolved status alone", () => {
+  it("waits for initial local status but lets failed queries skip reconciliation", () => {
     const base = {
       activeWorktreePath: null,
       activeBranch: "main",
@@ -176,7 +176,7 @@ describe("board thread composer", () => {
         statusData: null,
         statusError: "status failed",
       }),
-    ).toBe("error");
+    ).toBeNull();
     expect(
       resolveBoardLocalCheckoutStatusGuard({
         ...base,
