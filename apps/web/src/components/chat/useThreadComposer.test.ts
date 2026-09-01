@@ -7,6 +7,7 @@ import {
   boardComposerDraftCanBeRestored,
   mergeBoardTimelineMessages,
   parseBoardCodexFeedbackCommand,
+  parseBoardStandaloneComposerSlashCommand,
   removeBoardAttachmentPreviewHandoff,
   resolveBoardComposerModes,
 } from "./useThreadComposer";
@@ -46,6 +47,41 @@ describe("board thread composer", () => {
         prompt: "/feedback",
         hasAttachments: true,
         hasContexts: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("recognizes standalone mode commands only for an empty enabled-plan draft", () => {
+    expect(
+      parseBoardStandaloneComposerSlashCommand({
+        planModeEnabled: true,
+        prompt: " /plan ",
+        hasAttachments: false,
+        hasContexts: false,
+      }),
+    ).toBe("plan");
+    expect(
+      parseBoardStandaloneComposerSlashCommand({
+        planModeEnabled: true,
+        prompt: "/default",
+        hasAttachments: false,
+        hasContexts: false,
+      }),
+    ).toBe("default");
+    expect(
+      parseBoardStandaloneComposerSlashCommand({
+        planModeEnabled: false,
+        prompt: "/plan",
+        hasAttachments: false,
+        hasContexts: false,
+      }),
+    ).toBeNull();
+    expect(
+      parseBoardStandaloneComposerSlashCommand({
+        planModeEnabled: true,
+        prompt: "/default",
+        hasAttachments: false,
+        hasContexts: true,
       }),
     ).toBeNull();
   });

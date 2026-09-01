@@ -28,6 +28,7 @@ import {
   type PendingUserInput,
 } from "../../session-logic.ts";
 import { useEnvironmentSettings } from "../../hooks/useSettings.ts";
+import { parseStandaloneComposerSlashCommand } from "../../composer-logic.ts";
 import { newMessageId } from "../../lib/utils.ts";
 import { primaryServerKeybindingsAtom } from "../../state/server.ts";
 import { useProject, useServerConfigs } from "../../state/entities.ts";
@@ -161,6 +162,18 @@ export function parseBoardCodexFeedbackCommand(input: {
     return null;
   }
   return parseCodexFeedbackCommand(input.prompt);
+}
+
+export function parseBoardStandaloneComposerSlashCommand(input: {
+  readonly planModeEnabled: boolean;
+  readonly prompt: string;
+  readonly hasAttachments: boolean;
+  readonly hasContexts: boolean;
+}) {
+  if (!input.planModeEnabled || input.hasAttachments || input.hasContexts) {
+    return null;
+  }
+  return parseStandaloneComposerSlashCommand(input.prompt);
 }
 
 export function resolveBoardComposerModes(input: {
@@ -554,19 +567,6 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             draft.previewAnnotations.length +
             draft.reviewComments.length,
         });
-        if (sendState.expiredTerminalContextCount > 0) {
-          const toastCopy = buildExpiredTerminalContextToastCopy(
-            sendState.expiredTerminalContextCount,
-            "empty",
-          );
-          toastManager.add({
-            type: "warning",
-            title: toastCopy.title,
-            description: toastCopy.description,
-          });
-          return;
-        }
-        if (!sendState.hasSendableContent) return;
         const feedbackCommand = parseBoardCodexFeedbackCommand({
           provider: draft.selectedProvider,
           prompt: sendState.trimmedPrompt,
@@ -586,6 +586,38 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           });
           return;
         }
+        const standaloneSlashCommand = parseBoardStandaloneComposerSlashCommand({
+          planModeEnabled: settings.planModeEnabled,
+          prompt: sendState.trimmedPrompt,
+          hasAttachments: draft.images.length > 0 || draft.files.length > 0,
+          hasContexts:
+            sendState.sendableTerminalContexts.length > 0 ||
+            draft.elementContexts.length > 0 ||
+            draft.previewAnnotations.length > 0 ||
+            draft.reviewComments.length > 0,
+        });
+        if (standaloneSlashCommand !== null) {
+          const draftStore = useComposerDraftStore.getState();
+          draftStore.setInteractionMode(threadRef, standaloneSlashCommand);
+          promptRef.current = "";
+          composerImagesRef.current = [];
+          draftStore.clearComposerContent(threadRef);
+          composerRef.current?.resetCursorState();
+          return;
+        }
+        if (sendState.expiredTerminalContextCount > 0) {
+          const toastCopy = buildExpiredTerminalContextToastCopy(
+            sendState.expiredTerminalContextCount,
+            "empty",
+          );
+          toastManager.add({
+            type: "warning",
+            title: toastCopy.title,
+            description: toastCopy.description,
+          });
+          return;
+        }
+        if (!sendState.hasSendableContent) return;
         const messageTextWithContexts = buildBoardComposerMessageText({
           prompt: draft.prompt,
           terminalContexts: sendState.sendableTerminalContexts,
@@ -805,6 +837,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       localCheckoutBranchMismatch,
       providerStatuses,
       runtimeMode,
+      settings.planModeEnabled,
       setThreadInteractionMode,
       setThreadRuntimeMode,
       startThreadTurn,
