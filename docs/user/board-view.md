@@ -33,10 +33,11 @@ Each card shows the context needed to distinguish simultaneous sessions:
 - Current status, including working, awaiting input, approval, monitoring, failure, or ready
 
 Status comes from the same provider and server projections as the thread sidebar. **Working** means
-the provider is currently running a turn. **Awaiting input** and **Needs approval** identify sessions
-where progress depends on you. **Monitoring** identifies a session following background work, while
-**Ready** is active but currently idle. A failed turn remains visible as **Error** so it is not lost
-among idle sessions.
+the provider is currently running a turn or live background work is in progress. **Awaiting input**
+and **Needs approval** identify sessions where progress depends on you. **Monitoring** identifies a
+session following background work, while **Completed** marks finished work you have not visited yet
+and **Ready** is active but currently idle. A failed turn remains visible as **Error** so it is not
+lost among idle sessions.
 
 The page header summarizes sessions that need attention or are still working. Each card also shows
 when its session last changed, so an older idle session does not look equivalent to fresh activity.
