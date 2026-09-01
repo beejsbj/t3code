@@ -9,6 +9,7 @@ import {
   parseBoardCodexFeedbackCommand,
   parseBoardStandaloneComposerSlashCommand,
   removeBoardAttachmentPreviewHandoff,
+  resolveBoardExpiredTerminalContextToastCopy,
   resolveBoardComposerModes,
 } from "./useThreadComposer";
 
@@ -119,6 +120,18 @@ describe("board thread composer", () => {
       previewUrls: ["blob:preview-1", "blob:preview-2"],
     });
     expect(removeBoardAttachmentPreviewHandoff(handoffs, "missing")).toBeNull();
+  });
+
+  it("warns when expired terminal context is omitted or is the only content", () => {
+    expect(resolveBoardExpiredTerminalContextToastCopy(1, false)).toEqual({
+      title: "Expired terminal context won't be sent",
+      description: "Remove it or re-add it to include terminal output.",
+    });
+    expect(resolveBoardExpiredTerminalContextToastCopy(2, true)).toEqual({
+      title: "Expired terminal contexts omitted from message",
+      description: "Re-add it if you want that terminal output included.",
+    });
+    expect(resolveBoardExpiredTerminalContextToastCopy(0, true)).toBeNull();
   });
 
   it("falls back to build mode when a retained plan mode is disabled", () => {

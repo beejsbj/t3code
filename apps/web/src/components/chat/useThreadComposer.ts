@@ -176,6 +176,17 @@ export function parseBoardStandaloneComposerSlashCommand(input: {
   return parseStandaloneComposerSlashCommand(input.prompt);
 }
 
+export function resolveBoardExpiredTerminalContextToastCopy(
+  expiredTerminalContextCount: number,
+  hasSendableContent: boolean,
+): { title: string; description: string } | null {
+  if (expiredTerminalContextCount <= 0) return null;
+  return buildExpiredTerminalContextToastCopy(
+    expiredTerminalContextCount,
+    hasSendableContent ? "omitted" : "empty",
+  );
+}
+
 export function resolveBoardComposerModes(input: {
   readonly planModeEnabled: boolean;
   readonly draftRuntimeMode: RuntimeMode | null | undefined;
@@ -474,7 +485,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       }
       let cancelled = false;
       const images: HTMLImageElement[] = [];
-      const clearHandoff = () => {
+      const promoteHandoff = () => {
         if (cancelled) return;
         const removed = removeBoardAttachmentPreviewHandoff(
           attachmentPreviewHandoffByMessageIdRef.current,
@@ -496,7 +507,13 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
               image.src = previewUrl;
             }),
         ),
-      ).then(clearHandoff, clearHandoff);
+      ).then(
+        promoteHandoff,
+        // A failed server preview must not revoke the blob URL: it is still
+        // the only usable preview for this message. The unmount cleanup owns
+        // revocation when the handoff can no longer be displayed.
+        () => undefined,
+      );
       cleanups.push(() => {
         cancelled = true;
         for (const image of images) image.src = "";
@@ -605,19 +622,20 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           composerRef.current?.resetCursorState();
           return;
         }
-        if (sendState.expiredTerminalContextCount > 0) {
-          const toastCopy = buildExpiredTerminalContextToastCopy(
-            sendState.expiredTerminalContextCount,
-            "empty",
-          );
-          toastManager.add({
-            type: "warning",
-            title: toastCopy.title,
-            description: toastCopy.description,
-          });
+        const expiredTerminalContextToast = resolveBoardExpiredTerminalContextToastCopy(
+          sendState.expiredTerminalContextCount,
+          sendState.hasSendableContent,
+        );
+        if (!sendState.hasSendableContent) {
+          if (expiredTerminalContextToast !== null) {
+            toastManager.add({
+              type: "warning",
+              title: expiredTerminalContextToast.title,
+              description: expiredTerminalContextToast.description,
+            });
+          }
           return;
         }
-        if (!sendState.hasSendableContent) return;
         const messageTextWithContexts = buildBoardComposerMessageText({
           prompt: draft.prompt,
           terminalContexts: sendState.sendableTerminalContexts,
@@ -780,6 +798,13 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           useUiStateStore.getState().markThreadVisited(scopedThreadKey(threadRef), wokeAt);
         }
         sendSucceeded = true;
+        if (expiredTerminalContextToast !== null) {
+          toastManager.add({
+            type: "warning",
+            title: expiredTerminalContextToast.title,
+            description: expiredTerminalContextToast.description,
+          });
+        }
       } catch (error) {
         sendError = error;
       } finally {
