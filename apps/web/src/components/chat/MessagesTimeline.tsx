@@ -493,17 +493,38 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return config ? { ...config, onReady: handleAnchorReady } : undefined;
   }, [anchorMessageId, handleAnchorReady, rows]);
 
+  const timelineRealContentOverflowsViewport = useCallback(() => {
+    const list = listRef.current;
+    const state = list?.getState();
+    if (!list || !state || state.data.length === 0) {
+      return false;
+    }
+
+    const lastRowIndex = state.data.length - 1;
+    const lastRowTop = state.positionAtIndex(lastRowIndex);
+    const lastRowHeight = state.sizeAtIndex(lastRowIndex);
+    if (
+      typeof lastRowTop !== "number" ||
+      typeof lastRowHeight !== "number" ||
+      !Number.isFinite(lastRowTop) ||
+      !Number.isFinite(lastRowHeight)
+    ) {
+      return false;
+    }
+
+    const realContentBottom = lastRowTop + Math.max(1, lastRowHeight);
+    const visibleScrollLength = Math.max(
+      0,
+      (state.scrollLength ?? 0) - contentInsetEndAdjustment - CHAT_TIMELINE_ANCHOR_OFFSET,
+    );
+    return realContentBottom > visibleScrollLength;
+  }, [contentInsetEndAdjustment, listRef]);
+
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     const isAtEnd = resolveTimelineIsAtEnd(state, contentInsetEndAdjustment);
     if (isAtEnd !== undefined) {
       onIsAtEndChange(isAtEnd);
-      // Compact timelines have no minimap, so ordinary wheel, touch, keyboard,
-      // and scrollbar navigation is their only way to leave the live edge.
-      // Do not treat the deliberate post-send anchor scroll as manual reading.
-      if (isCompact && !isAtEnd && anchorMessageId === null) {
-        onManualNavigation();
-      }
     }
     if (!state || minimapItems.length === 0) {
       return;
@@ -527,15 +548,99 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
       strip.dataset.inView = inView ? "true" : "false";
     }
+  }, [contentInsetEndAdjustment, listRef, minimapItems, minimapStripMap, onIsAtEndChange]);
+
+  useEffect(() => {
+    if (!isCompact) {
+      return;
+    }
+
+    let removeListeners: (() => void) | null = null;
+    let frame: number | null = null;
+    const attach = (remainingAttempts: number) => {
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const scrollNode = listRef.current?.getScrollableNode();
+        if (!scrollNode) {
+          if (remainingAttempts > 0) {
+            attach(remainingAttempts - 1);
+          }
+          return;
+        }
+
+        const handleManualNavigation = () => {
+          onManualNavigation();
+        };
+        // Only user gestures should leave live-follow. Scroll callbacks also
+        // fire for anchor placement, list maintenance, and other programmatic
+        // rAF scrolls, so they cannot establish intent on their own.
+        const contentScrollsUp = () => timelineRealContentOverflowsViewport();
+        const viewportIsAwayFromEnd = () =>
+          resolveTimelineIsAtEnd(listRef.current?.getState(), contentInsetEndAdjustment) === false;
+
+        const handleWheel = (event: WheelEvent) => {
+          if (event.deltaY < 0 && contentScrollsUp()) {
+            handleManualNavigation();
+          }
+        };
+        const handleTouchMove = () => {
+          if (viewportIsAwayFromEnd()) {
+            handleManualNavigation();
+          }
+        };
+        const handlePointerDown = (event: PointerEvent) => {
+          if (event.target === scrollNode) {
+            if (contentScrollsUp()) {
+              handleManualNavigation();
+            }
+            return;
+          }
+          if (viewportIsAwayFromEnd()) {
+            handleManualNavigation();
+          }
+        };
+        const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+          switch (event.key) {
+            case "PageUp":
+            case "Home":
+            case "ArrowUp":
+              if (contentScrollsUp()) {
+                handleManualNavigation();
+              }
+              break;
+            default:
+              break;
+          }
+        };
+
+        scrollNode.addEventListener("wheel", handleWheel, { passive: true });
+        scrollNode.addEventListener("touchmove", handleTouchMove, { passive: true });
+        scrollNode.addEventListener("pointerdown", handlePointerDown, { passive: true });
+        scrollNode.addEventListener("keydown", handleKeyDown);
+        removeListeners = () => {
+          scrollNode.removeEventListener("wheel", handleWheel);
+          scrollNode.removeEventListener("touchmove", handleTouchMove);
+          scrollNode.removeEventListener("pointerdown", handlePointerDown);
+          scrollNode.removeEventListener("keydown", handleKeyDown);
+        };
+      });
+    };
+    attach(12);
+
+    return () => {
+      if (frame !== null) {
+        cancelAnimationFrame(frame);
+      }
+      removeListeners?.();
+    };
   }, [
-    anchorMessageId,
     contentInsetEndAdjustment,
     isCompact,
     listRef,
-    minimapItems,
-    minimapStripMap,
-    onIsAtEndChange,
     onManualNavigation,
+    routeThreadKey,
+    rows.length,
+    timelineRealContentOverflowsViewport,
   ]);
 
   useEffect(() => {
