@@ -639,6 +639,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     listRef,
     onManualNavigation,
     routeThreadKey,
+    timelineViewportElement,
     timelineRealContentOverflowsViewport,
   ]);
 
