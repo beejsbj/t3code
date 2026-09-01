@@ -7,10 +7,13 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
+import { useAtomValue } from "@effect/atom-react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { shortcutLabelForCommand } from "../../keybindings";
+import { primaryServerKeybindingsAtom } from "../../state/server";
 import { useEnvironments } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -30,6 +33,7 @@ import {
   useSidebar,
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Kbd } from "../ui/kbd";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
@@ -123,10 +127,12 @@ function SidebarUtilityItem({
   icon,
   label,
   onClick,
+  shortcutLabel,
 }: {
   icon: ReactNode;
   label: string;
   onClick: () => void;
+  shortcutLabel?: string;
 }) {
   return (
     <SidebarMenuItem className="shrink-0">
@@ -138,7 +144,12 @@ function SidebarUtilityItem({
             </SidebarMenuButton>
           }
         />
-        <TooltipPopup side="top">{label}</TooltipPopup>
+        <TooltipPopup side="top">
+          <span className="flex items-center gap-2">
+            {label}
+            {shortcutLabel ? <Kbd>{shortcutLabel}</Kbd> : null}
+          </span>
+        </TooltipPopup>
       </Tooltip>
     </SidebarMenuItem>
   );
@@ -146,6 +157,7 @@ function SidebarUtilityItem({
 
 export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const canGoBack = useCanGoBack();
   const { isMobile, setOpenMobile } = useSidebar();
   const currentFooterPage = useLocation({
@@ -168,6 +180,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
   );
+  const boardShortcutLabel = shortcutLabelForCommand(keybindings, "board.open");
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -235,6 +248,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             icon={<LayoutDashboardIcon />}
             label="Board view"
             onClick={handleBoardClick}
+            {...(boardShortcutLabel === null ? {} : { shortcutLabel: boardShortcutLabel })}
           />
         </>
       )}
