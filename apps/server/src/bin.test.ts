@@ -299,8 +299,18 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
 
   it.effect("reports when no local server is available for manual board client discovery", () =>
     Effect.gen(function* () {
+      const previousEndpoint = process.env.T3_AGENT_ENDPOINT;
+      const previousToken = process.env.T3_AGENT_BEARER_TOKEN;
+      delete process.env.T3_AGENT_ENDPOINT;
+      delete process.env.T3_AGENT_BEARER_TOKEN;
       const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-board-cli-test-"));
       const error = yield* runCliWithRuntime(["board", "clients", "--base-dir", baseDir]).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousEndpoint) process.env.T3_AGENT_ENDPOINT = previousEndpoint;
+            if (previousToken) process.env.T3_AGENT_BEARER_TOKEN = previousToken;
+          }),
+        ),
         Effect.flip,
       );
 

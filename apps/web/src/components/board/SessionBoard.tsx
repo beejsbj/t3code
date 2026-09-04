@@ -17,7 +17,6 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import type { ChangeRequestSettleSource } from "@t3tools/client-runtime/state/thread-settled";
 import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -114,7 +113,7 @@ import { Textarea } from "../ui/textarea.tsx";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
-import { BoardChangeRequestStateReporter, BoardSessionCard } from "./BoardSessionCard.tsx";
+import { BoardSessionCard } from "./BoardSessionCard.tsx";
 import { BoardDraftCard } from "./BoardDraftCard.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { threadHasStarted } from "../ChatView.logic.ts";
@@ -228,19 +227,10 @@ export function SessionBoard() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
-  const autoSettleAfterDays = useClientSettings((settings) => settings.sidebarAutoSettleAfterDays);
-  const autoSettleOnMerge = useClientSettings((settings) => settings.sidebarAutoSettleOnMerge);
   const nowMinute = useNowMinute();
-  const settlementNow = `${nowMinute}:00.000Z`;
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   const projectScopeKey = useProjectScopeStore((state) => state.projectScopeKey);
   const [draggingKey, setDraggingKey] = useState<string | null>(null);
-  const [changeRequestResolutionByKey, setChangeRequestResolutionByKey] = useState<
-    ReadonlyMap<
-      string,
-      { readonly sourceKey: string; readonly changeRequest: ChangeRequestSettleSource | null }
-    >
-  >(() => new Map());
   const [collapsedProjectKeys, setCollapsedProjectKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -290,14 +280,6 @@ export function SessionBoard() {
     }
     return map;
   }, [projects]);
-  const projectByPhysicalKey = useMemo(
-    () =>
-      new Map(
-        projects.map((project) => [boardProjectKey(project.environmentId, project.id), project]),
-      ),
-    [projects],
-  );
-
   const { projectGroupByPhysicalKey, projectRefByGroupKey } = useMemo(() => {
     const groups = buildSidebarProjectSnapshots({
       projects,
@@ -424,85 +406,12 @@ export function SessionBoard() {
     [archiveLane],
   );
 
-  const handleChangeRequest = useCallback(
-    (threadKey: string, sourceKey: string, changeRequest: ChangeRequestSettleSource | null) => {
-      setChangeRequestResolutionByKey((current) => {
-        const existing = current.get(threadKey);
-        if (
-          existing?.sourceKey === sourceKey &&
-          existing.changeRequest?.state === changeRequest?.state &&
-          (existing.changeRequest?.updatedAt ?? null) === (changeRequest?.updatedAt ?? null)
-        ) {
-          return current;
-        }
-        const next = new Map(current);
-        next.set(threadKey, { sourceKey, changeRequest });
-        return next;
-      });
-    },
-    [],
-  );
-
-  const { changeRequestSourceKeyByThreadKey, changeRequestReporterGroups } = useMemo(() => {
-    const sourceKeyByThreadKey = new Map<string, string>();
-    const groups = new Map<
-      string,
-      {
-        readonly environmentId: SidebarThreadSummary["environmentId"];
-        readonly workspacePath: string;
-        readonly threads: Array<{
-          readonly cardKey: string;
-          readonly branch: string;
-          readonly sourceKey: string;
-        }>;
-      }
-    >();
-    for (const thread of threads) {
-      const supportsSettlement =
-        serverConfigs.get(thread.environmentId)?.environment.capabilities.threadSettlement === true;
-      if (thread.archivedAt !== null || !supportsSettlement || thread.branch === null) continue;
-      const projectKey = boardProjectKey(thread.environmentId, thread.projectId);
-      const project = projectByPhysicalKey.get(projectKey);
-      const cardKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-      if (!project) {
-        sourceKeyByThreadKey.set(cardKey, `pending-project:${projectKey}:${thread.branch}`);
-        continue;
-      }
-      const workspacePath = thread.worktreePath ?? project.workspaceRoot;
-      const workspaceKey = `${thread.environmentId}:${workspacePath}`;
-      const sourceKey = `${workspaceKey}:${thread.branch}`;
-      sourceKeyByThreadKey.set(cardKey, sourceKey);
-      const group = groups.get(workspaceKey) ?? {
-        environmentId: thread.environmentId,
-        workspacePath,
-        threads: [],
-      };
-      group.threads.push({ cardKey, branch: thread.branch, sourceKey });
-      groups.set(workspaceKey, group);
-    }
-    return {
-      changeRequestSourceKeyByThreadKey: sourceKeyByThreadKey,
-      changeRequestReporterGroups: [...groups.entries()],
-    };
-  }, [projectByPhysicalKey, serverConfigs, threads]);
-
-  const changeRequestForThread = useCallback(
-    (threadKey: string): ChangeRequestSettleSource | null => {
-      const expectedSourceKey = changeRequestSourceKeyByThreadKey.get(threadKey);
-      const resolution = changeRequestResolutionByKey.get(threadKey);
-      return expectedSourceKey !== undefined && resolution?.sourceKey === expectedSourceKey
-        ? resolution.changeRequest
-        : null;
-    },
-    [changeRequestResolutionByKey, changeRequestSourceKeyByThreadKey],
-  );
-
   const { placedThreads, nextSnoozeWakeAtMs } = useMemo<{
     readonly placedThreads: ReadonlyArray<PlacedThread>;
     readonly nextSnoozeWakeAtMs: number | null;
   }>(() => {
-    // Inactivity settlement is minute-granular. Snoozes get an exact wake
-    // timer below, whose tick asks this memo for a fresh wall clock.
+    // Snoozes get an exact wake timer below, whose tick asks this memo for a
+    // fresh wall clock. The minute tick is a fallback for sleeping tabs.
     void nowMinute;
     void snoozeWakeTick;
     const now = new Date().toISOString();
@@ -515,12 +424,8 @@ export function SessionBoard() {
           const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
           const visibility = resolveBoardThreadVisibility(thread, {
             now,
-            settlementNow,
-            autoSettleAfterDays,
-            autoSettleOnMerge,
             supportsSettlement: capabilities?.threadSettlement === true,
             supportsSnooze: capabilities?.threadSnooze === true,
-            changeRequest: changeRequestForThread(key),
           });
           if (visibility === "snoozed" && thread.snoozedUntil != null) {
             const wakeAtMs = Date.parse(thread.snoozedUntil);
@@ -567,13 +472,9 @@ export function SessionBoard() {
       nextSnoozeWakeAtMs: Number.isFinite(nextWakeAtMs) ? nextWakeAtMs : null,
     };
   }, [
-    autoSettleAfterDays,
-    autoSettleOnMerge,
-    changeRequestForThread,
     environmentById,
     lanes,
     organization.columns,
-    settlementNow,
     placementByThreadKey,
     projectGroupByPhysicalKey,
     projectTitleById,
@@ -678,14 +579,6 @@ export function SessionBoard() {
 
   useEffect(() => {
     for (const entry of placed) {
-      const expectedSourceKey =
-        entry.kind === "thread" ? changeRequestSourceKeyByThreadKey.get(entry.key) : undefined;
-      if (
-        expectedSourceKey !== undefined &&
-        changeRequestResolutionByKey.get(entry.key)?.sourceKey !== expectedSourceKey
-      ) {
-        continue;
-      }
       const current = laneEntryByThreadKey[entry.key];
       if (current?.laneId === entry.laneId) continue;
       // Implicit Triage has creation time as its natural arrival and needs no local write.
@@ -698,14 +591,7 @@ export function SessionBoard() {
       }
       recordLaneEntry(entry.ref, entry.laneId);
     }
-  }, [
-    changeRequestResolutionByKey,
-    changeRequestSourceKeyByThreadKey,
-    laneEntryByThreadKey,
-    placed,
-    placementByThreadKey,
-    recordLaneEntry,
-  ]);
+  }, [laneEntryByThreadKey, placed, placementByThreadKey, recordLaneEntry]);
 
   useEffect(() => {
     if (nextSnoozeWakeAtMs === null) return;
@@ -1249,15 +1135,6 @@ export function SessionBoard() {
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      {changeRequestReporterGroups.map(([workspaceKey, group]) => (
-        <BoardChangeRequestStateReporter
-          key={workspaceKey}
-          environmentId={group.environmentId}
-          workspacePath={group.workspacePath}
-          threads={group.threads}
-          onChangeRequest={handleChangeRequest}
-        />
-      ))}
       {draftPromotionPairs.map((pair) => (
         <BoardDraftPromotionReconciler
           key={pair.draftId}
@@ -1431,7 +1308,6 @@ export function SessionBoard() {
                           entries={byRowColumn.get(column.key) ?? []}
                           draggingKey={draggingKey}
                           draggable={organization.columns === "workflow"}
-                          changeRequestForThread={changeRequestForThread}
                           onExpandDraft={(draftId) => setExpandedTarget({ kind: "draft", draftId })}
                           onDiscardDraft={clearDraftThread}
                         />
@@ -1891,7 +1767,6 @@ function LaneDropCell({
   entries,
   draggingKey,
   draggable,
-  changeRequestForThread,
   onExpandDraft,
   onDiscardDraft,
 }: {
@@ -1901,7 +1776,6 @@ function LaneDropCell({
   readonly entries: ReadonlyArray<PlacedEntry>;
   readonly draggingKey: string | null;
   readonly draggable: boolean;
-  readonly changeRequestForThread: (threadKey: string) => ChangeRequestSettleSource | null;
   readonly onExpandDraft: (draftId: DraftId) => void;
   readonly onDiscardDraft: (draftId: DraftId) => void;
 }) {
@@ -1940,7 +1814,6 @@ function LaneDropCell({
                   environmentLabel={entry.environmentLabel}
                   environmentConnection={entry.environmentConnection}
                   isDragging={draggingKey === entry.key}
-                  changeRequest={changeRequestForThread(entry.key)}
                 />
               ) : (
                 <BoardDraftCard

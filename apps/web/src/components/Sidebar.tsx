@@ -3579,8 +3579,6 @@ export default function Sidebar() {
       attemptUnsettle,
       attemptUnsnooze,
       confirmThreadArchive,
-      autoSettleAfterDays,
-      autoSettleOnMerge,
       changeRequestSnapshotByKey,
       confirmThreadDelete,
       copyBranchToClipboard,

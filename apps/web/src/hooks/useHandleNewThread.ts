@@ -419,7 +419,6 @@ export function useNewThreadHandler() {
             interactionMode: racedDraft.interactionMode,
             ...pickExplicitWorkspaceOptions(options),
           });
-          carryComposerContentTo(racedDraft.draftId);
           await presentDraft(racedDraft.draftId);
           return { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
         }
@@ -445,8 +444,6 @@ export function useNewThreadHandler() {
           // state. The project default wins when both are present.
           setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
         }
-        carryComposerContentTo(draftId);
-
         await presentDraft(draftId);
         return { draftId, threadId };
       })();
