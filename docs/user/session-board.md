@@ -130,8 +130,9 @@ can discover the ordinary project-local skill:
 t3 board skill install --directory /path/to/project
 ```
 
-After an explicit request, an agent can run `t3 board lanes`, `t3 board lane`, or
-`t3 board move <lane>`. Those commands apply only to the current thread on the client that started
+After an explicit request, an agent can run `t3-board lanes`, `t3-board lane`, or
+`t3-board move <lane>`. This dedicated agent command leaves any globally installed `t3` CLI alone.
+Those commands apply only to the current thread on the client that started
 the turn. If that client is unavailable, the command fails instead of choosing another client.
 
 For manual use from a shell, first list the board-capable windows connected to that T3 server:
