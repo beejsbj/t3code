@@ -353,6 +353,18 @@ it.layer(NodeServices.layer)("bin cli parsing", (it) => {
       const projectDirectory = NodeFS.mkdtempSync(
         NodePath.join(NodeOS.tmpdir(), "t3-board-skill-test-"),
       );
+      const checkedInSkillDirectory = NodePath.join(
+        import.meta.dirname,
+        "../../../.agents/skills/t3-board",
+      );
+      assert.equal(
+        boardSkillFiles["SKILL.md"],
+        NodeFS.readFileSync(NodePath.join(checkedInSkillDirectory, "SKILL.md"), "utf8"),
+      );
+      assert.equal(
+        boardSkillFiles["agents/openai.yaml"],
+        NodeFS.readFileSync(NodePath.join(checkedInSkillDirectory, "agents/openai.yaml"), "utf8"),
+      );
       yield* runCliWithRuntime(["board", "skill", "install", "--directory", projectDirectory]);
 
       const skillDirectory = NodePath.join(projectDirectory, ".agents", "skills", "t3-board");
