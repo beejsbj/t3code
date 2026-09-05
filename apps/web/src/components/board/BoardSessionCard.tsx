@@ -9,10 +9,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import {
-  canSnooze,
-  type ChangeRequestSettleSource,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AlarmClockIcon,
   CheckIcon,
@@ -67,7 +64,6 @@ import {
   type PendingUserInput,
 } from "../../session-logic.ts";
 import { readProject, useServerConfigs, useThread } from "../../state/entities.ts";
-import { useEnvironmentQuery } from "../../state/query.ts";
 import {
   resolveThreadRuntimeState,
   threadRuntimeStateAppearance,
@@ -75,12 +71,10 @@ import {
 } from "../../state/threadRuntimeState.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
-import { vcsEnvironment } from "../../state/vcs.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
 import { useUiStateStore } from "../../uiStateStore.ts";
 import { cn } from "~/lib/utils";
 import { hasUnseenCompletion } from "../Sidebar.logic.ts";
-import { resolveThreadPr } from "../ThreadStatusIndicators.tsx";
 import { useThreadTimeline } from "../chat/useThreadTimeline.ts";
 import { ChatComposer } from "../chat/ChatComposer.tsx";
 import { resolveRenameCommit } from "../threadRename.logic.ts";
@@ -127,53 +121,12 @@ export interface BoardSessionCardProps {
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly isDragging: boolean;
-  readonly changeRequest: ChangeRequestSettleSource | null;
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
   } | null;
   readonly onSnoozeDropRequestHandled?: (nonce: number) => void;
 }
-
-/**
- * PR state participates in board projection, so SessionBoard mounts one
- * reporter per eligible thread and passes the resulting state to visible cards.
- */
-export const BoardChangeRequestStateReporter = memo(
-  function BoardChangeRequestStateReporter(props: {
-    readonly environmentId: SidebarThreadSummary["environmentId"];
-    readonly workspacePath: string;
-    readonly threads: ReadonlyArray<{
-      readonly cardKey: string;
-      readonly branch: string;
-      readonly sourceKey: string;
-    }>;
-    readonly onChangeRequest: (
-      threadKey: string,
-      sourceKey: string,
-      changeRequest: ChangeRequestSettleSource | null,
-    ) => void;
-  }) {
-    const gitStatus = useEnvironmentQuery(
-      vcsEnvironment.status({
-        environmentId: props.environmentId,
-        input: { cwd: props.workspacePath },
-      }),
-    );
-    useEffect(() => {
-      if (gitStatus.isPending) return;
-      for (const thread of props.threads) {
-        const pr = resolveThreadPr({ threadBranch: thread.branch, gitStatus: gitStatus.data });
-        props.onChangeRequest(
-          thread.cardKey,
-          thread.sourceKey,
-          pr === null ? null : { state: pr.state, updatedAt: pr.updatedAt },
-        );
-      }
-    }, [gitStatus.data, gitStatus.isPending, props]);
-    return null;
-  },
-);
 
 export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessionCardProps) {
   const {
@@ -182,7 +135,6 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     thread,
     laneId,
     workflowLabel,
-    boardStateId,
     boardStateLabel,
     draggable,
     lanes,
@@ -256,7 +208,6 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   const { openMenu, settle, unsettle, snooze } = useThreadActionMenu({
     threadRef,
     projectCwd: workspacePath,
-    changeRequest: props.changeRequest,
     onStartRename: startRename,
     boardLanes: lanes,
   });
@@ -886,7 +837,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
           return;
         }
         const viewportIsAwayFromEnd = () =>
-          resolveTimelineIsAtEnd(legendListRef.current?.getState(), 0) === false;
+          resolveTimelineIsAtEnd(legendListRef.current?.getState()) === false;
         const handleWheel = (event: WheelEvent) => {
           if (event.deltaY < 0 && timelineContentOverflowsViewport()) {
             cancelTimelineFollow();
@@ -972,7 +923,6 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
           onRevertUserMessage={onRevertUserMessage}
           isRevertingCheckpoint={timelineIsRevertingCheckpoint}
           onImageExpand={onExpandTimelineImage}
-          openingVideoAttachmentId={null}
           activeThreadEnvironmentId={activeThreadEnvironmentId}
           markdownCwd={markdownCwd}
           resolvedTheme={timelineTheme}

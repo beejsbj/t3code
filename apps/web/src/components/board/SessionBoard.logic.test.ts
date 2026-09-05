@@ -80,12 +80,8 @@ function threadShell(overrides: Partial<OrchestrationThreadShell> = {}): Orchest
 
 const lifecycleOptions = {
   now: NOW,
-  settlementNow: NOW,
-  autoSettleAfterDays: 3,
-  autoSettleOnMerge: true,
   supportsSettlement: true,
   supportsSnooze: true,
-  changeRequest: null,
 } as const;
 
 type KeyboardTargetInput = {
@@ -172,7 +168,7 @@ describe("resolveBoardThreadVisibility", () => {
     ).toBe("settled");
   });
 
-  it("returns a thread when its lifecycle blocker makes it active again", () => {
+  it("lets snooze hand-raises restore visibility while trusting server settlement", () => {
     expect(
       resolveBoardThreadVisibility(
         threadShell({
@@ -200,7 +196,7 @@ describe("resolveBoardThreadVisibility", () => {
         }),
         lifecycleOptions,
       ),
-    ).toBe("visible");
+    ).toBe("settled");
   });
 
   it("does not classify lifecycle states a connected server cannot manage", () => {
@@ -219,49 +215,20 @@ describe("resolveBoardThreadVisibility", () => {
     ).toBe("visible");
   });
 
-  it("keeps pinned threads visible instead of auto-settling them for inactivity", () => {
-    const stalePinned = threadShell({
+  it("keeps a raced pinned thread visible ahead of server settlement", () => {
+    const settledPinned = threadShell({
       pinnedAt: "2026-08-01T00:00:00.000Z",
-      latestUserMessageAt: "2026-08-01T00:00:00.000Z",
-      latestTurn: null,
+      settledOverride: "settled",
+      settledAt: "2026-08-12T15:30:00.000Z",
     });
-    expect(resolveBoardThreadVisibility(stalePinned, lifecycleOptions)).toBe("visible");
-    expect(resolveBoardThreadVisibility({ ...stalePinned, pinnedAt: null }, lifecycleOptions)).toBe(
-      "settled",
-    );
+    expect(resolveBoardThreadVisibility(settledPinned, lifecycleOptions)).toBe("visible");
+    expect(
+      resolveBoardThreadVisibility({ ...settledPinned, pinnedAt: null }, lifecycleOptions),
+    ).toBe("settled");
   });
 
-  it("matches sidebar settlement rules for open and completed pull requests", () => {
-    const stale = threadShell({
-      latestUserMessageAt: "2026-08-01T00:00:00.000Z",
-      latestTurn: null,
-    });
-
-    expect(
-      resolveBoardThreadVisibility(stale, {
-        ...lifecycleOptions,
-        changeRequest: { state: "open" },
-      }),
-    ).toBe("visible");
-    expect(
-      resolveBoardThreadVisibility(threadShell(), {
-        ...lifecycleOptions,
-        changeRequest: { state: "merged" },
-      }),
-    ).toBe("settled");
-    expect(
-      resolveBoardThreadVisibility(threadShell(), {
-        ...lifecycleOptions,
-        autoSettleOnMerge: false,
-        changeRequest: { state: "merged" },
-      }),
-    ).toBe("visible");
-    expect(
-      resolveBoardThreadVisibility(threadShell(), {
-        ...lifecycleOptions,
-        changeRequest: { state: "closed" },
-      }),
-    ).toBe("settled");
+  it("does not infer settlement without the server lifecycle field", () => {
+    expect(resolveBoardThreadVisibility(threadShell(), lifecycleOptions)).toBe("visible");
   });
 });
 

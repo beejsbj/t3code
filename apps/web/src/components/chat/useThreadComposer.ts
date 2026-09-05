@@ -15,6 +15,7 @@ import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -99,6 +100,8 @@ const EMPTY_COMPOSER_BANNER_ITEMS = [] as const;
 // zero-arg function is structurally assignable to every callback prop type
 // below regardless of its arity, so one constant covers all of them.
 const NOOP = () => {};
+const NO_TIMELINE_SCROLLABLE_NODE = () => null;
+const TIMELINE_IS_AT_LOGICAL_END = () => true;
 
 export type ThreadComposerSurface = "route" | "board";
 
@@ -249,6 +252,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     resolvedTheme,
     onExpandImage,
   } = input;
+  const navigate = useNavigate();
   const environmentId = threadRef.environmentId;
   const settings = useEnvironmentSettings(environmentId);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -749,6 +753,16 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     ],
   );
 
+  const onOpenProviderSetup = useCallback(
+    (instanceId: ProviderInstanceId) => {
+      void navigate({
+        to: "/settings/providers",
+        search: { environmentId, instanceId },
+      });
+    },
+    [environmentId, navigate],
+  );
+
   const getModelDisabledReason = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
       const reason = getStartedThreadModelChangeBlockReason({
@@ -854,6 +868,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       activeProjectDefaultModelSelection: project?.defaultModelSelection,
       activeThreadModelSelection: summary.modelSelection,
       activeContextWindow: null,
+      compactThreadUnavailable: false,
       compactDisabled: false,
       compactDisabledReason: null,
       resolvedTheme,
@@ -861,11 +876,21 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       keybindings,
       terminalOpen: false,
       gitCwd,
+      restingControlsHost: null,
+      restingControlsHaveLeadingContext: false,
+      onRestingControlsVisibilityChange: NOOP,
+      getTimelineScrollableNode: NO_TIMELINE_SCROLLABLE_NODE,
+      isTimelineAtLogicalEnd: TIMELINE_IS_AT_LOGICAL_END,
+      onComposerOverlayHeightChange: NOOP,
+      onRestingChange: NOOP,
       promptRef,
       composerImagesRef,
       composerFilesRef,
       composerTerminalContextsRef,
       composerElementContextsRef,
+      onPageScrollKeyDown: NOOP,
+      onPageScrollKeyUp: NOOP,
+      onPageScrollRelease: NOOP,
       onSend,
       onInterrupt,
       onImplementPlanInNewThread: NOOP,
@@ -875,6 +900,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       onPreviousActivePendingUserInputQuestion: NOOP,
       onChangeActivePendingUserInputCustomAnswer: NOOP,
       onProviderModelSelect,
+      onOpenProviderSetup,
       getModelDisabledReason,
       toggleInteractionMode,
       handleRuntimeModeChange,
@@ -884,7 +910,6 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       setThreadError: NOOP,
       onExpandImage,
       onFileOpen: NOOP,
-      openingVideoAttachmentId: null,
       density: "compact",
     }),
     [
@@ -916,6 +941,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       onInterrupt,
       onRespondToApproval,
       onProviderModelSelect,
+      onOpenProviderSetup,
       getModelDisabledReason,
       toggleInteractionMode,
       handleRuntimeModeChange,
