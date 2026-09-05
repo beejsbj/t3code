@@ -23,7 +23,7 @@ it on one axis moves the other axis to a valid choice. Project, workflow, and st
 every card regardless of which dimensions organize the board.
 
 Workflow lanes are the board's user-defined, draggable placement. State is derived from the live
-session and includes Draft, Approval, Input, Failed, Working, Idle, Snoozed, and Settled. Plan-ready
+session and includes Draft, Approval, Input, Failed, Working, and Idle. Plan-ready
 sessions fold into Input, while connecting and monitoring sessions fold into Working. A completed
 session rests in Idle even when its card still carries the green **Done** treatment, so merely
 focusing it does not move it to another state group. Archived sessions remain hidden, matching the

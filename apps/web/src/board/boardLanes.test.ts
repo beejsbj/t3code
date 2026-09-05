@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import type { BoardLane } from "./boardLaneStore.ts";
 import {
   isBoardFixedLaneId,
-  isBoardLifecycleLaneId,
   isBoardWorkflowLane,
   adjacentBoardWorkflowLane,
   leftmostLane,
@@ -12,11 +11,9 @@ import {
 } from "./boardLanes.ts";
 
 const LANES: ReadonlyArray<BoardLane> = [
-  { id: "settled", name: "Settled", description: "Finished", order: -100 },
   { id: "triage", name: "Triage", description: "Unplaced", order: 100 },
   { id: "ready", name: "Ready", description: "Ready", order: 1 },
   { id: "blocked", name: "Blocked", description: "Blocked", order: 0 },
-  { id: "snoozed", name: "Snoozed", description: "Later", order: -200 },
 ];
 
 describe("resolveBoardLane", () => {
@@ -29,7 +26,7 @@ describe("resolveBoardLane", () => {
     expect(resolveBoardLane("archived-lane", LANES)).toBe("triage");
   });
 
-  it("rejects lifecycle ids as persisted workflow placement", () => {
+  it("rejects obsolete board-lane placements from old local state", () => {
     expect(resolveBoardLane("snoozed", LANES)).toBe("triage");
     expect(resolveBoardLane("settled", LANES)).toBe("triage");
   });
@@ -47,37 +44,26 @@ describe("leftmostLane", () => {
 });
 
 describe("adjacentBoardWorkflowLane", () => {
-  it("moves through the displayed local lanes without entering lifecycle lanes", () => {
+  it("moves through the displayed local workflow lanes", () => {
     expect(adjacentBoardWorkflowLane("triage", LANES, "right")).toBe("blocked");
     expect(adjacentBoardWorkflowLane("blocked", LANES, "right")).toBe("ready");
     expect(adjacentBoardWorkflowLane("ready", LANES, "left")).toBe("blocked");
   });
 
-  it("does not wrap at either workflow edge or move a lifecycle card", () => {
+  it("does not wrap at either workflow edge", () => {
     expect(adjacentBoardWorkflowLane("triage", LANES, "left")).toBeNull();
     expect(adjacentBoardWorkflowLane("ready", LANES, "right")).toBeNull();
-    expect(adjacentBoardWorkflowLane("snoozed", LANES, "left")).toBeNull();
   });
 });
 
 describe("board lane invariants", () => {
-  it("pins lifecycle lanes to the right of user-ordered workflow lanes", () => {
-    expect(orderBoardLanes(LANES).map((lane) => lane.id)).toEqual([
-      "triage",
-      "blocked",
-      "ready",
-      "snoozed",
-      "settled",
-    ]);
+  it("pins Triage to the left of user-ordered workflow lanes", () => {
+    expect(orderBoardLanes(LANES).map((lane) => lane.id)).toEqual(["triage", "blocked", "ready"]);
   });
 
-  it("distinguishes fixed, lifecycle, and workflow lanes", () => {
+  it("distinguishes fixed and workflow lanes", () => {
     expect(isBoardFixedLaneId("triage")).toBe(true);
-    expect(isBoardFixedLaneId("snoozed")).toBe(true);
     expect(isBoardFixedLaneId("ready")).toBe(false);
-    expect(isBoardLifecycleLaneId("settled")).toBe(true);
-    expect(isBoardLifecycleLaneId("triage")).toBe(false);
     expect(isBoardWorkflowLane(LANES.find((lane) => lane.id === "triage")!)).toBe(true);
-    expect(isBoardWorkflowLane(LANES.find((lane) => lane.id === "settled")!)).toBe(false);
   });
 });

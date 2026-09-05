@@ -6,7 +6,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "../lib/storage";
 
 const BOARD_LANE_STORAGE_KEY = "t3code:board-lanes:v1";
-const BOARD_LANE_STORAGE_VERSION = 5;
+const BOARD_LANE_STORAGE_VERSION = 6;
 
 export const BOARD_LANE_MIN_WIDTH = 260;
 export const BOARD_LANE_MAX_WIDTH = 1316;
@@ -15,19 +15,9 @@ export const BOARD_LANE_DEFAULT_WIDTH = 380;
 export type BoardLaneId = string;
 
 export const TRIAGE_BOARD_LANE_ID = "triage";
-export const SNOOZED_BOARD_LANE_ID = "snoozed";
-export const SETTLED_BOARD_LANE_ID = "settled";
+export const FIXED_BOARD_LANE_IDS = Object.freeze([TRIAGE_BOARD_LANE_ID] as const);
 
-export const FIXED_BOARD_LANE_IDS = Object.freeze([
-  TRIAGE_BOARD_LANE_ID,
-  SNOOZED_BOARD_LANE_ID,
-  SETTLED_BOARD_LANE_ID,
-] as const);
-
-export const LIFECYCLE_BOARD_LANE_IDS = Object.freeze([
-  SNOOZED_BOARD_LANE_ID,
-  SETTLED_BOARD_LANE_ID,
-] as const);
+const OBSOLETE_BOARD_LANE_IDS = new Set(["snoozed", "settled"]);
 
 /**
  * A board lane belongs to the client surface, not to an environment. This is
@@ -48,18 +38,6 @@ const FIXED_BOARD_LANES = Object.freeze({
     name: "Triage",
     description: "Every active thread starts here until moved elsewhere",
     order: 0,
-  },
-  [SNOOZED_BOARD_LANE_ID]: {
-    id: SNOOZED_BOARD_LANE_ID,
-    name: "Snoozed",
-    description: "Sessions hidden until their wake time",
-    order: 5,
-  },
-  [SETTLED_BOARD_LANE_ID]: {
-    id: SETTLED_BOARD_LANE_ID,
-    name: "Settled",
-    description: "Finished sessions kept as quiet history",
-    order: 6,
   },
 } satisfies Record<(typeof FIXED_BOARD_LANE_IDS)[number], BoardLane>);
 
@@ -89,8 +67,6 @@ export const DEFAULT_BOARD_LANES: ReadonlyArray<BoardLane> = Object.freeze([
     description: "Ready for review and final checks",
     order: 4,
   },
-  FIXED_BOARD_LANES[SNOOZED_BOARD_LANE_ID],
-  FIXED_BOARD_LANES[SETTLED_BOARD_LANE_ID],
 ]);
 
 const LEGACY_DEFAULT_BOARD_LANES: ReadonlyArray<BoardLane> = Object.freeze([
@@ -182,12 +158,11 @@ interface BoardLaneStoreState {
    * are scoped so two environments may both contribute `thread-1`.
    */
   readonly placementByThreadKey: Record<string, BoardLaneId>;
-  /** Displayed lane arrivals, including derived lifecycle transitions. */
+  /** Displayed workflow lane arrivals. */
   readonly laneEntryByThreadKey: Record<string, BoardLaneEntryState>;
   /** Complete user-authored sequences. New arrivals not in a sequence sort above it. */
   readonly orderByLaneId: Record<BoardLaneId, ReadonlyArray<string>>;
   readonly byLaneColumnKey: Record<string, BoardLaneState>;
-  readonly collapsedLifecycleLaneIds: ReadonlyArray<BoardLaneId>;
   readonly organization: BoardOrganization;
   readonly setPlacement: (ref: ScopedThreadRef, laneId: BoardLaneId) => void;
   readonly clearPlacement: (ref: ScopedThreadRef) => void;
@@ -198,7 +173,6 @@ interface BoardLaneStoreState {
   readonly archiveLane: (laneId: BoardLaneId) => void;
   readonly setWidth: (laneColumnKey: string, widthPx: number) => void;
   readonly removeLane: (laneColumnKey: string) => void;
-  readonly toggleLifecycleLaneCollapsed: (laneId: BoardLaneId) => void;
   readonly setOrganizationColumns: (columns: BoardOrganizationColumns) => void;
   readonly setOrganizationRows: (rows: BoardOrganizationRows) => void;
 }
@@ -212,10 +186,8 @@ function isFixedBoardLaneId(laneId: BoardLaneId): laneId is (typeof FIXED_BOARD_
   return FIXED_BOARD_LANE_IDS.some((fixedLaneId) => fixedLaneId === laneId);
 }
 
-function isLifecycleBoardLaneId(
-  laneId: BoardLaneId,
-): laneId is (typeof LIFECYCLE_BOARD_LANE_IDS)[number] {
-  return LIFECYCLE_BOARD_LANE_IDS.some((lifecycleLaneId) => lifecycleLaneId === laneId);
+export function isObsoleteBoardLaneId(laneId: BoardLaneId): boolean {
+  return OBSOLETE_BOARD_LANE_IDS.has(laneId);
 }
 
 function isSameLane(left: BoardLane, right: BoardLane): boolean {
@@ -311,15 +283,12 @@ function normalizeLanes(value: unknown): ReadonlyArray<BoardLane> {
       continue;
     }
     ids.add(id);
-    if (!isFixedBoardLaneId(id)) workflowLanes.push({ id, name, description, order });
+    if (!isFixedBoardLaneId(id) && !isObsoleteBoardLaneId(id)) {
+      workflowLanes.push({ id, name, description, order });
+    }
   }
   if (ids.size === 0) return DEFAULT_BOARD_LANES;
-  return [
-    FIXED_BOARD_LANES[TRIAGE_BOARD_LANE_ID],
-    ...workflowLanes,
-    FIXED_BOARD_LANES[SNOOZED_BOARD_LANE_ID],
-    FIXED_BOARD_LANES[SETTLED_BOARD_LANE_ID],
-  ];
+  return [FIXED_BOARD_LANES[TRIAGE_BOARD_LANE_ID], ...workflowLanes];
 }
 
 function normalizePlacementByThreadKey(
@@ -327,9 +296,7 @@ function normalizePlacementByThreadKey(
   lanes: ReadonlyArray<BoardLane>,
 ): Record<string, BoardLaneId> {
   if (typeof value !== "object" || value === null) return {};
-  const workflowLaneIds = new Set(
-    lanes.filter((lane) => !isLifecycleBoardLaneId(lane.id)).map((lane) => lane.id),
-  );
+  const workflowLaneIds = new Set(lanes.map((lane) => lane.id));
   const placementByThreadKey: Record<string, BoardLaneId> = {};
   for (const [threadKey, laneId] of Object.entries(value as Record<string, unknown>)) {
     if (typeof laneId === "string" && workflowLaneIds.has(laneId)) {
@@ -339,19 +306,10 @@ function normalizePlacementByThreadKey(
   return placementByThreadKey;
 }
 
-function normalizeCollapsedLifecycleLaneIds(value: unknown): ReadonlyArray<BoardLaneId> {
-  if (!Array.isArray(value)) return [];
-  return [
-    ...new Set(
-      value.filter(
-        (laneId): laneId is (typeof LIFECYCLE_BOARD_LANE_IDS)[number] =>
-          typeof laneId === "string" && isLifecycleBoardLaneId(laneId),
-      ),
-    ),
-  ];
-}
-
-function normalizeLaneEntryByThreadKey(value: unknown): Record<string, BoardLaneEntryState> {
+function normalizeLaneEntryByThreadKey(
+  value: unknown,
+  lanes: ReadonlyArray<BoardLane>,
+): Record<string, BoardLaneEntryState> {
   if (typeof value !== "object" || value === null) return {};
   const laneEntryByThreadKey: Record<string, BoardLaneEntryState> = {};
   for (const [threadKey, entry] of Object.entries(value as Record<string, unknown>)) {
@@ -359,7 +317,7 @@ function normalizeLaneEntryByThreadKey(value: unknown): Record<string, BoardLane
     const { laneId, enteredAt } = entry as Partial<BoardLaneEntryState>;
     if (
       typeof laneId === "string" &&
-      laneId.length > 0 &&
+      lanes.some((lane) => lane.id === laneId) &&
       typeof enteredAt === "string" &&
       Number.isFinite(Date.parse(enteredAt))
     ) {
@@ -369,11 +327,14 @@ function normalizeLaneEntryByThreadKey(value: unknown): Record<string, BoardLane
   return laneEntryByThreadKey;
 }
 
-function normalizeOrderByLaneId(value: unknown): Record<BoardLaneId, ReadonlyArray<string>> {
+function normalizeOrderByLaneId(
+  value: unknown,
+  lanes: ReadonlyArray<BoardLane>,
+): Record<BoardLaneId, ReadonlyArray<string>> {
   if (typeof value !== "object" || value === null) return {};
   const orderByLaneId: Record<BoardLaneId, ReadonlyArray<string>> = {};
   for (const [laneId, order] of Object.entries(value as Record<string, unknown>)) {
-    if (!Array.isArray(order)) continue;
+    if (!Array.isArray(order) || !lanes.some((lane) => lane.id === laneId)) continue;
     orderByLaneId[laneId] = [
       ...new Set(order.filter((threadKey): threadKey is string => typeof threadKey === "string")),
     ];
@@ -403,6 +364,7 @@ function normalizePersistedByLaneColumnKey(
   if (typeof source !== "object" || source === null) return {};
   const byLaneColumnKey: Record<string, BoardLaneState> = {};
   for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
+    if (isObsoleteBoardLaneId(key)) continue;
     const width = (value as { widthPx?: unknown } | null)?.widthPx;
     if (typeof width === "number") byLaneColumnKey[key] = { widthPx: clampBoardLaneWidth(width) };
   }
@@ -436,6 +398,8 @@ function migrateBoardLaneState(persistedState: unknown, version: number): unknow
     orderByLaneId?: unknown;
     groupByProject?: unknown;
     byLaneColumnKey?: unknown;
+    collapsedLifecycleLaneIds?: unknown;
+    organization?: unknown;
   } | null;
   const versionTwoState =
     version < 2
@@ -472,14 +436,21 @@ function migrateBoardLaneState(persistedState: unknown, version: number): unknow
             byLaneColumnKey: remapLegacyDefaultLaneKeyedState(versionThreeState?.byLaneColumnKey),
             collapsedLifecycleLaneIds: [],
           };
-  const { groupByProject, ...versionFiveState } = versionFourState ?? {};
-  return {
-    ...versionFiveState,
-    organization: {
-      columns: "workflow",
-      rows: groupByProject === false ? "none" : "project",
-    },
-  };
+  const versionFiveState =
+    version >= 5
+      ? versionFourState
+      : (() => {
+          const { groupByProject, ...state } = versionFourState ?? {};
+          return {
+            ...state,
+            organization: {
+              columns: "workflow",
+              rows: groupByProject === false ? "none" : "project",
+            },
+          };
+        })();
+  const { collapsedLifecycleLaneIds: _collapsed, ...versionSixState } = versionFiveState ?? {};
+  return versionSixState;
 }
 
 export interface BoardLaneOrderedEntry {
@@ -531,11 +502,10 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
       laneEntryByThreadKey: {},
       orderByLaneId: {},
       byLaneColumnKey: {},
-      collapsedLifecycleLaneIds: [],
       organization: DEFAULT_BOARD_ORGANIZATION,
       setPlacement: (ref, laneId) =>
         set((state) => {
-          if (isLifecycleBoardLaneId(laneId) || !state.lanes.some((lane) => lane.id === laneId)) {
+          if (isObsoleteBoardLaneId(laneId) || !state.lanes.some((lane) => lane.id === laneId)) {
             return state;
           }
           const threadKey = scopedThreadKey(ref);
@@ -577,7 +547,9 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
         }),
       recordLaneEntry: (ref, laneId, enteredAt) =>
         set((state) => {
-          if (!state.lanes.some((lane) => lane.id === laneId)) return state;
+          if (isObsoleteBoardLaneId(laneId) || !state.lanes.some((lane) => lane.id === laneId)) {
+            return state;
+          }
           const threadKey = scopedThreadKey(ref);
           if (state.laneEntryByThreadKey[threadKey]?.laneId === laneId) return state;
           const timestamp =
@@ -606,7 +578,12 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
         }),
       createLane: (lane) =>
         set((state) => {
-          if (state.lanes.some((existing) => existing.id === lane.id)) return state;
+          if (
+            isObsoleteBoardLaneId(lane.id) ||
+            state.lanes.some((existing) => existing.id === lane.id)
+          ) {
+            return state;
+          }
           return { lanes: [...state.lanes, lane] };
         }),
       updateLane: (laneId, draft) =>
@@ -665,16 +642,6 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
           const { [laneColumnKey]: _removed, ...byLaneColumnKey } = state.byLaneColumnKey;
           return { byLaneColumnKey };
         }),
-      toggleLifecycleLaneCollapsed: (laneId) =>
-        set((state) => {
-          if (!isLifecycleBoardLaneId(laneId)) return state;
-          const collapsed = state.collapsedLifecycleLaneIds.includes(laneId);
-          return {
-            collapsedLifecycleLaneIds: collapsed
-              ? state.collapsedLifecycleLaneIds.filter((candidate) => candidate !== laneId)
-              : [...state.collapsedLifecycleLaneIds, laneId],
-          };
-        }),
       setOrganizationColumns: (columns) =>
         set((state) => {
           const rows =
@@ -715,7 +682,6 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
         laneEntryByThreadKey: state.laneEntryByThreadKey,
         orderByLaneId: state.orderByLaneId,
         byLaneColumnKey: state.byLaneColumnKey,
-        collapsedLifecycleLaneIds: state.collapsedLifecycleLaneIds,
         organization: state.organization,
       }),
       merge: (persistedState, currentState) => {
@@ -724,7 +690,6 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
           placementByThreadKey?: unknown;
           laneEntryByThreadKey?: unknown;
           orderByLaneId?: unknown;
-          collapsedLifecycleLaneIds?: unknown;
           organization?: unknown;
         } | null;
         const lanes = normalizeLanes(persisted?.lanes);
@@ -735,12 +700,12 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
             persisted?.placementByThreadKey,
             lanes,
           ),
-          laneEntryByThreadKey: normalizeLaneEntryByThreadKey(persisted?.laneEntryByThreadKey),
-          orderByLaneId: normalizeOrderByLaneId(persisted?.orderByLaneId),
-          byLaneColumnKey: normalizePersistedByLaneColumnKey(persistedState),
-          collapsedLifecycleLaneIds: normalizeCollapsedLifecycleLaneIds(
-            persisted?.collapsedLifecycleLaneIds,
+          laneEntryByThreadKey: normalizeLaneEntryByThreadKey(
+            persisted?.laneEntryByThreadKey,
+            lanes,
           ),
+          orderByLaneId: normalizeOrderByLaneId(persisted?.orderByLaneId, lanes),
+          byLaneColumnKey: normalizePersistedByLaneColumnKey(persistedState),
           organization: normalizeBoardOrganization(persisted?.organization),
         };
       },

@@ -1,7 +1,11 @@
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
-import type { BoardLane, BoardLaneId } from "../../board/boardLaneStore.ts";
+import {
+  isObsoleteBoardLaneId,
+  type BoardLane,
+  type BoardLaneId,
+} from "../../board/boardLaneStore.ts";
 import { isBoardFixedLaneId } from "../../board/boardLanes.ts";
 
 export const BOARD_WORKFLOW_COLUMN_WIDTH = 380;
@@ -534,14 +538,18 @@ export function laneIdForName(name: string, lanes: ReadonlyArray<BoardLane>): Bo
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "lane";
   const existingIds = new Set(lanes.map((lane) => lane.id));
-  if (!existingIds.has(base)) return base;
+  if (!existingIds.has(base) && !isObsoleteBoardLaneId(base)) return base;
   let suffix = 2;
-  while (existingIds.has(`${base}-${suffix}`)) suffix += 1;
+  while (existingIds.has(`${base}-${suffix}`) || isObsoleteBoardLaneId(`${base}-${suffix}`)) {
+    suffix += 1;
+  }
   return `${base}-${suffix}`;
 }
 
 export function nextLaneOrder(lanes: ReadonlyArray<BoardLane>): number {
-  const editableLanes = lanes.filter((lane) => !isBoardFixedLaneId(lane.id));
+  const editableLanes = lanes.filter(
+    (lane) => !isBoardFixedLaneId(lane.id) && !isObsoleteBoardLaneId(lane.id),
+  );
   return editableLanes.length === 0 ? 0 : Math.max(...editableLanes.map((lane) => lane.order)) + 1;
 }
 
@@ -551,7 +559,7 @@ export function reorderLaneUpdates(
   direction: "up" | "down",
 ): ReadonlyArray<{ readonly laneId: BoardLaneId; readonly order: number }> {
   const ordered = lanes
-    .filter((lane) => !isBoardFixedLaneId(lane.id))
+    .filter((lane) => !isBoardFixedLaneId(lane.id) && !isObsoleteBoardLaneId(lane.id))
     .toSorted((left, right) => left.order - right.order || left.id.localeCompare(right.id));
   const laneIndex = ordered.findIndex((lane) => lane.id === laneId);
   const neighbourIndex = laneIndex + (direction === "up" ? -1 : 1);

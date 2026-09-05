@@ -296,7 +296,7 @@ const lanes: ReadonlyArray<BoardLane> = [
   },
 ];
 
-const lanesWithFixedLifecycle: ReadonlyArray<BoardLane> = [
+const lanesWithObsoletePersistedIds: ReadonlyArray<BoardLane> = [
   { id: "triage", name: "Triage", description: "New work", order: 0 },
   { id: "blocked", name: "Blocked", description: "Waiting", order: 1 },
   { id: "ready", name: "Ready", description: "Ready", order: 2 },
@@ -308,6 +308,8 @@ describe("laneIdForName", () => {
   it("creates a readable unique lane id without exposing id as an authoring field", () => {
     expect(laneIdForName("To Review", lanes)).toBe("to-review");
     expect(laneIdForName("Ready", lanes)).toBe("ready-2");
+    expect(laneIdForName("Snoozed", lanes)).toBe("snoozed-2");
+    expect(laneIdForName("Settled", [])).toBe("settled-2");
   });
 });
 
@@ -316,8 +318,8 @@ describe("nextLaneOrder", () => {
     expect(nextLaneOrder(lanes)).toBe(21);
   });
 
-  it("ignores fixed lifecycle tails when placing a new workflow lane", () => {
-    expect(nextLaneOrder(lanesWithFixedLifecycle)).toBe(3);
+  it("ignores obsolete persisted IDs when placing a new workflow lane", () => {
+    expect(nextLaneOrder(lanesWithObsoletePersistedIds)).toBe(3);
   });
 });
 
@@ -331,12 +333,12 @@ describe("reorderLaneUpdates", () => {
   });
 
   it("reorders only editable workflow lanes", () => {
-    expect(reorderLaneUpdates(lanesWithFixedLifecycle, "ready", "up")).toEqual([
+    expect(reorderLaneUpdates(lanesWithObsoletePersistedIds, "ready", "up")).toEqual([
       { laneId: "ready", order: 1 },
       { laneId: "blocked", order: 2 },
     ]);
-    expect(reorderLaneUpdates(lanesWithFixedLifecycle, "blocked", "up")).toEqual([]);
-    expect(reorderLaneUpdates(lanesWithFixedLifecycle, "ready", "down")).toEqual([]);
+    expect(reorderLaneUpdates(lanesWithObsoletePersistedIds, "blocked", "up")).toEqual([]);
+    expect(reorderLaneUpdates(lanesWithObsoletePersistedIds, "ready", "down")).toEqual([]);
   });
 });
 

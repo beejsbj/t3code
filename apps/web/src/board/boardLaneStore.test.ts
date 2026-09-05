@@ -27,21 +27,18 @@ beforeEach(() => {
     laneEntryByThreadKey: {},
     orderByLaneId: {},
     byLaneColumnKey: {},
-    collapsedLifecycleLaneIds: [],
     organization: DEFAULT_BOARD_ORGANIZATION,
   });
 });
 
 describe("boardLaneStore", () => {
-  it("starts fresh boards with the traditional workflow and lifecycle lanes", () => {
+  it("starts fresh boards with the default workflow lanes", () => {
     expect(DEFAULT_BOARD_LANES.map((lane) => lane.id)).toEqual([
       "triage",
       "blocked",
       "ready",
       "in-progress",
       "review",
-      "snoozed",
-      "settled",
     ]);
   });
 
@@ -117,7 +114,7 @@ describe("boardLaneStore", () => {
     expect(state.orderByLaneId).toEqual({});
   });
 
-  it("records a derived lane entry without changing workflow placement", () => {
+  it("ignores obsolete lane entries without changing workflow placement", () => {
     useBoardLaneStore.setState({
       placementByThreadKey: { "env-a:thread-1": "ready" },
       laneEntryByThreadKey: {
@@ -136,10 +133,10 @@ describe("boardLaneStore", () => {
     const state = useBoardLaneStore.getState();
     expect(state.placementByThreadKey).toEqual({ "env-a:thread-1": "ready" });
     expect(state.laneEntryByThreadKey["env-a:thread-1"]).toEqual({
-      laneId: "snoozed",
-      enteredAt: "2026-02-01T00:00:00.000Z",
+      laneId: "ready",
+      enteredAt: "2026-01-01T00:00:00.000Z",
     });
-    expect(state.orderByLaneId).toEqual({});
+    expect(state.orderByLaneId).toEqual({ ready: ["env-a:thread-1"] });
   });
 
   it("ignores workflow placement in lifecycle or unknown lanes", () => {
@@ -245,6 +242,19 @@ describe("boardLaneStore", () => {
     ).toBeUndefined();
   });
 
+  it.each(["snoozed", "settled"])("does not create the reserved %s lane", (laneId) => {
+    const original = useBoardLaneStore.getState().lanes;
+
+    useBoardLaneStore.getState().createLane({
+      id: laneId,
+      name: laneId,
+      description: "Reserved legacy lifecycle lane",
+      order: 10,
+    });
+
+    expect(useBoardLaneStore.getState().lanes).toEqual(original);
+  });
+
   it("protects fixed lanes from updates and archival", () => {
     const original = useBoardLaneStore.getState().lanes;
     useBoardLaneStore.getState().updateLane("triage", {
@@ -253,21 +263,8 @@ describe("boardLaneStore", () => {
       order: 99,
     });
     useBoardLaneStore.getState().archiveLane("triage");
-    useBoardLaneStore.getState().archiveLane("snoozed");
-    useBoardLaneStore.getState().archiveLane("settled");
 
     expect(useBoardLaneStore.getState().lanes).toEqual(original);
-  });
-
-  it("persists collapse only for lifecycle lanes", () => {
-    const store = useBoardLaneStore.getState();
-    store.toggleLifecycleLaneCollapsed("triage");
-    store.toggleLifecycleLaneCollapsed("snoozed");
-    store.toggleLifecycleLaneCollapsed("settled");
-    expect(useBoardLaneStore.getState().collapsedLifecycleLaneIds).toEqual(["snoozed", "settled"]);
-
-    useBoardLaneStore.getState().toggleLifecycleLaneCollapsed("snoozed");
-    expect(useBoardLaneStore.getState().collapsedLifecycleLaneIds).toEqual(["settled"]);
   });
 
   it("persists local lanes, placements, widths, and board organization", () => {
@@ -284,7 +281,6 @@ describe("boardLaneStore", () => {
       placementByThreadKey?: unknown;
       laneEntryByThreadKey?: unknown;
       orderByLaneId?: unknown;
-      collapsedLifecycleLaneIds?: unknown;
       organization?: unknown;
     };
     expect(persisted.lanes).toEqual(DEFAULT_BOARD_LANES);
@@ -293,7 +289,6 @@ describe("boardLaneStore", () => {
       "env-a:thread-1": expect.objectContaining({ laneId: "triage" }),
     });
     expect(persisted.orderByLaneId).toEqual({});
-    expect(persisted.collapsedLifecycleLaneIds).toEqual([]);
     expect(persisted.organization).toEqual({ columns: "state", rows: "none" });
   });
 
@@ -333,15 +328,35 @@ describe("boardLaneStore", () => {
       persistApi.getOptions().migrate(
         {
           lanes: DEFAULT_BOARD_LANES,
-          collapsedLifecycleLaneIds: ["snoozed"],
           groupByProject,
         },
         4,
       ),
     ).toEqual({
       lanes: DEFAULT_BOARD_LANES,
-      collapsedLifecycleLaneIds: ["snoozed"],
       organization: { columns: "workflow", rows },
+    });
+  });
+
+  it("preserves version five board organization while dropping lifecycle collapse state", () => {
+    const persistApi = useBoardLaneStore.persist as unknown as {
+      getOptions: () => {
+        migrate: (persistedState: unknown, version: number) => unknown;
+      };
+    };
+
+    expect(
+      persistApi.getOptions().migrate(
+        {
+          lanes: DEFAULT_BOARD_LANES,
+          collapsedLifecycleLaneIds: ["snoozed"],
+          organization: { columns: "state", rows: "project" },
+        },
+        5,
+      ),
+    ).toEqual({
+      lanes: DEFAULT_BOARD_LANES,
+      organization: { columns: "state", rows: "project" },
     });
   });
 
@@ -401,7 +416,6 @@ describe("boardLaneStore", () => {
     expect(mergedState.placementByThreadKey).toEqual({});
     expect(mergedState.laneEntryByThreadKey).toEqual({});
     expect(mergedState.orderByLaneId).toEqual({});
-    expect(mergedState.collapsedLifecycleLaneIds).toEqual([]);
     expect(mergedState.organization).toEqual({ columns: "workflow", rows: "none" });
     expect(mergedState.byLaneColumnKey).toEqual({ '["env-a","triage"]': { widthPx: 460 } });
   });
@@ -425,12 +439,11 @@ describe("boardLaneStore", () => {
       byLaneColumnKey: { ready: { widthPx: 440 } },
       laneEntryByThreadKey: {},
       orderByLaneId: {},
-      collapsedLifecycleLaneIds: [],
       organization: { columns: "workflow", rows: "none" },
     });
   });
 
-  it("preserves custom lanes while injecting canonical fixed lanes in version four", () => {
+  it("preserves custom lanes while removing obsolete persisted lane IDs", () => {
     const persistApi = useBoardLaneStore.persist as unknown as {
       getOptions: () => {
         migrate: (persistedState: unknown, version: number) => unknown;
@@ -463,17 +476,11 @@ describe("boardLaneStore", () => {
     );
     const merged = persistApi.getOptions().merge(migrated, useBoardLaneStore.getInitialState());
 
-    expect(merged.lanes.map((lane) => lane.id)).toEqual([
-      "triage",
-      "shaping",
-      "snoozed",
-      "settled",
-    ]);
+    expect(merged.lanes.map((lane) => lane.id)).toEqual(["triage", "shaping"]);
     expect(merged.lanes[0]).toEqual(DEFAULT_BOARD_LANES[0]);
     expect(merged.placementByThreadKey).toEqual({ "env-a:thread-1": "shaping" });
     expect(merged.laneEntryByThreadKey["env-a:thread-1"]?.laneId).toBe("shaping");
     expect(merged.orderByLaneId).toEqual({ shaping: ["env-a:thread-1"] });
-    expect(merged.collapsedLifecycleLaneIds).toEqual([]);
   });
 
   it("remaps version two placements before upgrading untouched legacy defaults", () => {
@@ -684,18 +691,11 @@ describe("boardLaneStore", () => {
       useBoardLaneStore.getInitialState(),
     );
 
-    expect(merged.lanes.map((lane) => lane.id)).toEqual([
-      "triage",
-      "shaping",
-      "ready",
-      "done",
-      "snoozed",
-      "settled",
-    ]);
+    expect(merged.lanes.map((lane) => lane.id)).toEqual(["triage", "shaping", "ready", "done"]);
     expect(merged.lanes.find((lane) => lane.id === "shaping")?.name).toBe("Discovery");
   });
 
-  it("normalizes persisted lifecycle collapse state", () => {
+  it("removes obsolete local lane data while keeping unrelated preferences", () => {
     const persistApi = useBoardLaneStore.persist as unknown as {
       getOptions: () => {
         merge: (
@@ -706,13 +706,28 @@ describe("boardLaneStore", () => {
     };
     const merged = persistApi.getOptions().merge(
       {
-        lanes: DEFAULT_BOARD_LANES,
-        collapsedLifecycleLaneIds: ["settled", "triage", "settled", "snoozed", 1],
+        lanes: [
+          ...DEFAULT_BOARD_LANES,
+          { id: "snoozed", name: "Snoozed", description: "Later", order: 5 },
+        ],
+        placementByThreadKey: { "env-a:old": "snoozed", "env-a:ready": "ready" },
+        laneEntryByThreadKey: {
+          "env-a:old": { laneId: "snoozed", enteredAt: "2026-01-01T00:00:00.000Z" },
+          "env-a:ready": { laneId: "ready", enteredAt: "2026-01-01T00:00:00.000Z" },
+        },
+        orderByLaneId: { snoozed: ["env-a:old"], ready: ["env-a:ready"] },
+        byLaneColumnKey: { snoozed: { widthPx: 420 }, ready: { widthPx: 440 } },
       },
       useBoardLaneStore.getInitialState(),
     );
 
-    expect(merged.collapsedLifecycleLaneIds).toEqual(["settled", "snoozed"]);
+    expect(merged.lanes.map((lane) => lane.id)).toEqual(DEFAULT_BOARD_LANES.map((lane) => lane.id));
+    expect(merged.placementByThreadKey).toEqual({ "env-a:ready": "ready" });
+    expect(merged.laneEntryByThreadKey).toEqual({
+      "env-a:ready": { laneId: "ready", enteredAt: "2026-01-01T00:00:00.000Z" },
+    });
+    expect(merged.orderByLaneId).toEqual({ ready: ["env-a:ready"] });
+    expect(merged.byLaneColumnKey).toEqual({ ready: { widthPx: 440 } });
   });
 
   it("clamps malformed persisted widths and defaults absent local lane data", () => {
