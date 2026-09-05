@@ -5,14 +5,10 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  canSnooze,
-  effectiveSettled,
-  effectiveSnoozed,
-  type ChangeRequestSettleSource,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import { useCallback } from "react";
+import { useRouter } from "@tanstack/react-router";
+import { useCallback, useMemo } from "react";
 
 import {
   boardLaneForMoveAction,
@@ -34,8 +30,16 @@ import {
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
+  useProjects,
 } from "../state/entities";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKey,
+  selectProjectGroupingSettings,
+} from "../logicalProject";
+import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { useUiStateStore } from "../uiStateStore";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -66,13 +70,24 @@ export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   /** Fallback for "Copy path" when the thread has no worktree. */
   readonly projectCwd: string | null;
-  /** PR feeding auto-settle classification, as resolved by the caller. */
-  readonly changeRequest: ChangeRequestSettleSource | null;
   readonly onStartRename: () => void;
   /** Board surfaces append lane moves to the otherwise shared menu. */
   readonly boardLanes?: ReadonlyArray<BoardLane>;
 }) {
-  const { threadRef, projectCwd, changeRequest, onStartRename, boardLanes } = input;
+  const { threadRef, projectCwd, onStartRename, boardLanes } = input;
+  const router = useRouter();
+  const projects = useProjects();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const logicalProjectKeyByPhysicalKey = useMemo(
+    () =>
+      buildPhysicalToLogicalProjectKeyMap({
+        projects,
+        settings: projectGroupingSettings,
+        primaryEnvironmentId,
+      }),
+    [primaryEnvironmentId, projectGroupingSettings, projects],
+  );
   const {
     settleThread,
     unsettleThread,
@@ -88,8 +103,6 @@ export function useThreadActionMenu(input: {
   });
   const handleNewThread = useNewThreadHandler();
   const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
-  const autoSettleAfterDays = useClientSettings((s) => s.sidebarAutoSettleAfterDays);
-  const autoSettleOnMerge = useClientSettings((s) => s.sidebarAutoSettleOnMerge);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -194,21 +207,11 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
-        const isEffectivelySettled =
-          supports.settlement &&
-          effectiveSettled(thread, {
-            // Minute-quantized like useNowMinute, so this classification
-            // can never disagree with the sidebar partition or ChatView's
-            // parked-thread banner within the same minute.
-            now: `${now.toISOString().slice(0, 16)}:00.000Z`,
-            autoSettleAfterDays,
-            autoSettleOnMerge,
-            changeRequest,
-          });
         const isSnoozed = supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() });
         // Snooze owns the visible lifecycle while it is active, matching the
         // sidebar partition.
-        const isSettled = !isSnoozed && isEffectivelySettled;
+        const isSettled =
+          !isSnoozed && supports.settlement && thread.settledOverride === "settled";
         const items = [
           ...buildThreadActionMenuItems({
             branch: thread.branch ?? null,
@@ -249,6 +252,22 @@ export function useThreadActionMenu(input: {
           }
         };
         switch (action) {
+          case "project-settings": {
+            const project = projects.find(
+              (candidate) =>
+                candidate.environmentId === thread.environmentId &&
+                candidate.id === thread.projectId,
+            );
+            if (!project) return;
+            const projectKey =
+              logicalProjectKeyByPhysicalKey.get(derivePhysicalProjectKey(project)) ??
+              deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
+            void router.navigate({
+              to: "/projects/$projectKey",
+              params: { projectKey },
+            });
+            return;
+          }
           case "new-thread-on-branch": {
             // Explicit branch carry-over: reuse the thread's worktree when it
             // has one, otherwise its branch on the local checkout.
@@ -373,10 +392,7 @@ export function useThreadActionMenu(input: {
     },
     [
       archiveThread,
-      autoSettleAfterDays,
-      autoSettleOnMerge,
       boardLanes,
-      changeRequest,
       confirmThreadArchive,
       confirmThreadDelete,
       confirmAndUnpinThread,
@@ -385,16 +401,18 @@ export function useThreadActionMenu(input: {
       copyThreadIdToClipboard,
       deleteThread,
       handleNewThread,
+      logicalProjectKeyByPhysicalKey,
       markThreadUnread,
       onStartRename,
       pinThread,
       projectCwd,
+      projectGroupingSettings,
+      projects,
+      router,
       settle,
       snooze,
       threadRef,
       timestampFormat,
-      unsettleThread,
-      unsnoozeThread,
       unsnooze,
       unsettle,
       updateThreadMetadata,

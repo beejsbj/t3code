@@ -1,8 +1,4 @@
-import {
-  effectiveSettled,
-  effectiveSnoozed,
-  type ChangeRequestSettleSource,
-} from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { OrchestrationThreadShell } from "@t3tools/contracts";
 
 import type { BoardLane, BoardLaneId } from "../../board/boardLaneStore.ts";
@@ -22,13 +18,8 @@ export function resolveBoardThreadVisibility(
   options: {
     /** Exact wall clock for second-precise snooze wake boundaries. */
     readonly now: string;
-    /** Minute-quantized clock shared with the sidebar's settlement partition. */
-    readonly settlementNow: string;
-    readonly autoSettleAfterDays: number | null;
-    readonly autoSettleOnMerge: boolean;
     readonly supportsSettlement: boolean;
     readonly supportsSnooze: boolean;
-    readonly changeRequest: ChangeRequestSettleSource | null;
   },
 ): BoardThreadVisibility {
   if (thread.archivedAt !== null) return "archived";
@@ -42,15 +33,10 @@ export function resolveBoardThreadVisibility(
   // clears pinning server-side, so a conflict here can only be stale/raced.
   if (thread.pinnedAt != null) return "visible";
 
-  if (
-    options.supportsSettlement &&
-    effectiveSettled(thread, {
-      now: options.settlementNow,
-      autoSettleAfterDays: options.autoSettleAfterDays,
-      autoSettleOnMerge: options.autoSettleOnMerge,
-      changeRequest: options.changeRequest,
-    })
-  ) {
+  // Settlement is server-owned. Match the sidebar's projection of the
+  // server's explicit lifecycle field instead of re-deriving it from local
+  // clocks or change-request state.
+  if (options.supportsSettlement && thread.settledOverride === "settled") {
     return "settled";
   }
 
