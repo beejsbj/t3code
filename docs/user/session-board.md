@@ -30,11 +30,10 @@ focusing it does not move it to another state group. Archived sessions remain hi
 sidebar.
 
 Drag a column's right edge to change its width, and drag the bottom of a normal card to change that
-card's height. Wide columns automatically pack cards into additional visual columns. A card never
-grows beyond 428 pixels, and a board column can grow to 1316 pixels. This packing is presentational:
-it does not create more workflow lanes or change card order. New cards open at the full working
-height, and that height is also the resize minimum; cards can be made taller but not compacted below
-it. There is no separate compact-size mode.
+card's height. Cards share the available column width, with wide columns packing up to three cards
+across. This packing is presentational: it does not create more workflow lanes or change card order.
+New cards open at the full working height, and that height is also the resize minimum; cards can be
+made taller but not compacted below it. There is no separate compact-size mode.
 
 Projects are listed alphabetically when used as rows. State groups stay in a fixed order, including
 empty state rows, so the spatial map does not collapse when its last card moves. In a state-organized

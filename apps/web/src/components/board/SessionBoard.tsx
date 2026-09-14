@@ -1798,7 +1798,7 @@ function LaneDropCell({
       >
         <SortableContext items={entries.map((entry) => entry.key)} strategy={rectSortingStrategy}>
           {entries.map((entry) => (
-            <div key={entry.key} className="w-full max-w-[428px] min-w-0">
+            <div key={entry.key} className="w-full min-w-0">
               {entry.kind === "thread" ? (
                 <BoardSessionCard
                   cardKey={entry.key}
