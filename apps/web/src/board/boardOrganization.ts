@@ -53,6 +53,72 @@ export function resolveBoardThreadState(
   }
 }
 
+export type BoardFlatAttentionState = BoardStateId | "done" | "woke";
+
+export interface BoardFlatOrderedEntry {
+  readonly key: string;
+  readonly attentionState: BoardFlatAttentionState;
+  readonly attentionAt: string;
+}
+
+const BOARD_FLAT_ATTENTION_TIER = Object.freeze({
+  approval: 0,
+  input: 0,
+  failed: 0,
+  done: 1,
+  woke: 2,
+  draft: 3,
+  idle: 3,
+  working: 4,
+} satisfies Record<BoardFlatAttentionState, number>);
+
+function compareFlatAttention(left: BoardFlatOrderedEntry, right: BoardFlatOrderedEntry): number {
+  return (
+    BOARD_FLAT_ATTENTION_TIER[left.attentionState] -
+      BOARD_FLAT_ATTENTION_TIER[right.attentionState] ||
+    right.attentionAt.localeCompare(left.attentionAt) ||
+    left.key.localeCompare(right.key)
+  );
+}
+
+/**
+ * Orders the flat board as an attention queue until the user establishes a
+ * global card sequence. New cards still surface ahead of the first manually
+ * placed card in a lower-priority tier without disturbing that sequence.
+ */
+export function orderFlatBoardEntries<T extends BoardFlatOrderedEntry>(
+  entries: ReadonlyArray<T>,
+  flatOrder: ReadonlyArray<string>,
+): ReadonlyArray<T> {
+  const entryByKey = new Map(entries.map((entry) => [entry.key, entry]));
+  const seenListedKeys = new Set<string>();
+  const listed = flatOrder.flatMap((key) => {
+    const entry = entryByKey.get(key);
+    if (entry === undefined || seenListedKeys.has(key)) return [];
+    seenListedKeys.add(key);
+    return [entry];
+  });
+  const listedKeys = new Set(listed.map((entry) => entry.key));
+  const unlisted = entries
+    .filter((entry) => !listedKeys.has(entry.key))
+    .toSorted(compareFlatAttention);
+
+  if (listed.length === 0) return unlisted;
+
+  const insertions = Array.from({ length: listed.length + 1 }, () => [] as T[]);
+  for (const entry of unlisted) {
+    const tier = BOARD_FLAT_ATTENTION_TIER[entry.attentionState];
+    const beforeIndex = listed.findIndex(
+      (listedEntry) => BOARD_FLAT_ATTENTION_TIER[listedEntry.attentionState] > tier,
+    );
+    insertions[beforeIndex === -1 ? listed.length : beforeIndex]?.push(entry);
+  }
+
+  return listed
+    .flatMap((entry, index) => [...(insertions[index] ?? []), entry])
+    .concat(insertions[listed.length] ?? []);
+}
+
 export type BoardOrganizationDimension = "workflow" | "state" | "project";
 export type BoardRowGrouping = "none" | Extract<BoardOrganizationDimension, "state" | "project">;
 
