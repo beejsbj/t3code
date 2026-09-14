@@ -123,6 +123,7 @@ export interface BoardSessionCardProps {
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly isDragging: boolean;
   readonly visitAcknowledgement?: "focus" | "activate";
+  readonly activationVisitAt?: string;
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
@@ -402,9 +403,9 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   );
 
   const acknowledgeVisit = useCallback(() => {
-    const visitedAt = boardCardVisitTimestamp(thread);
+    const visitedAt = props.activationVisitAt ?? boardCardVisitTimestamp(thread);
     if (visitedAt !== null) markThreadVisited(cardKey, visitedAt);
-  }, [cardKey, markThreadVisited, thread]);
+  }, [cardKey, markThreadVisited, props.activationVisitAt, thread]);
 
   const handleCardFocus = useCallback(() => {
     setFocusedKey(cardKey);
