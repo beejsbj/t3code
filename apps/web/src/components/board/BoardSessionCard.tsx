@@ -33,6 +33,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import {
   isAtomCommandInterrupted,
@@ -121,6 +122,7 @@ export interface BoardSessionCardProps {
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly isDragging: boolean;
+  readonly visitAcknowledgement?: "focus" | "activate";
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
@@ -399,11 +401,25 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     [commitRename],
   );
 
-  const handleCardFocus = useCallback(() => {
-    setFocusedKey(cardKey);
+  const acknowledgeVisit = useCallback(() => {
     const visitedAt = boardCardVisitTimestamp(thread);
     if (visitedAt !== null) markThreadVisited(cardKey, visitedAt);
-  }, [cardKey, markThreadVisited, setFocusedKey, thread]);
+  }, [cardKey, markThreadVisited, thread]);
+
+  const handleCardFocus = useCallback(() => {
+    setFocusedKey(cardKey);
+    if (props.visitAcknowledgement !== "activate") acknowledgeVisit();
+  }, [acknowledgeVisit, cardKey, props.visitAcknowledgement, setFocusedKey]);
+
+  const handleCardActivate = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (event.target instanceof Element && event.target.closest("[data-board-drag-handle]")) {
+        return;
+      }
+      if (props.visitAcknowledgement === "activate") acknowledgeVisit();
+    },
+    [acknowledgeVisit, props.visitAcknowledgement],
+  );
 
   return (
     <div
@@ -416,6 +432,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
       aria-label={thread.title}
       onPointerDownCapture={handleCardFocus}
       onFocusCapture={handleCardFocus}
+      onClickCapture={handleCardActivate}
       className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       style={{
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
@@ -437,6 +454,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           {draggable ? (
             <button
               type="button"
+              data-board-drag-handle
               {...listeners}
               {...attributes}
               aria-label={`Drag ${thread.title}`}

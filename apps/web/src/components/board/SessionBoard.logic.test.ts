@@ -87,6 +87,7 @@ const lifecycleOptions = {
 type KeyboardTargetInput = {
   readonly tagName?: "input";
   readonly terminalOwner?: boolean;
+  readonly resizeHandle?: boolean;
   readonly slot?: "dialog-popup" | "alert-dialog-popup" | "command-dialog-popup" | "select-popup";
   readonly role?: "listbox" | "option";
   readonly contentEditable?: "true" | "false";
@@ -99,6 +100,7 @@ function keyboardTarget(input: KeyboardTargetInput): EventTarget {
       const matches =
         (input.tagName === "input" && selectors.includes("input")) ||
         (input.terminalOwner === true && selectors.includes("[data-terminal-owner]")) ||
+        (input.resizeHandle === true && selectors.includes("[data-board-resize-handle]")) ||
         (input.slot !== undefined && selectors.includes(`[data-slot='${input.slot}']`)) ||
         (input.role !== undefined && selectors.includes(`[role='${input.role}']`)) ||
         (input.contentEditable === "true" &&
@@ -113,6 +115,7 @@ describe("shouldIgnoreBoardKeyboardTarget", () => {
   const ignoredTargets = [
     ["an input", { tagName: "input" }],
     ["a terminal owner", { terminalOwner: true }],
+    ["a card resize handle", { resizeHandle: true }],
     ["a dialog", { slot: "dialog-popup" }],
     ["an alert dialog", { slot: "alert-dialog-popup" }],
     ["a command dialog", { slot: "command-dialog-popup" }],

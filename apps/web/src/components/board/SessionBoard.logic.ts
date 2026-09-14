@@ -321,6 +321,7 @@ const BOARD_KEYBOARD_INPUT_SELECTOR = [
   "[role='menu']",
   "[role='menuitem']",
   "[role='separator']",
+  "[data-board-resize-handle]",
 ].join(",");
 
 /** Keeps board-level commands out of editing, terminal, menu, and resize input. */
