@@ -17,10 +17,12 @@ The default workflow runs from **Triage** through **Blocked**, **Ready**, **In P
 is fixed at the left edge; the other workflow lanes can be created, renamed, described, reordered,
 and archived.
 
-Use **Columns** and **Rows** to choose the spatial organization. Columns can be **Workflow** or
-**State**. Rows can be **Project**, **State**, or **None**. State cannot be both axes at once; choosing
-it on one axis moves the other axis to a valid choice. Project, workflow, and state remain visible on
-every card regardless of which dimensions organize the board.
+Use **Columns** and **Rows** to choose the spatial organization. Columns can be **Workflow**,
+**State**, or **None**. Rows can be **Project**, **State**, or **None**. Choosing no columns also sets
+rows to None, producing one flat field of cards. Selecting a row grouping again returns columns to
+Workflow. State cannot be both axes at once; choosing it on one axis moves the other axis to a valid
+choice. Project, workflow, and state remain visible on every card regardless of which dimensions
+organize the board.
 
 Workflow lanes are the board's user-defined, draggable placement. State is derived from the live
 session and includes Draft, Approval, Input, Failed, Working, and Idle. Plan-ready
@@ -29,11 +31,21 @@ session rests in Idle even when its card still carries the green **Done** treatm
 focusing it does not move it to another state group. Archived sessions remain hidden, matching the
 sidebar.
 
-Drag a column's right edge to change its width, and drag the bottom of a normal card to change that
-card's height. Cards share the available column width, with wide columns packing up to three cards
-across. This packing is presentational: it does not create more workflow lanes or change card order.
-New cards open at the full working height, and that height is also the resize minimum; cards can be
-made taller but not compacted below it. There is no separate compact-size mode.
+With no columns, cards initially sort by what needs attention: Approval, Input, and Failed first;
+then newly completed cards marked **Done**; woken cards; Draft and Idle cards; and actively Working
+cards last. Dragging establishes a personal global order, while newly appearing cards are inserted
+according to that attention order without rearranging the cards you placed. A Done card is
+acknowledged when you interact with it, not when keyboard focus or a drag merely lands on it.
+
+Drag a column's right edge to change its width, drag a normal card's bottom edge to change its
+height, and in the flat view drag a card's right edge to change its preferred width. Cards have a
+340px usability minimum but no artificial count or width cap: each row fits as many as its available
+space allows, and its cards expand together to consume any remainder. On a focused resize handle,
+use the arrow keys for 10px changes or hold Shift for 50px changes. Home restores the minimum; End
+uses the maximum lane width for columns, the maximum card height for bottom handles, and the
+available board width for flat-card handles. New cards open at the full working height, and that
+height is also the resize minimum; cards can be made taller but not compacted below it. There is no
+separate compact-size mode.
 
 Projects are listed alphabetically when used as rows. State groups stay in a fixed order, including
 empty state rows, so the spatial map does not collapse when its last card moves. In a state-organized
@@ -55,10 +67,10 @@ Card status uses the same glyphs and hues as the sidebar. The full border carrie
 the card surface carries a very light wash of that hue, so working, completed, waiting, and failed
 sessions remain easy to scan.
 
-Lane definitions, widths, ordering, and session placements are saved by the client displaying the
-board. They survive reloads on that browser or desktop installation. They are not synchronized to
-T3 Code environments or to another client, so the same session can be arranged differently on two
-devices.
+Lane definitions, lane and card widths, card heights, ordering, and session placements are saved by
+the client displaying the board. They survive reloads on that browser or desktop installation. They
+are not synchronized to T3 Code environments or to another client, so the same session can be
+arranged differently on two devices.
 
 Tabs from the same browser profile reconcile board changes through local storage. If two tabs edit
 the board at exactly the same time, the last saved local change wins.
@@ -97,8 +109,8 @@ and the 80%-sized expanded board sheet.
 Press `mod+alt+shift+ArrowLeft` or `mod+alt+shift+ArrowRight` to move the focused card one local
 workflow lane. Moving stops at the left and right edges without wrapping. This changes only the
 card's local placement, so it does not settle, snooze, or otherwise update the session in its
-environment. The action is unavailable while the board uses state columns because workflow lanes
-are not displayed there.
+environment. The action is unavailable while the board uses state columns or no columns because
+workflow lanes are not displayed there.
 
 All eight board-local actions are also available in the command palette while the board is open. Their
 shortcuts can be changed in **Settings** → **Keybindings**; the defaults use the `boardOpen`
