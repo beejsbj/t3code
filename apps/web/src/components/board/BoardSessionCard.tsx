@@ -107,6 +107,12 @@ const DONE_APPEARANCE = {
   textClass: "text-emerald-700 dark:text-emerald-300",
   surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-emerald-500))]",
 } satisfies ThreadRuntimeStateAppearance;
+const WOKE_APPEARANCE = {
+  label: "Woke",
+  borderClass: "border-amber-500/50 dark:border-amber-300/40",
+  textClass: "text-amber-700 dark:text-amber-300",
+  surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-amber-500))]",
+} satisfies ThreadRuntimeStateAppearance;
 
 export interface BoardSessionCardProps {
   readonly cardKey: string;
@@ -124,6 +130,7 @@ export interface BoardSessionCardProps {
   readonly isDragging: boolean;
   readonly visitAcknowledgement?: "focus" | "activate";
   readonly activationVisitAt?: string;
+  readonly visualStatusOverride?: Extract<BoardCardVisualState, "woke">;
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
@@ -283,9 +290,14 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   const status = resolveThreadRuntimeState(thread);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[cardKey]);
   const visualStatus: BoardCardVisualState =
-    status === "idle" && hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "done" : status;
+    props.visualStatusOverride ??
+    (status === "idle" && hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "done" : status);
   const appearance =
-    visualStatus === "done" ? DONE_APPEARANCE : threadRuntimeStateAppearance(visualStatus);
+    visualStatus === "done"
+      ? DONE_APPEARANCE
+      : visualStatus === "woke"
+        ? WOKE_APPEARANCE
+        : threadRuntimeStateAppearance(visualStatus);
 
   const [draggingHeight, setDraggingHeight] = useState<number | null>(null);
   const teardownResizeRef = useRef<(() => void) | null>(null);
@@ -1056,6 +1068,9 @@ function BoardStatusIcon({
       break;
     case "monitoring":
       Icon = RadarIcon;
+      break;
+    case "woke":
+      Icon = AlarmClockIcon;
       break;
     case "done":
       break;

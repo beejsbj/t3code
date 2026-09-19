@@ -1087,7 +1087,7 @@ export function SessionBoard() {
     if (action === "open") {
       setFocusedThreadKey(entry.key);
       clearFocusRequest(entry.key, focusRequest.nonce);
-      setExpandedThread({ kind: "thread", threadKey: entry.key });
+      setExpandedEntry(entry);
       return;
     }
 
@@ -1134,7 +1134,7 @@ export function SessionBoard() {
     collapsedProjectKeys,
     focusRequest,
     organization.rows,
-    setExpandedThread,
+    setExpandedEntry,
     setFocusedThreadKey,
     toggleSwimlaneCollapsed,
   ]);
@@ -1986,6 +1986,7 @@ function BoardEntryCard({
       environmentConnection={entry.environmentConnection}
       isDragging={draggingKey === entry.key}
       visitAcknowledgement={flatAttentionState ? "activate" : "focus"}
+      {...(flatAttentionState === "woke" ? { visualStatusOverride: "woke" as const } : {})}
       {...(flatAttentionState === "woke" && flatAttentionAt !== undefined
         ? { activationVisitAt: flatAttentionAt }
         : {})}

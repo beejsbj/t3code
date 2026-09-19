@@ -1,6 +1,6 @@
 import type { ThreadRuntimeState } from "../../state/threadRuntimeState.ts";
 
-export type BoardCardVisualState = ThreadRuntimeState | "done";
+export type BoardCardVisualState = ThreadRuntimeState | "done" | "woke";
 
 /** A board visit acknowledges exactly the completed turn currently on screen. */
 export function boardCardVisitTimestamp(thread: {

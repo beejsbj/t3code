@@ -20,9 +20,10 @@ describe("board card focus", () => {
 });
 
 describe("board card status glyph", () => {
-  it("matches the sidebar by omitting seen idle while retaining Done", () => {
+  it("matches the sidebar by omitting seen idle while retaining attention states", () => {
     expect(shouldShowBoardStatusIcon("idle")).toBe(false);
     expect(shouldShowBoardStatusIcon("done")).toBe(true);
+    expect(shouldShowBoardStatusIcon("woke")).toBe(true);
     expect(shouldShowBoardStatusIcon("working")).toBe(true);
   });
 });
