@@ -55,6 +55,24 @@ export function resolveBoardThreadState(
 
 export type BoardFlatAttentionState = BoardStateId | "done" | "woke";
 
+export function resolveBoardFlatAttentionState(input: {
+  readonly boardStateId: BoardStateId;
+  readonly hasUnseenCompletion: boolean;
+  readonly isWoke: boolean;
+}): BoardFlatAttentionState {
+  if (
+    input.boardStateId === "working" ||
+    input.boardStateId === "approval" ||
+    input.boardStateId === "input" ||
+    input.boardStateId === "failed"
+  ) {
+    return input.boardStateId;
+  }
+  if (input.isWoke) return "woke";
+  if (input.hasUnseenCompletion) return "done";
+  return input.boardStateId;
+}
+
 export interface BoardFlatOrderedEntry {
   readonly key: string;
   readonly attentionState: BoardFlatAttentionState;

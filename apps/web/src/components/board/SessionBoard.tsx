@@ -85,6 +85,7 @@ import {
   boardStateDimensionKey,
   buildBoardRows,
   orderFlatBoardEntries,
+  resolveBoardFlatAttentionState,
   resolveBoardThreadState,
   type BoardFlatAttentionState,
   type BoardStateId,
@@ -232,29 +233,26 @@ function resolveFlatAttention(
   if (thread === undefined) return { attentionState: "draft", attentionAt: createdAt };
 
   const activityAt = thread.session?.updatedAt ?? thread.updatedAt ?? createdAt;
-  if (boardStateId === "working") {
-    return { attentionState: "working", attentionAt: activityAt };
-  }
-  if (boardStateId === "approval" || boardStateId === "input" || boardStateId === "failed") {
-    return { attentionState: boardStateId, attentionAt: activityAt };
-  }
-  if (hasUnseenCompletion({ ...thread, lastVisitedAt })) {
-    return {
-      attentionState: "done",
-      attentionAt: thread.latestTurn?.completedAt ?? activityAt,
-    };
-  }
-
   const wokeAt = threadWokeAt(thread, { now });
   const lastVisitedAtMs = lastVisitedAt === undefined ? Number.NaN : Date.parse(lastVisitedAt);
-  if (
+  const isWoke =
     wokeAt !== null &&
     (!Number.isFinite(lastVisitedAtMs) || lastVisitedAtMs < Date.parse(wokeAt)) &&
-    thread.settledOverride !== "settled"
-  ) {
-    return { attentionState: "woke", attentionAt: wokeAt };
-  }
-  return { attentionState: boardStateId, attentionAt: activityAt };
+    thread.settledOverride !== "settled";
+  const attentionState = resolveBoardFlatAttentionState({
+    boardStateId,
+    hasUnseenCompletion: hasUnseenCompletion({ ...thread, lastVisitedAt }),
+    isWoke,
+  });
+  return {
+    attentionState,
+    attentionAt:
+      attentionState === "woke"
+        ? (wokeAt ?? activityAt)
+        : attentionState === "done"
+          ? (thread.latestTurn?.completedAt ?? activityAt)
+          : activityAt,
+  };
 }
 
 function flatAttentionLabel(state: BoardFlatAttentionState): string {

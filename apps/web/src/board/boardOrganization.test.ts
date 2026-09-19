@@ -14,6 +14,7 @@ import {
   boardWorkflowDimensionKey,
   buildBoardRows,
   orderFlatBoardEntries,
+  resolveBoardFlatAttentionState,
   resolveBoardThreadState,
   type BoardOrganizationEntry,
   type BoardStateId,
@@ -236,5 +237,41 @@ describe("orderFlatBoardEntries", () => {
     expect(
       orderFlatBoardEntries(flatEntries.slice(0, 2), ["missing", "idle"]).map((value) => value.key),
     ).toEqual(["idle", "working"]);
+  });
+});
+
+describe("resolveBoardFlatAttentionState", () => {
+  it("keeps actionable runtime states ahead of Woke and Done", () => {
+    expect(
+      resolveBoardFlatAttentionState({
+        boardStateId: "input",
+        hasUnseenCompletion: true,
+        isWoke: true,
+      }),
+    ).toBe("input");
+    expect(
+      resolveBoardFlatAttentionState({
+        boardStateId: "working",
+        hasUnseenCompletion: true,
+        isWoke: true,
+      }),
+    ).toBe("working");
+  });
+
+  it("gives Woke precedence when completion is also unseen", () => {
+    expect(
+      resolveBoardFlatAttentionState({
+        boardStateId: "idle",
+        hasUnseenCompletion: true,
+        isWoke: true,
+      }),
+    ).toBe("woke");
+    expect(
+      resolveBoardFlatAttentionState({
+        boardStateId: "idle",
+        hasUnseenCompletion: true,
+        isWoke: false,
+      }),
+    ).toBe("done");
   });
 });
