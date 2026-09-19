@@ -59,7 +59,6 @@ import {
   type BoardOrganizationColumns,
   type BoardOrganizationRows,
   clampBoardLaneWidth,
-  BOARD_LANE_MAX_WIDTH,
   BOARD_LANE_MIN_WIDTH,
   orderBoardLaneEntries,
   selectBoardPlacement,
@@ -125,6 +124,7 @@ import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
+import { boardCardVisitTimestamp } from "./BoardSessionCard.logic.ts";
 import { BoardDraftCard } from "./BoardDraftCard.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { threadHasStarted } from "../ChatView.logic.ts";
@@ -138,6 +138,7 @@ import {
   groupEntriesByLane,
   laneArchiveIntent,
   laneIdForName,
+  mergeFlatBoardOrder,
   nextLaneOrder,
   reorderLaneUpdates,
   resolveBoardLaneDrop,
@@ -338,6 +339,7 @@ export function SessionBoard() {
         : EMPTY_LAST_VISITED_AT_BY_THREAD_KEY,
     ),
   );
+  const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const setOrganizationColumns = useBoardLaneStore((state) => state.setOrganizationColumns);
   const setOrganizationRows = useBoardLaneStore((state) => state.setOrganizationRows);
   const lanes = useBoardLaneStore((state) => state.lanes);
@@ -742,6 +744,7 @@ export function SessionBoard() {
     });
   }, []);
 
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
   const laneResizeTeardownRef = useRef<(() => void) | null>(null);
   const laneResizeFrameRef = useRef<number | null>(null);
   useEffect(
@@ -815,7 +818,7 @@ export function SessionBoard() {
             : event.key === "Home"
               ? BOARD_LANE_MIN_WIDTH
               : event.key === "End"
-                ? BOARD_LANE_MAX_WIDTH
+                ? Math.max(BOARD_LANE_MIN_WIDTH, scrollerRef.current?.clientWidth ?? widthPx)
                 : null;
       if (next === null) return;
       event.preventDefault();
@@ -828,7 +831,6 @@ export function SessionBoard() {
   // Focus requests come from the sidebar, which cannot see this viewport. The
   // board reveals first and opens only when a later request follows a focus
   // acknowledgement from the card's composer.
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
   const focusRequest = useBoardFocusStore((state) => state.request);
   const clearFocusRequest = useBoardFocusStore((state) => state.clearRequest);
   const setExpandedThread = useBoardFocusStore((state) => state.setExpanded);
@@ -875,8 +877,22 @@ export function SessionBoard() {
     [revealCard],
   );
 
+  const acknowledgeEntryActivation = useCallback(
+    (entry: PlacedEntry) => {
+      if (organization.columns !== "none" || entry.kind !== "thread") return;
+      const placement = flatOrderedPlaced.find((candidate) => candidate.key === entry.key);
+      const visitedAt =
+        placement?.attentionState === "woke"
+          ? placement.attentionAt
+          : boardCardVisitTimestamp(entry.thread);
+      if (visitedAt !== null) markThreadVisited(entry.key, visitedAt);
+    },
+    [flatOrderedPlaced, markThreadVisited, organization.columns],
+  );
+
   const setExpandedEntry = useCallback(
     (entry: PlacedEntry | null) => {
+      if (entry !== null) acknowledgeEntryActivation(entry);
       setExpandedThread(
         entry === null
           ? null
@@ -885,7 +901,7 @@ export function SessionBoard() {
             : { kind: "draft", draftId: entry.draftId },
       );
     },
-    [setExpandedThread],
+    [acknowledgeEntryActivation, setExpandedThread],
   );
 
   const runBoardNavigation = useCallback(
@@ -907,6 +923,7 @@ export function SessionBoard() {
         const fullscreenKey = resolveBoardFullscreenThreadKey(entries, focusedKey);
         const entry = entries.find((candidate) => candidate.key === fullscreenKey);
         if (entry === undefined || entry.kind !== "thread") return;
+        acknowledgeEntryActivation(entry);
         void navigate({
           to: "/$environmentId/$threadId",
           params: {
@@ -982,7 +999,14 @@ export function SessionBoard() {
       else findCardNode(scrollerRef.current, entry.key)?.focus({ preventScroll: true });
       revealCard(entry.key);
     },
-    [navigate, restoreCollapsedCardFocus, revealCard, setExpandedEntry, setFocusedThreadKey],
+    [
+      acknowledgeEntryActivation,
+      navigate,
+      restoreCollapsedCardFocus,
+      revealCard,
+      setExpandedEntry,
+      setFocusedThreadKey,
+    ],
   );
 
   useEffect(() => {
@@ -1156,19 +1180,13 @@ export function SessionBoard() {
           overKey,
           insertAfter,
         });
-        if (projectScopeKey === null) {
-          setFlatOrder(scopedOrder);
-          return;
-        }
-        const scopedSet = new Set(scopedOrder);
-        const fullOrder = flatOrderedPlaced
-          .map((placement) => placement.key)
-          .filter((key) => !scopedSet.has(key));
-        const firstScopedIndex = flatOrderedPlaced.findIndex((placement) =>
-          scopedSet.has(placement.key),
+        setFlatOrder(
+          mergeFlatBoardOrder({
+            persistedKeys: flatOrder,
+            visibleKeys: flatOrderedPlaced.map((placement) => placement.key),
+            reorderedKeys: scopedOrder,
+          }),
         );
-        fullOrder.splice(Math.max(0, firstScopedIndex), 0, ...scopedOrder);
-        setFlatOrder(fullOrder);
         return;
       }
       if (organization.columns !== "workflow") return;
@@ -1267,6 +1285,7 @@ export function SessionBoard() {
       organization.rows,
       placedKeySet,
       flatOrderedPlaced,
+      flatOrder,
       projectScopeKey,
       setFlatOrder,
       setLaneOrder,
@@ -1857,7 +1876,6 @@ function LaneResizeHandle(props: {
       aria-label={`Resize ${props.label} column. Use arrow keys to resize.`}
       aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
       aria-valuemin={BOARD_LANE_MIN_WIDTH}
-      aria-valuemax={BOARD_LANE_MAX_WIDTH}
       aria-valuenow={props.widthPx}
       title={`Column width: ${props.widthPx}px`}
       className="group absolute inset-y-0 right-0 z-10 w-2 translate-x-1/2 cursor-ew-resize touch-none select-none border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:w-6"

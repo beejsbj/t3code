@@ -138,6 +138,16 @@ export const useBoardCardStore = create<BoardCardStoreState>()(
   ),
 );
 
+// Card dimensions belong to the browser profile, not one tab. Rehydrate when
+// a sibling tab resizes a card so the next local write starts from fresh data.
+export function rehydrateBoardCardStoreForStorageKey(key: string | null): void {
+  if (key === BOARD_CARD_STORAGE_KEY) void useBoardCardStore.persist.rehydrate();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => rehydrateBoardCardStoreForStorageKey(event.key));
+}
+
 export function selectCardHeight(
   byThreadKey: Record<string, BoardCardState>,
   ref: ScopedThreadRef,

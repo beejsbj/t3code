@@ -21,6 +21,7 @@ import {
   laneColumnKeyFromSwimlaneDroppableId,
   laneIdForName,
   nextLaneOrder,
+  mergeFlatBoardOrder,
   reorderLaneUpdates,
   reorderBoardLaneKeys,
   rowKeyFromSwimlaneDroppableId,
@@ -502,6 +503,28 @@ describe("reorderBoardLaneKeys", () => {
         insertAfter: true,
       }),
     ).toEqual(["b", "a", "c"]);
+  });
+});
+
+describe("mergeFlatBoardOrder", () => {
+  it("keeps temporarily hidden cards in their saved slots", () => {
+    expect(
+      mergeFlatBoardOrder({
+        persistedKeys: ["a", "hidden", "b"],
+        visibleKeys: ["a", "b"],
+        reorderedKeys: ["b", "a"],
+      }),
+    ).toEqual(["b", "hidden", "a"]);
+  });
+
+  it("reorders only the scoped cards while preserving other visible cards", () => {
+    expect(
+      mergeFlatBoardOrder({
+        persistedKeys: ["a-1", "b-1", "a-2", "hidden"],
+        visibleKeys: ["a-1", "b-1", "a-2", "b-2"],
+        reorderedKeys: ["a-2", "a-1"],
+      }),
+    ).toEqual(["a-2", "b-1", "a-1", "hidden", "b-2"]);
   });
 });
 

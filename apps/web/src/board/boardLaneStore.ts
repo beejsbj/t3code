@@ -9,7 +9,6 @@ const BOARD_LANE_STORAGE_KEY = "t3code:board-lanes:v1";
 const BOARD_LANE_STORAGE_VERSION = 7;
 
 export const BOARD_LANE_MIN_WIDTH = 260;
-export const BOARD_LANE_MAX_WIDTH = 1316;
 export const BOARD_LANE_DEFAULT_WIDTH = 380;
 
 export type BoardLaneId = string;
@@ -186,7 +185,7 @@ interface BoardLaneStoreState {
 
 export function clampBoardLaneWidth(widthPx: number): number {
   if (!Number.isFinite(widthPx)) return BOARD_LANE_DEFAULT_WIDTH;
-  return Math.min(BOARD_LANE_MAX_WIDTH, Math.max(BOARD_LANE_MIN_WIDTH, Math.round(widthPx)));
+  return Math.max(BOARD_LANE_MIN_WIDTH, Math.round(widthPx));
 }
 
 function isFixedBoardLaneId(laneId: BoardLaneId): laneId is (typeof FIXED_BOARD_LANE_IDS)[number] {

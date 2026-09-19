@@ -42,8 +42,8 @@ height, and in the flat view drag a card's right edge to change its preferred wi
 340px usability minimum but no artificial count or width cap: each row fits as many as its available
 space allows, and its cards expand together to consume any remainder. On a focused resize handle,
 use the arrow keys for 10px changes or hold Shift for 50px changes. Home restores the minimum; End
-uses the maximum lane width for columns, the maximum card height for bottom handles, and the
-available board width for flat-card handles. New cards open at the full working height, and that
+uses the available board width for columns and flat-card handles, and the maximum card height for
+bottom handles. New cards open at the full working height, and that
 height is also the resize minimum; cards can be made taller but not compacted below it. There is no
 separate compact-size mode.
 

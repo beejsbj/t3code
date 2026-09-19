@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   CARD_DEFAULT_HEIGHT,
@@ -9,6 +9,7 @@ import {
   CARD_MIN_HEIGHT,
   CARD_MIN_WIDTH,
   clampCardWidth,
+  rehydrateBoardCardStoreForStorageKey,
   selectCardHeight,
   selectCardWidth,
   useBoardCardStore,
@@ -22,6 +23,15 @@ beforeEach(() => {
 });
 
 describe("boardCardStore", () => {
+  it("rehydrates card dimensions saved by another tab", () => {
+    const rehydrate = vi.spyOn(useBoardCardStore.persist, "rehydrate").mockResolvedValue();
+    rehydrateBoardCardStoreForStorageKey("unrelated");
+    expect(rehydrate).not.toHaveBeenCalled();
+    rehydrateBoardCardStoreForStorageKey("t3code:board-cards:v1");
+    expect(rehydrate).toHaveBeenCalledOnce();
+    rehydrate.mockRestore();
+  });
+
   it("setHeight clamps to the min/max card height", () => {
     useBoardCardStore.getState().setHeight(refA, CARD_MIN_HEIGHT - 100);
     expect(selectCardHeight(useBoardCardStore.getState().byThreadKey, refA)).toBe(CARD_MIN_HEIGHT);

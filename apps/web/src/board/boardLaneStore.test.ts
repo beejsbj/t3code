@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   BOARD_LANE_DEFAULT_WIDTH,
-  BOARD_LANE_MAX_WIDTH,
   BOARD_LANE_MIN_WIDTH,
   DEFAULT_BOARD_ORGANIZATION,
   DEFAULT_BOARD_LANES,
@@ -43,17 +42,16 @@ describe("boardLaneStore", () => {
     ]);
   });
 
-  it("setWidth clamps to the min/max lane width", () => {
-    expect(BOARD_LANE_MAX_WIDTH).toBe(1316);
-
+  it("setWidth clamps to the minimum without imposing a maximum", () => {
     useBoardLaneStore.getState().setWidth(laneA, BOARD_LANE_MIN_WIDTH - 100);
     expect(selectBoardLaneWidth(useBoardLaneStore.getState().byLaneColumnKey, laneA)).toBe(
       BOARD_LANE_MIN_WIDTH,
     );
 
-    useBoardLaneStore.getState().setWidth(laneA, BOARD_LANE_MAX_WIDTH + 100);
+    const wideLane = BOARD_LANE_DEFAULT_WIDTH * 10;
+    useBoardLaneStore.getState().setWidth(laneA, wideLane);
     expect(selectBoardLaneWidth(useBoardLaneStore.getState().byLaneColumnKey, laneA)).toBe(
-      BOARD_LANE_MAX_WIDTH,
+      wideLane,
     );
   });
 
@@ -824,12 +822,14 @@ describe("boardLaneStore", () => {
     const mergedState = persistApi
       .getOptions()
       .merge(
-        { byLaneColumnKey: { [laneB]: { widthPx: BOARD_LANE_MAX_WIDTH + 1000 } } },
+        { byLaneColumnKey: { [laneB]: { widthPx: BOARD_LANE_DEFAULT_WIDTH * 10 } } },
         useBoardLaneStore.getInitialState(),
       );
 
     expect(mergedState.lanes).toEqual(DEFAULT_BOARD_LANES);
-    expect(mergedState.byLaneColumnKey).toEqual({ [laneB]: { widthPx: BOARD_LANE_MAX_WIDTH } });
+    expect(mergedState.byLaneColumnKey).toEqual({
+      [laneB]: { widthPx: BOARD_LANE_DEFAULT_WIDTH * 10 },
+    });
     expect(selectBoardLaneWidth(mergedState.byLaneColumnKey, "missing")).toBe(
       BOARD_LANE_DEFAULT_WIDTH,
     );
