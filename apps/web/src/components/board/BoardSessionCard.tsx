@@ -116,6 +116,7 @@ const WOKE_APPEARANCE = {
 
 export interface BoardSessionCardProps {
   readonly cardKey: string;
+  readonly resizingHeight?: number;
   readonly threadRef: ScopedThreadRef;
   readonly thread: SidebarThreadSummary;
   readonly laneId: BoardLaneId;
@@ -380,7 +381,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     [heightPx, setHeight, threadRef],
   );
 
-  const effectiveHeight = draggingHeight ?? heightPx;
+  const effectiveHeight = props.resizingHeight ?? draggingHeight ?? heightPx;
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {

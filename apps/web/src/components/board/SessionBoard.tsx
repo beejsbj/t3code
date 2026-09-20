@@ -26,6 +26,7 @@ import {
   EllipsisIcon,
   PlusIcon,
   SquarePenIcon,
+  GripIcon,
 } from "lucide-react";
 import {
   Fragment,
@@ -67,8 +68,12 @@ import {
 } from "../../board/boardLaneStore.ts";
 import {
   CARD_MIN_WIDTH,
+  CARD_DEFAULT_WIDTH,
+  CARD_MIN_HEIGHT,
+  CARD_MAX_HEIGHT,
+  clampCardHeight,
+  selectCardHeight,
   clampCardWidth,
-  selectCardWidth,
   useBoardCardStore,
 } from "../../board/boardCardStore.ts";
 import {
@@ -1953,6 +1958,7 @@ function BoardEntryCard({
   draggable,
   flatAttentionState,
   flatAttentionAt,
+  resizingHeight,
   onExpandDraft,
   onDiscardDraft,
 }: {
@@ -1962,6 +1968,7 @@ function BoardEntryCard({
   readonly draggable: boolean;
   readonly flatAttentionState?: BoardFlatAttentionState;
   readonly flatAttentionAt?: string;
+  readonly resizingHeight?: number;
   readonly onExpandDraft: (draftId: DraftId) => void;
   readonly onDiscardDraft: (draftId: DraftId) => void;
 }) {
@@ -1972,6 +1979,7 @@ function BoardEntryCard({
     <BoardSessionCard
       cardKey={entry.key}
       threadRef={entry.ref}
+      {...(resizingHeight !== undefined ? { resizingHeight } : {})}
       thread={entry.thread}
       laneId={entry.laneId}
       workflowLabel={boardLaneLabel(entry.workflowLaneId, lanes)}
@@ -2026,11 +2034,12 @@ function FlatBoardGrid({
         strategy={rectSortingStrategy}
       >
         {entries.map((placement) => (
-          <FlatBoardCardTile
+          <BoardCardTile
             key={placement.key}
             entry={placement.entry}
             attentionState={placement.attentionState}
             attentionAt={placement.attentionAt}
+            draggable
             lanes={lanes}
             draggingKey={draggingKey}
             onExpandDraft={onExpandDraft}
@@ -2042,7 +2051,7 @@ function FlatBoardGrid({
   );
 }
 
-function flatBoardAvailableWidth(tile: HTMLElement): number | null {
+function boardCardAvailableWidth(tile: HTMLElement): number | null {
   const board = tile.parentElement;
   if (board === null) return null;
   const style = window.getComputedStyle(board);
@@ -2053,25 +2062,34 @@ function flatBoardAvailableWidth(tile: HTMLElement): number | null {
   return width > 0 ? width : null;
 }
 
-const FlatBoardCardTile = memo(function FlatBoardCardTile({
+const BoardCardTile = memo(function BoardCardTile({
   entry,
   attentionState,
   attentionAt,
+  draggable,
   lanes,
   draggingKey,
   onExpandDraft,
   onDiscardDraft,
 }: {
   readonly entry: PlacedEntry;
-  readonly attentionState: BoardFlatAttentionState;
-  readonly attentionAt: string;
+  readonly attentionState?: BoardFlatAttentionState;
+  readonly attentionAt?: string;
+  readonly draggable: boolean;
   readonly lanes: ReadonlyArray<BoardLane>;
   readonly draggingKey: string | null;
   readonly onExpandDraft: (draftId: DraftId) => void;
   readonly onDiscardDraft: (draftId: DraftId) => void;
 }) {
-  const storedWidth = useBoardCardStore((state) => selectCardWidth(state.byThreadKey, entry.ref));
+  const storedWidth = useBoardCardStore(
+    (state) =>
+      state.byThreadKey[scopedThreadKey(entry.ref)]?.widthPx ??
+      (attentionState === undefined ? CARD_MIN_WIDTH : CARD_DEFAULT_WIDTH),
+  );
   const setCardWidth = useBoardCardStore((state) => state.setWidth);
+  const storedHeight = useBoardCardStore((state) => selectCardHeight(state.byThreadKey, entry.ref));
+  const setCardHeight = useBoardCardStore((state) => state.setHeight);
+  const [resizingHeight, setResizingHeight] = useState<number | undefined>(undefined);
   const [resizingWidth, setResizingWidth] = useState<number | null>(null);
   const resizeTeardownRef = useRef<(() => void) | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
@@ -2086,26 +2104,30 @@ const FlatBoardCardTile = memo(function FlatBoardCardTile({
   );
 
   const handleResizePointerDown = useCallback(
-    (event: ReactPointerEvent<HTMLButtonElement>) => {
+    (event: ReactPointerEvent<HTMLButtonElement>, corner = false) => {
+      if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
       resizeTeardownRef.current?.();
 
       const startX = event.clientX;
+      const startY = event.clientY;
+      const resizeHeight = corner && entry.kind === "thread";
+      let latestHeight = storedHeight;
       const tile = event.currentTarget.parentElement;
       if (tile === null) return;
-      const availableWidth = flatBoardAvailableWidth(tile);
+      const availableWidth = boardCardAvailableWidth(tile);
       const startWidth = Math.min(widthPx, availableWidth ?? widthPx);
       const rowCount = [...(tile.parentElement?.children ?? [])].filter(
         (candidate) =>
           candidate instanceof HTMLElement &&
-          candidate.matches("[data-flat-board-card-tile]") &&
+          candidate.matches("[data-board-card-tile]") &&
           candidate.offsetTop === tile.offsetTop,
       ).length;
       // Flex distributes free space across every card in the row. Scale the
       // preferred-width delta so the grabbed edge follows the pointer 1:1.
       const flexCompensation = rowCount > 1 ? rowCount / (rowCount - 1) : 1;
-      let latest = startWidth;
+      let latest = widthPx;
       const pointerId = event.pointerId;
       try {
         event.currentTarget.setPointerCapture(pointerId);
@@ -2114,11 +2136,16 @@ const FlatBoardCardTile = memo(function FlatBoardCardTile({
       }
       const onMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
-        latest = clampCardWidth(startWidth + (moveEvent.clientX - startX) * flexCompensation);
+        const deltaX = moveEvent.clientX - startX;
+        latest = deltaX === 0 ? widthPx : clampCardWidth(startWidth + deltaX * flexCompensation);
+        if (resizeHeight) {
+          latestHeight = clampCardHeight(storedHeight + moveEvent.clientY - startY);
+        }
         if (resizeFrameRef.current !== null) return;
         resizeFrameRef.current = window.requestAnimationFrame(() => {
           resizeFrameRef.current = null;
           setResizingWidth(latest);
+          if (resizeHeight) setResizingHeight(latestHeight);
         });
       };
       const finish = (finishEvent: PointerEvent) => {
@@ -2129,7 +2156,9 @@ const FlatBoardCardTile = memo(function FlatBoardCardTile({
           resizeFrameRef.current = null;
         }
         setResizingWidth(null);
-        setCardWidth(entry.ref, latest);
+        setResizingHeight(undefined);
+        if (latest !== widthPx) setCardWidth(entry.ref, latest);
+        if (resizeHeight && latestHeight !== storedHeight) setCardHeight(entry.ref, latestHeight);
       };
       const cancel = (cancelEvent: PointerEvent) => {
         if (cancelEvent.pointerId !== pointerId) return;
@@ -2139,6 +2168,7 @@ const FlatBoardCardTile = memo(function FlatBoardCardTile({
           resizeFrameRef.current = null;
         }
         setResizingWidth(null);
+        setResizingHeight(undefined);
       };
       const teardown = () => {
         resizeTeardownRef.current = null;
@@ -2151,14 +2181,32 @@ const FlatBoardCardTile = memo(function FlatBoardCardTile({
       window.addEventListener("pointerup", finish);
       window.addEventListener("pointercancel", cancel);
     },
-    [entry.ref, setCardWidth, widthPx],
+    [entry.kind, entry.ref, setCardHeight, setCardWidth, storedHeight, widthPx],
   );
 
   const handleResizeKeyDown = useCallback(
-    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    (event: ReactKeyboardEvent<HTMLButtonElement>, corner = false) => {
       const step = event.shiftKey ? 50 : 10;
+      if (corner && entry.kind === "thread") {
+        const nextHeight =
+          event.key === "ArrowUp"
+            ? storedHeight - step
+            : event.key === "ArrowDown"
+              ? storedHeight + step
+              : event.key === "Home"
+                ? CARD_MIN_HEIGHT
+                : event.key === "End"
+                  ? CARD_MAX_HEIGHT
+                  : null;
+        if (nextHeight !== null) {
+          event.preventDefault();
+          event.stopPropagation();
+          setCardHeight(entry.ref, nextHeight);
+          if (event.key === "ArrowUp" || event.key === "ArrowDown") return;
+        }
+      }
       const tile = event.currentTarget.parentElement;
-      const availableWidth = tile === null ? null : flatBoardAvailableWidth(tile);
+      const availableWidth = tile === null ? null : boardCardAvailableWidth(tile);
       const visibleStartingWidth = Math.min(widthPx, availableWidth ?? widthPx);
       const next =
         event.key === "ArrowLeft"
@@ -2175,12 +2223,12 @@ const FlatBoardCardTile = memo(function FlatBoardCardTile({
       event.stopPropagation();
       setCardWidth(entry.ref, next);
     },
-    [entry.ref, setCardWidth, widthPx],
+    [entry.kind, entry.ref, setCardHeight, setCardWidth, storedHeight, widthPx],
   );
 
   return (
     <div
-      data-flat-board-card-tile
+      data-board-card-tile
       className="relative min-w-0"
       style={{
         flexBasis: `${widthPx}px`,
@@ -2194,17 +2242,18 @@ const FlatBoardCardTile = memo(function FlatBoardCardTile({
         entry={entry}
         lanes={lanes}
         draggingKey={draggingKey}
-        draggable
-        flatAttentionState={attentionState}
-        flatAttentionAt={attentionAt}
+        draggable={draggable}
+        {...(resizingHeight !== undefined ? { resizingHeight } : {})}
+        {...(attentionState !== undefined ? { flatAttentionState: attentionState } : {})}
+        {...(attentionAt !== undefined ? { flatAttentionAt: attentionAt } : {})}
         onExpandDraft={onExpandDraft}
         onDiscardDraft={onDiscardDraft}
       />
       <button
         type="button"
         data-board-resize-handle
-        onPointerDown={handleResizePointerDown}
-        onKeyDown={handleResizeKeyDown}
+        onPointerDown={(event) => handleResizePointerDown(event)}
+        onKeyDown={(event) => handleResizeKeyDown(event)}
         aria-label={`Resize ${entry.kind === "thread" ? entry.thread.title : "draft"} card. Preferred width ${widthPx}px. Use left and right arrow keys to resize.`}
         aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
         className={cn(
@@ -2213,6 +2262,25 @@ const FlatBoardCardTile = memo(function FlatBoardCardTile({
         )}
       >
         <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-border group-active:bg-primary/60" />
+      </button>
+      <button
+        type="button"
+        data-board-resize-handle
+        onPointerDown={(event) => handleResizePointerDown(event, true)}
+        onKeyDown={(event) => handleResizeKeyDown(event, true)}
+        aria-label={`Resize ${entry.kind === "thread" ? entry.thread.title : "draft"} card ${entry.kind === "thread" ? "width and height. Use arrow keys to resize." : "width. Use left and right arrow keys to resize."}`}
+        aria-keyshortcuts={
+          entry.kind === "thread"
+            ? "ArrowLeft ArrowRight ArrowUp ArrowDown Shift+ArrowLeft Shift+ArrowRight Shift+ArrowUp Shift+ArrowDown Home End"
+            : "ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
+        }
+        className={cn(
+          "absolute bottom-0 right-0 z-20 flex size-5 touch-none select-none items-center justify-center rounded-tl rounded-br-lg border-0 bg-muted text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7",
+          entry.kind === "thread" ? "cursor-nwse-resize" : "cursor-ew-resize",
+          draggingKey === entry.key && "pointer-events-none opacity-0",
+        )}
+      >
+        <GripIcon aria-hidden className="pointer-events-none size-3.5" />
       </button>
     </div>
   );
@@ -2249,24 +2317,18 @@ function LaneDropCell({
       data-board-column={column.key}
       className={cn("min-h-16 min-w-0 p-2", BOARD_COLUMN_RULE_CLASS, isOver && "bg-accent/40")}
     >
-      <div
-        className="grid min-w-0 justify-items-start gap-2"
-        style={{
-          gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 340px), 1fr))",
-        }}
-      >
+      <div className="flex min-w-0 flex-wrap content-start items-start gap-2">
         <SortableContext items={entries.map((entry) => entry.key)} strategy={rectSortingStrategy}>
           {entries.map((entry) => (
-            <div key={entry.key} className="w-full min-w-0">
-              <BoardEntryCard
-                entry={entry}
-                lanes={lanes}
-                draggingKey={draggingKey}
-                draggable={draggable}
-                onExpandDraft={onExpandDraft}
-                onDiscardDraft={onDiscardDraft}
-              />
-            </div>
+            <BoardCardTile
+              key={entry.key}
+              entry={entry}
+              lanes={lanes}
+              draggingKey={draggingKey}
+              draggable={draggable}
+              onExpandDraft={onExpandDraft}
+              onDiscardDraft={onDiscardDraft}
+            />
           ))}
         </SortableContext>
       </div>
