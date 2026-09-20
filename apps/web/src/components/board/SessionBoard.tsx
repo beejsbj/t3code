@@ -2062,7 +2062,7 @@ function boardCardAvailableWidth(tile: HTMLElement): number | null {
   return width > 0 ? width : null;
 }
 
-const BoardCardTile = memo(function BoardCardTile({
+export const BoardCardTile = memo(function BoardCardTile({
   entry,
   attentionState,
   attentionAt,
@@ -2093,7 +2093,9 @@ const BoardCardTile = memo(function BoardCardTile({
   const [resizingWidth, setResizingWidth] = useState<number | null>(null);
   const resizeTeardownRef = useRef<(() => void) | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
-  const widthPx = resizingWidth ?? storedWidth;
+  const widthPx = storedWidth;
+  const setFocused = useBoardFocusStore((state) => state.setFocused);
+  const focusCard = useCallback(() => setFocused(entry.key), [entry.key, setFocused]);
 
   useEffect(
     () => () => {
@@ -2109,23 +2111,28 @@ const BoardCardTile = memo(function BoardCardTile({
       event.preventDefault();
       event.stopPropagation();
       resizeTeardownRef.current?.();
+      focusCard();
+      event.currentTarget.focus({ preventScroll: true });
 
       const startX = event.clientX;
       const startY = event.clientY;
       const resizeHeight = corner && entry.kind === "thread";
       let latestHeight = storedHeight;
-      const tile = event.currentTarget.parentElement;
-      if (tile === null) return;
+      const tile = event.currentTarget.parentElement?.parentElement;
+      if (tile == null) return;
       const availableWidth = boardCardAvailableWidth(tile);
       const startWidth = Math.min(widthPx, availableWidth ?? widthPx);
+      const renderedWidth = tile.getBoundingClientRect().width;
+      let latestPreviewWidth = renderedWidth;
       const rowCount = [...(tile.parentElement?.children ?? [])].filter(
         (candidate) =>
           candidate instanceof HTMLElement &&
           candidate.matches("[data-board-card-tile]") &&
           candidate.offsetTop === tile.offsetTop,
       ).length;
-      // Flex distributes free space across every card in the row. Scale the
-      // preferred-width delta so the grabbed edge follows the pointer 1:1.
+      // Keep row packing stable during the gesture. The inner card previews
+      // the pointer's actual width; only release changes the flex basis.
+      // Compensate the saved preference for free space shared with neighbors.
       const flexCompensation = rowCount > 1 ? rowCount / (rowCount - 1) : 1;
       let latest = widthPx;
       const pointerId = event.pointerId;
@@ -2137,14 +2144,21 @@ const BoardCardTile = memo(function BoardCardTile({
       const onMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
         const deltaX = moveEvent.clientX - startX;
-        latest = deltaX === 0 ? widthPx : clampCardWidth(startWidth + deltaX * flexCompensation);
+        latestPreviewWidth = Math.min(
+          availableWidth ?? Number.POSITIVE_INFINITY,
+          clampCardWidth(renderedWidth + deltaX),
+        );
+        latest =
+          deltaX === 0
+            ? widthPx
+            : clampCardWidth(startWidth + (latestPreviewWidth - renderedWidth) * flexCompensation);
         if (resizeHeight) {
           latestHeight = clampCardHeight(storedHeight + moveEvent.clientY - startY);
         }
         if (resizeFrameRef.current !== null) return;
         resizeFrameRef.current = window.requestAnimationFrame(() => {
           resizeFrameRef.current = null;
-          setResizingWidth(latest);
+          setResizingWidth(latestPreviewWidth);
           if (resizeHeight) setResizingHeight(latestHeight);
         });
       };
@@ -2181,7 +2195,7 @@ const BoardCardTile = memo(function BoardCardTile({
       window.addEventListener("pointerup", finish);
       window.addEventListener("pointercancel", cancel);
     },
-    [entry.kind, entry.ref, setCardHeight, setCardWidth, storedHeight, widthPx],
+    [entry.kind, entry.ref, focusCard, setCardHeight, setCardWidth, storedHeight, widthPx],
   );
 
   const handleResizeKeyDown = useCallback(
@@ -2205,7 +2219,7 @@ const BoardCardTile = memo(function BoardCardTile({
           if (event.key === "ArrowUp" || event.key === "ArrowDown") return;
         }
       }
-      const tile = event.currentTarget.parentElement;
+      const tile = event.currentTarget.parentElement?.parentElement ?? null;
       const availableWidth = tile === null ? null : boardCardAvailableWidth(tile);
       const visibleStartingWidth = Math.min(widthPx, availableWidth ?? widthPx);
       const next =
@@ -2238,50 +2252,60 @@ const BoardCardTile = memo(function BoardCardTile({
         maxWidth: "100%",
       }}
     >
-      <BoardEntryCard
-        entry={entry}
-        lanes={lanes}
-        draggingKey={draggingKey}
-        draggable={draggable}
-        {...(resizingHeight !== undefined ? { resizingHeight } : {})}
-        {...(attentionState !== undefined ? { flatAttentionState: attentionState } : {})}
-        {...(attentionAt !== undefined ? { flatAttentionAt: attentionAt } : {})}
-        onExpandDraft={onExpandDraft}
-        onDiscardDraft={onDiscardDraft}
-      />
-      <button
-        type="button"
-        data-board-resize-handle
-        onPointerDown={(event) => handleResizePointerDown(event)}
-        onKeyDown={(event) => handleResizeKeyDown(event)}
-        aria-label={`Resize ${entry.kind === "thread" ? entry.thread.title : "draft"} card. Preferred width ${widthPx}px. Use left and right arrow keys to resize.`}
-        aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
-        className={cn(
-          "group absolute inset-y-0 right-0 z-10 w-2 translate-x-1/2 cursor-ew-resize touch-none select-none border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:w-6",
-          draggingKey === entry.key && "pointer-events-none opacity-0",
-        )}
+      <div
+        className="relative"
+        style={{
+          width: resizingWidth === null ? "100%" : `${resizingWidth}px`,
+          zIndex: resizingWidth === null ? undefined : 30,
+        }}
       >
-        <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-border group-active:bg-primary/60" />
-      </button>
-      <button
-        type="button"
-        data-board-resize-handle
-        onPointerDown={(event) => handleResizePointerDown(event, true)}
-        onKeyDown={(event) => handleResizeKeyDown(event, true)}
-        aria-label={`Resize ${entry.kind === "thread" ? entry.thread.title : "draft"} card ${entry.kind === "thread" ? "width and height. Use arrow keys to resize." : "width. Use left and right arrow keys to resize."}`}
-        aria-keyshortcuts={
-          entry.kind === "thread"
-            ? "ArrowLeft ArrowRight ArrowUp ArrowDown Shift+ArrowLeft Shift+ArrowRight Shift+ArrowUp Shift+ArrowDown Home End"
-            : "ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
-        }
-        className={cn(
-          "absolute bottom-0 right-0 z-20 flex size-5 touch-none select-none items-center justify-center rounded-tl rounded-br-lg border-0 bg-muted text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7",
-          entry.kind === "thread" ? "cursor-nwse-resize" : "cursor-ew-resize",
-          draggingKey === entry.key && "pointer-events-none opacity-0",
-        )}
-      >
-        <GripIcon aria-hidden className="pointer-events-none size-3.5" />
-      </button>
+        <BoardEntryCard
+          entry={entry}
+          lanes={lanes}
+          draggingKey={draggingKey}
+          draggable={draggable}
+          {...(resizingHeight !== undefined ? { resizingHeight } : {})}
+          {...(attentionState !== undefined ? { flatAttentionState: attentionState } : {})}
+          {...(attentionAt !== undefined ? { flatAttentionAt: attentionAt } : {})}
+          onExpandDraft={onExpandDraft}
+          onDiscardDraft={onDiscardDraft}
+        />
+        <button
+          type="button"
+          data-board-resize-handle
+          onFocus={focusCard}
+          onPointerDown={(event) => handleResizePointerDown(event)}
+          onKeyDown={(event) => handleResizeKeyDown(event)}
+          aria-label={`Resize ${entry.kind === "thread" ? entry.thread.title : "draft"} card. Preferred width ${widthPx}px. Use left and right arrow keys to resize.`}
+          aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
+          className={cn(
+            "group absolute inset-y-0 right-0 z-10 w-2 translate-x-1/2 cursor-ew-resize touch-none select-none border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:w-6",
+            draggingKey === entry.key && "pointer-events-none opacity-0",
+          )}
+        >
+          <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-border group-active:bg-primary/60" />
+        </button>
+        <button
+          type="button"
+          data-board-resize-handle
+          onFocus={focusCard}
+          onPointerDown={(event) => handleResizePointerDown(event, true)}
+          onKeyDown={(event) => handleResizeKeyDown(event, true)}
+          aria-label={`Resize ${entry.kind === "thread" ? entry.thread.title : "draft"} card ${entry.kind === "thread" ? "width and height. Use arrow keys to resize." : "width. Use left and right arrow keys to resize."}`}
+          aria-keyshortcuts={
+            entry.kind === "thread"
+              ? "ArrowLeft ArrowRight ArrowUp ArrowDown Shift+ArrowLeft Shift+ArrowRight Shift+ArrowUp Shift+ArrowDown Home End"
+              : "ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
+          }
+          className={cn(
+            "absolute bottom-0 right-0 z-20 flex size-5 touch-none select-none items-center justify-center rounded-tl rounded-br-lg border-0 bg-muted text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-7",
+            entry.kind === "thread" ? "cursor-nwse-resize" : "cursor-ew-resize",
+            draggingKey === entry.key && "pointer-events-none opacity-0",
+          )}
+        >
+          <GripIcon aria-hidden className="pointer-events-none size-3.5" />
+        </button>
+      </div>
     </div>
   );
 });
