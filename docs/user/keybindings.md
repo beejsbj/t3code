@@ -66,7 +66,7 @@ full-screen session route.
 `board.moveFocusedLeft` and `board.moveFocusedRight` move the focused card one
 local workflow lane and default to `mod+alt+shift+ArrowLeft` and
 `mod+alt+shift+ArrowRight`. They are unavailable while the board uses state
-columns, because local workflow lanes are not displayed there.
+columns or no columns, because local workflow lanes are not displayed there.
 
 ## Reserved shortcuts
 

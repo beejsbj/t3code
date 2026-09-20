@@ -21,6 +21,7 @@ import {
   laneColumnKeyFromSwimlaneDroppableId,
   laneIdForName,
   nextLaneOrder,
+  mergeFlatBoardOrder,
   reorderLaneUpdates,
   reorderBoardLaneKeys,
   rowKeyFromSwimlaneDroppableId,
@@ -87,6 +88,7 @@ const lifecycleOptions = {
 type KeyboardTargetInput = {
   readonly tagName?: "input";
   readonly terminalOwner?: boolean;
+  readonly resizeHandle?: boolean;
   readonly slot?: "dialog-popup" | "alert-dialog-popup" | "command-dialog-popup" | "select-popup";
   readonly role?: "listbox" | "option";
   readonly contentEditable?: "true" | "false";
@@ -99,6 +101,7 @@ function keyboardTarget(input: KeyboardTargetInput): EventTarget {
       const matches =
         (input.tagName === "input" && selectors.includes("input")) ||
         (input.terminalOwner === true && selectors.includes("[data-terminal-owner]")) ||
+        (input.resizeHandle === true && selectors.includes("[data-board-resize-handle]")) ||
         (input.slot !== undefined && selectors.includes(`[data-slot='${input.slot}']`)) ||
         (input.role !== undefined && selectors.includes(`[role='${input.role}']`)) ||
         (input.contentEditable === "true" &&
@@ -113,6 +116,7 @@ describe("shouldIgnoreBoardKeyboardTarget", () => {
   const ignoredTargets = [
     ["an input", { tagName: "input" }],
     ["a terminal owner", { terminalOwner: true }],
+    ["a card resize handle", { resizeHandle: true }],
     ["a dialog", { slot: "dialog-popup" }],
     ["an alert dialog", { slot: "alert-dialog-popup" }],
     ["a command dialog", { slot: "command-dialog-popup" }],
@@ -499,6 +503,28 @@ describe("reorderBoardLaneKeys", () => {
         insertAfter: true,
       }),
     ).toEqual(["b", "a", "c"]);
+  });
+});
+
+describe("mergeFlatBoardOrder", () => {
+  it("keeps temporarily hidden cards in their saved slots", () => {
+    expect(
+      mergeFlatBoardOrder({
+        persistedKeys: ["a", "hidden", "b"],
+        visibleKeys: ["a", "b"],
+        reorderedKeys: ["b", "a"],
+      }),
+    ).toEqual(["b", "hidden", "a"]);
+  });
+
+  it("reorders only the scoped cards while preserving other visible cards", () => {
+    expect(
+      mergeFlatBoardOrder({
+        persistedKeys: ["a-1", "b-1", "a-2", "hidden"],
+        visibleKeys: ["a-1", "b-1", "a-2", "b-2"],
+        reorderedKeys: ["a-2", "a-1"],
+      }),
+    ).toEqual(["a-2", "b-1", "a-1", "hidden", "b-2"]);
   });
 });
 

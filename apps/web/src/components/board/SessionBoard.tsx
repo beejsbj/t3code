@@ -17,6 +17,7 @@ import {
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import { threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { type EnvironmentId, type ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -28,6 +29,7 @@ import {
 } from "lucide-react";
 import {
   Fragment,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -57,13 +59,18 @@ import {
   type BoardOrganizationColumns,
   type BoardOrganizationRows,
   clampBoardLaneWidth,
-  BOARD_LANE_MAX_WIDTH,
   BOARD_LANE_MIN_WIDTH,
   orderBoardLaneEntries,
   selectBoardPlacement,
   selectBoardLaneWidth,
   useBoardLaneStore,
 } from "../../board/boardLaneStore.ts";
+import {
+  CARD_MIN_WIDTH,
+  clampCardWidth,
+  selectCardWidth,
+  useBoardCardStore,
+} from "../../board/boardCardStore.ts";
 import {
   isBoardFixedLaneId,
   isBoardWorkflowLane,
@@ -77,7 +84,10 @@ import {
   BOARD_STATES,
   boardStateDimensionKey,
   buildBoardRows,
+  orderFlatBoardEntries,
+  resolveBoardFlatAttentionState,
   resolveBoardThreadState,
+  type BoardFlatAttentionState,
   type BoardStateId,
 } from "../../board/boardOrganization.ts";
 import { selectProjectGroupingSettings } from "../../logicalProject.ts";
@@ -92,6 +102,7 @@ import {
   useThreadShells,
 } from "../../state/entities.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
+import { useUiStateStore } from "../../uiStateStore.ts";
 import { useNowMinute } from "../../hooks/useNowMinute.ts";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread.ts";
 import { isCommandPaletteOpen } from "../../commandPaletteBus.ts";
@@ -114,9 +125,11 @@ import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
+import { boardCardVisitTimestamp } from "./BoardSessionCard.logic.ts";
 import { BoardDraftCard } from "./BoardDraftCard.tsx";
 import { BoardCardExpandedSheet } from "./BoardCardExpandedSheet.tsx";
 import { threadHasStarted } from "../ChatView.logic.ts";
+import { hasUnseenCompletion } from "../Sidebar.logic.ts";
 import {
   boardFocusRequestMatches,
   coordinateBoardReveal,
@@ -126,6 +139,7 @@ import {
   groupEntriesByLane,
   laneArchiveIntent,
   laneIdForName,
+  mergeFlatBoardOrder,
   nextLaneOrder,
   reorderLaneUpdates,
   resolveBoardLaneDrop,
@@ -149,6 +163,7 @@ import {
 const BOARD_HEADER_HEIGHT = "3.25rem";
 /** The rule that makes a lane read as one column down the whole scroll. */
 const BOARD_COLUMN_RULE_CLASS = "border-l border-border/40 first:border-l-0";
+const EMPTY_LAST_VISITED_AT_BY_THREAD_KEY: Readonly<Record<string, string>> = {};
 
 interface PlacedEntryBase {
   readonly ref: ScopedThreadRef;
@@ -178,6 +193,13 @@ interface PlacedDraft extends PlacedEntryBase {
 
 type PlacedEntry = PlacedThread | PlacedDraft;
 
+interface FlatPlacedEntry {
+  readonly key: string;
+  readonly attentionState: BoardFlatAttentionState;
+  readonly attentionAt: string;
+  readonly entry: PlacedEntry;
+}
+
 interface WorkflowBoardColumn {
   readonly kind: "workflow";
   readonly key: string;
@@ -198,6 +220,45 @@ type LaneDraft = BoardLaneDraft;
 
 function laneColumnKey(laneId: BoardLaneId): string {
   return laneId;
+}
+
+function resolveFlatAttention(
+  entry: Pick<PlacedEntryBase, "boardStateId" | "createdAt"> & {
+    readonly thread?: SidebarThreadSummary;
+  },
+  lastVisitedAt: string | undefined,
+  now: string,
+): { readonly attentionState: BoardFlatAttentionState; readonly attentionAt: string } {
+  const { boardStateId, createdAt, thread } = entry;
+  if (thread === undefined) return { attentionState: "draft", attentionAt: createdAt };
+
+  const activityAt = thread.session?.updatedAt ?? thread.updatedAt ?? createdAt;
+  const wokeAt = threadWokeAt(thread, { now });
+  const lastVisitedAtMs = lastVisitedAt === undefined ? Number.NaN : Date.parse(lastVisitedAt);
+  const isWoke =
+    wokeAt !== null &&
+    (!Number.isFinite(lastVisitedAtMs) || lastVisitedAtMs < Date.parse(wokeAt)) &&
+    thread.settledOverride !== "settled";
+  const attentionState = resolveBoardFlatAttentionState({
+    boardStateId,
+    hasUnseenCompletion: hasUnseenCompletion({ ...thread, lastVisitedAt }),
+    isWoke,
+  });
+  return {
+    attentionState,
+    attentionAt:
+      attentionState === "woke"
+        ? (wokeAt ?? activityAt)
+        : attentionState === "done"
+          ? (thread.latestTurn?.completedAt ?? activityAt)
+          : activityAt,
+  };
+}
+
+function flatAttentionLabel(state: BoardFlatAttentionState): string {
+  if (state === "done") return "Done";
+  if (state === "woke") return "Woke";
+  return BOARD_STATE_BY_ID[state].label;
 }
 
 function findCardNode(scroller: HTMLElement | null, threadKey: string): HTMLElement | null {
@@ -255,15 +316,38 @@ export function SessionBoard() {
   );
   const clearDraftThread = useComposerDraftStore((state) => state.clearDraftThread);
   const handleNewThread = useNewThreadHandler();
+  const handleExpandDraft = useCallback(
+    (draftId: DraftId) => setExpandedTarget({ kind: "draft", draftId }),
+    [setExpandedTarget],
+  );
   const organization = useBoardLaneStore((state) => state.organization);
+  const boardThreadKeys = useMemo(
+    () => threads.map((thread) => scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))),
+    [threads],
+  );
+  const lastVisitedAtByThreadKey = useUiStateStore(
+    useShallow((state) =>
+      organization.columns === "none"
+        ? Object.fromEntries(
+            boardThreadKeys.flatMap((key) => {
+              const visitedAt = state.threadLastVisitedAtById[key];
+              return visitedAt === undefined ? [] : [[key, visitedAt]];
+            }),
+          )
+        : EMPTY_LAST_VISITED_AT_BY_THREAD_KEY,
+    ),
+  );
+  const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
   const setOrganizationColumns = useBoardLaneStore((state) => state.setOrganizationColumns);
   const setOrganizationRows = useBoardLaneStore((state) => state.setOrganizationRows);
   const lanes = useBoardLaneStore((state) => state.lanes);
   const placementByThreadKey = useBoardLaneStore((state) => state.placementByThreadKey);
   const laneEntryByThreadKey = useBoardLaneStore((state) => state.laneEntryByThreadKey);
   const orderByLaneId = useBoardLaneStore((state) => state.orderByLaneId);
+  const flatOrder = useBoardLaneStore((state) => state.flatOrder);
   const recordLaneEntry = useBoardLaneStore((state) => state.recordLaneEntry);
   const setLaneOrder = useBoardLaneStore((state) => state.setLaneOrder);
+  const setFlatOrder = useBoardLaneStore((state) => state.setFlatOrder);
   const createLane = useBoardLaneStore((state) => state.createLane);
   const updateLane = useBoardLaneStore((state) => state.updateLane);
   const archiveLane = useBoardLaneStore((state) => state.archiveLane);
@@ -334,12 +418,14 @@ export function SessionBoard() {
     () =>
       organization.columns === "workflow"
         ? workflowColumns
-        : BOARD_STATES.map((state) => ({
-            kind: "state" as const,
-            key: boardStateDimensionKey(state.id),
-            stateId: state.id,
-            label: state.label,
-          })),
+        : organization.columns === "state"
+          ? BOARD_STATES.map((state) => ({
+              kind: "state" as const,
+              key: boardStateDimensionKey(state.id),
+              stateId: state.id,
+              label: state.label,
+            }))
+          : [],
     [organization.columns, workflowColumns],
   );
 
@@ -442,7 +528,9 @@ export function SessionBoard() {
           const columnKey =
             organization.columns === "workflow"
               ? laneColumnKey(workflowLaneId)
-              : boardStateDimensionKey(boardStateId);
+              : organization.columns === "state"
+                ? boardStateDimensionKey(boardStateId)
+                : "flat";
           const physicalProjectKey = boardProjectKey(thread.environmentId, thread.projectId);
           const projectGroup = projectGroupByPhysicalKey.get(physicalProjectKey);
           return {
@@ -522,7 +610,9 @@ export function SessionBoard() {
         laneColumnKey:
           organization.columns === "workflow"
             ? laneColumnKey(workflowLaneId)
-            : boardStateDimensionKey("draft"),
+            : organization.columns === "state"
+              ? boardStateDimensionKey("draft")
+              : "flat",
         createdAt: draft.createdAt,
       });
     }
@@ -543,9 +633,31 @@ export function SessionBoard() {
     () => [...placedThreads, ...placedDrafts],
     [placedDrafts, placedThreads],
   );
-  const orderedPlaced = useMemo(
+  const laneOrderedPlaced = useMemo(
     () => orderBoardLaneEntries(placed, laneEntryByThreadKey, orderByLaneId),
     [laneEntryByThreadKey, orderByLaneId, placed],
+  );
+  const flatOrderedPlaced = useMemo(() => {
+    void nowMinute;
+    void snoozeWakeTick;
+    const now = new Date().toISOString();
+    return orderFlatBoardEntries(
+      placed.map<FlatPlacedEntry>((entry) => ({
+        key: entry.key,
+        entry,
+        ...(entry.kind === "thread"
+          ? resolveFlatAttention(entry, lastVisitedAtByThreadKey[entry.key], now)
+          : { attentionState: "draft", attentionAt: entry.createdAt }),
+      })),
+      flatOrder,
+    );
+  }, [flatOrder, lastVisitedAtByThreadKey, nowMinute, placed, snoozeWakeTick]);
+  const orderedPlaced = useMemo<ReadonlyArray<PlacedEntry>>(
+    () =>
+      organization.columns === "none"
+        ? flatOrderedPlaced.map((placement) => placement.entry)
+        : laneOrderedPlaced,
+    [flatOrderedPlaced, laneOrderedPlaced, organization.columns],
   );
   const expandedThread = useMemo(
     () =>
@@ -612,6 +724,14 @@ export function SessionBoard() {
     () => buildBoardRows(orderedPlaced, organization.rows, projectScopeKey),
     [orderedPlaced, organization.rows, projectScopeKey],
   );
+  const visiblePlaced = useMemo(() => boardRows.flatMap((row) => row.entries), [boardRows]);
+  const visibleFlatPlaced = useMemo(
+    () =>
+      projectScopeKey === null
+        ? flatOrderedPlaced
+        : flatOrderedPlaced.filter((placement) => placement.entry.projectKey === projectScopeKey),
+    [flatOrderedPlaced, projectScopeKey],
+  );
 
   const toggleSwimlaneCollapsed = useCallback((projectKey: string) => {
     setCollapsedProjectKeys((current) => {
@@ -622,6 +742,7 @@ export function SessionBoard() {
     });
   }, []);
 
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
   const laneResizeTeardownRef = useRef<(() => void) | null>(null);
   const laneResizeFrameRef = useRef<number | null>(null);
   useEffect(
@@ -695,7 +816,7 @@ export function SessionBoard() {
             : event.key === "Home"
               ? BOARD_LANE_MIN_WIDTH
               : event.key === "End"
-                ? BOARD_LANE_MAX_WIDTH
+                ? Math.max(BOARD_LANE_MIN_WIDTH, scrollerRef.current?.clientWidth ?? widthPx)
                 : null;
       if (next === null) return;
       event.preventDefault();
@@ -708,7 +829,6 @@ export function SessionBoard() {
   // Focus requests come from the sidebar, which cannot see this viewport. The
   // board reveals first and opens only when a later request follows a focus
   // acknowledgement from the card's composer.
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
   const focusRequest = useBoardFocusStore((state) => state.request);
   const clearFocusRequest = useBoardFocusStore((state) => state.clearRequest);
   const setExpandedThread = useBoardFocusStore((state) => state.setExpanded);
@@ -755,8 +875,22 @@ export function SessionBoard() {
     [revealCard],
   );
 
+  const acknowledgeEntryActivation = useCallback(
+    (entry: PlacedEntry) => {
+      if (organization.columns !== "none" || entry.kind !== "thread") return;
+      const placement = flatOrderedPlaced.find((candidate) => candidate.key === entry.key);
+      const visitedAt =
+        placement?.attentionState === "woke"
+          ? placement.attentionAt
+          : boardCardVisitTimestamp(entry.thread);
+      if (visitedAt !== null) markThreadVisited(entry.key, visitedAt);
+    },
+    [flatOrderedPlaced, markThreadVisited, organization.columns],
+  );
+
   const setExpandedEntry = useCallback(
     (entry: PlacedEntry | null) => {
+      if (entry !== null) acknowledgeEntryActivation(entry);
       setExpandedThread(
         entry === null
           ? null
@@ -765,7 +899,7 @@ export function SessionBoard() {
             : { kind: "draft", draftId: entry.draftId },
       );
     },
-    [setExpandedThread],
+    [acknowledgeEntryActivation, setExpandedThread],
   );
 
   const runBoardNavigation = useCallback(
@@ -787,6 +921,7 @@ export function SessionBoard() {
         const fullscreenKey = resolveBoardFullscreenThreadKey(entries, focusedKey);
         const entry = entries.find((candidate) => candidate.key === fullscreenKey);
         if (entry === undefined || entry.kind !== "thread") return;
+        acknowledgeEntryActivation(entry);
         void navigate({
           to: "/$environmentId/$threadId",
           params: {
@@ -862,7 +997,14 @@ export function SessionBoard() {
       else findCardNode(scrollerRef.current, entry.key)?.focus({ preventScroll: true });
       revealCard(entry.key);
     },
-    [navigate, restoreCollapsedCardFocus, revealCard, setExpandedEntry, setFocusedThreadKey],
+    [
+      acknowledgeEntryActivation,
+      navigate,
+      restoreCollapsedCardFocus,
+      revealCard,
+      setExpandedEntry,
+      setFocusedThreadKey,
+    ],
   );
 
   useEffect(() => {
@@ -943,7 +1085,7 @@ export function SessionBoard() {
     if (action === "open") {
       setFocusedThreadKey(entry.key);
       clearFocusRequest(entry.key, focusRequest.nonce);
-      setExpandedThread({ kind: "thread", threadKey: entry.key });
+      setExpandedEntry(entry);
       return;
     }
 
@@ -990,7 +1132,7 @@ export function SessionBoard() {
     collapsedProjectKeys,
     focusRequest,
     organization.rows,
-    setExpandedThread,
+    setExpandedEntry,
     setFocusedThreadKey,
     toggleSwimlaneCollapsed,
   ]);
@@ -998,8 +1140,8 @@ export function SessionBoard() {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
   const placedKeySet = useMemo(
-    () => new Set(orderedPlaced.map((entry) => entry.key)),
-    [orderedPlaced],
+    () => new Set(visiblePlaced.map((entry) => entry.key)),
+    [visiblePlaced],
   );
   const collisionDetection = useCallback<CollisionDetection>(
     (args) =>
@@ -1017,9 +1159,35 @@ export function SessionBoard() {
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       setDraggingKey(null);
-      if (organization.columns !== "workflow") return;
       const { active, over } = event;
       if (!over) return;
+
+      if (organization.columns === "none") {
+        const activeKey = String(active.id);
+        const overKey = String(over.id);
+        if (activeKey === overKey || !placedKeySet.has(overKey)) return;
+        const translated = active.rect.current.translated;
+        const insertAfter =
+          translated !== null &&
+          (Math.abs(translated.top - over.rect.top) < over.rect.height / 2
+            ? translated.left + translated.width / 2 > over.rect.left + over.rect.width / 2
+            : translated.top + translated.height / 2 > over.rect.top + over.rect.height / 2);
+        const scopedOrder = reorderBoardLaneKeys({
+          orderedKeys: visibleFlatPlaced.map((placement) => placement.key),
+          activeKey,
+          overKey,
+          insertAfter,
+        });
+        setFlatOrder(
+          mergeFlatBoardOrder({
+            persistedKeys: flatOrder,
+            visibleKeys: flatOrderedPlaced.map((placement) => placement.key),
+            reorderedKeys: scopedOrder,
+          }),
+        );
+        return;
+      }
+      if (organization.columns !== "workflow") return;
 
       const drop = resolveBoardLaneDrop({
         activeId: String(active.id),
@@ -1113,7 +1281,13 @@ export function SessionBoard() {
       boardRows,
       organization.columns,
       organization.rows,
+      placedKeySet,
+      flatOrderedPlaced,
+      flatOrder,
+      projectScopeKey,
+      setFlatOrder,
       setLaneOrder,
+      visibleFlatPlaced,
       workflowColumns,
     ],
   );
@@ -1153,7 +1327,9 @@ export function SessionBoard() {
           <span className="hidden sm:inline">Session board</span>
         </h1>
         <p className="hidden text-xs text-muted-foreground/70 sm:block">
-          Live sessions and drafts. Drag in Workflow columns to set a lane.
+          {organization.columns === "none"
+            ? "Live sessions and drafts. Drag cards to keep a personal arrangement."
+            : "Live sessions and drafts. Drag in Workflow columns to set a lane."}
         </p>
         <div className="ml-auto flex min-w-0 items-center gap-2">
           <BoardOrganizationSelect
@@ -1162,6 +1338,7 @@ export function SessionBoard() {
             items={[
               { value: "workflow", label: "Workflow" },
               { value: "state", label: "State" },
+              { value: "none", label: "None" },
             ]}
             onValueChange={(value) => setOrganizationColumns(value as BoardOrganizationColumns)}
           />
@@ -1195,129 +1372,139 @@ export function SessionBoard() {
           it — the Linear scroll, rather than stacked mini-boards.
         */}
         <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto">
-          <div className="w-max min-w-full">
-            <div
-              data-board-lane-header-row
-              className="sticky top-0 z-20 grid border-b border-border bg-background"
-              style={{
-                gridTemplateColumns: boardGridTemplateColumns,
-                height: BOARD_HEADER_HEIGHT,
-              }}
-            >
-              {boardColumns.map((column) => {
-                const widthPx =
-                  draggingLaneWidth?.key === column.key
-                    ? draggingLaneWidth.widthPx
-                    : selectBoardLaneWidth(laneWidthsByKey, column.key);
-                const resizeProps = {
-                  widthPx,
-                  onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) =>
-                    handleLaneResizePointerDown(column.key, widthPx, event),
-                  onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) =>
-                    handleLaneResizeKeyDown(column.key, widthPx, event),
-                };
-                return column.kind === "workflow" ? (
-                  <LaneHeaderCell
-                    key={column.key}
-                    droppableId={boardLaneHeaderDroppableId(column.key)}
-                    lane={column.lane}
-                    lanes={lanes}
-                    memberCount={laneMemberCountByKey.get(column.key) ?? 0}
-                    {...resizeProps}
-                    onUpdate={handleUpdateLane}
-                    onReorder={handleReorderLane}
-                    onArchive={handleArchiveLane}
-                  />
-                ) : (
-                  <StateHeaderCell
-                    key={column.key}
-                    stateId={column.stateId}
-                    label={column.label}
-                    memberCount={laneMemberCountByKey.get(column.key) ?? 0}
-                    {...resizeProps}
-                  />
+          {organization.columns === "none" ? (
+            <FlatBoardGrid
+              entries={visibleFlatPlaced}
+              lanes={lanes}
+              draggingKey={draggingKey}
+              onExpandDraft={handleExpandDraft}
+              onDiscardDraft={clearDraftThread}
+            />
+          ) : (
+            <div className="w-max min-w-full">
+              <div
+                data-board-lane-header-row
+                className="sticky top-0 z-20 grid border-b border-border bg-background"
+                style={{
+                  gridTemplateColumns: boardGridTemplateColumns,
+                  height: BOARD_HEADER_HEIGHT,
+                }}
+              >
+                {boardColumns.map((column) => {
+                  const widthPx =
+                    draggingLaneWidth?.key === column.key
+                      ? draggingLaneWidth.widthPx
+                      : selectBoardLaneWidth(laneWidthsByKey, column.key);
+                  const resizeProps = {
+                    widthPx,
+                    onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) =>
+                      handleLaneResizePointerDown(column.key, widthPx, event),
+                    onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) =>
+                      handleLaneResizeKeyDown(column.key, widthPx, event),
+                  };
+                  return column.kind === "workflow" ? (
+                    <LaneHeaderCell
+                      key={column.key}
+                      droppableId={boardLaneHeaderDroppableId(column.key)}
+                      lane={column.lane}
+                      lanes={lanes}
+                      memberCount={laneMemberCountByKey.get(column.key) ?? 0}
+                      {...resizeProps}
+                      onUpdate={handleUpdateLane}
+                      onReorder={handleReorderLane}
+                      onArchive={handleArchiveLane}
+                    />
+                  ) : (
+                    <StateHeaderCell
+                      key={column.key}
+                      stateId={column.stateId}
+                      label={column.label}
+                      memberCount={laneMemberCountByKey.get(column.key) ?? 0}
+                      {...resizeProps}
+                    />
+                  );
+                })}
+              </div>
+
+              {boardRows.map((row) => {
+                const collapsed = collapsedProjectKeys.has(row.key);
+                const byRowColumn = groupEntriesByLane(
+                  row.entries,
+                  boardColumns.map((column) => column.key),
+                );
+                const showRowHeader =
+                  row.grouping !== "none" &&
+                  !(row.grouping === "project" && projectScopeKey !== null);
+
+                return (
+                  <Fragment key={row.key}>
+                    {showRowHeader ? (
+                      <div
+                        // Opaque, not translucent: it sticks over live cards, and
+                        // a blurred strip would repaint them on every scroll tick.
+                        data-board-project-header
+                        className="sticky z-10 flex w-full items-center border-b border-border/50 bg-muted hover:bg-accent"
+                        style={{ top: BOARD_HEADER_HEIGHT }}
+                      >
+                        <button
+                          type="button"
+                          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left"
+                          onClick={() => toggleSwimlaneCollapsed(row.key)}
+                        >
+                          {collapsed ? (
+                            <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                          ) : (
+                            <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                          )}
+                          <span className="truncate text-xs font-medium">{row.label}</span>
+                          <span className="shrink-0 text-[11px] text-muted-foreground/70">
+                            {row.entryCount} {row.entryCount === 1 ? "card" : "cards"}
+                          </span>
+                        </button>
+                        {row.grouping === "project" ? (
+                          <Button
+                            size="icon-xs"
+                            variant="ghost"
+                            className="mr-2 shrink-0"
+                            aria-label={`New thread in ${row.label}`}
+                            title={`New thread in ${row.label}`}
+                            onClick={() => {
+                              const projectRef = projectRefByGroupKey.get(row.value);
+                              if (projectRef !== undefined) void handleNewThread(projectRef);
+                            }}
+                          >
+                            <SquarePenIcon className="size-3.5" />
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {collapsed && showRowHeader ? null : (
+                      <div
+                        className="grid"
+                        style={{
+                          gridTemplateColumns: boardGridTemplateColumns,
+                        }}
+                      >
+                        {boardColumns.map((column) => (
+                          <LaneDropCell
+                            key={`${row.key}:${column.key}`}
+                            droppableId={swimlaneColumnDroppableId(row.key, column.key)}
+                            column={column}
+                            lanes={lanes}
+                            entries={byRowColumn.get(column.key) ?? []}
+                            draggingKey={draggingKey}
+                            draggable={organization.columns === "workflow"}
+                            onExpandDraft={handleExpandDraft}
+                            onDiscardDraft={clearDraftThread}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </Fragment>
                 );
               })}
             </div>
-
-            {boardRows.map((row) => {
-              const collapsed = collapsedProjectKeys.has(row.key);
-              const byRowColumn = groupEntriesByLane(
-                row.entries,
-                boardColumns.map((column) => column.key),
-              );
-              const showRowHeader =
-                row.grouping !== "none" &&
-                !(row.grouping === "project" && projectScopeKey !== null);
-
-              return (
-                <Fragment key={row.key}>
-                  {showRowHeader ? (
-                    <div
-                      // Opaque, not translucent: it sticks over live cards, and
-                      // a blurred strip would repaint them on every scroll tick.
-                      data-board-project-header
-                      className="sticky z-10 flex w-full items-center border-b border-border/50 bg-muted hover:bg-accent"
-                      style={{ top: BOARD_HEADER_HEIGHT }}
-                    >
-                      <button
-                        type="button"
-                        className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left"
-                        onClick={() => toggleSwimlaneCollapsed(row.key)}
-                      >
-                        {collapsed ? (
-                          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                        ) : (
-                          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                        )}
-                        <span className="truncate text-xs font-medium">{row.label}</span>
-                        <span className="shrink-0 text-[11px] text-muted-foreground/70">
-                          {row.entryCount} {row.entryCount === 1 ? "card" : "cards"}
-                        </span>
-                      </button>
-                      {row.grouping === "project" ? (
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          className="mr-2 shrink-0"
-                          aria-label={`New thread in ${row.label}`}
-                          title={`New thread in ${row.label}`}
-                          onClick={() => {
-                            const projectRef = projectRefByGroupKey.get(row.value);
-                            if (projectRef !== undefined) void handleNewThread(projectRef);
-                          }}
-                        >
-                          <SquarePenIcon className="size-3.5" />
-                        </Button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {collapsed && showRowHeader ? null : (
-                    <div
-                      className="grid"
-                      style={{
-                        gridTemplateColumns: boardGridTemplateColumns,
-                      }}
-                    >
-                      {boardColumns.map((column) => (
-                        <LaneDropCell
-                          key={`${row.key}:${column.key}`}
-                          droppableId={swimlaneColumnDroppableId(row.key, column.key)}
-                          column={column}
-                          lanes={lanes}
-                          entries={byRowColumn.get(column.key) ?? []}
-                          draggingKey={draggingKey}
-                          draggable={organization.columns === "workflow"}
-                          onExpandDraft={(draftId) => setExpandedTarget({ kind: "draft", draftId })}
-                          onDiscardDraft={clearDraftThread}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </Fragment>
-              );
-            })}
-          </div>
+          )}
         </div>
       </DndContext>
       {expandedThread !== null ? (
@@ -1685,8 +1872,8 @@ function LaneResizeHandle(props: {
       role="separator"
       aria-orientation="vertical"
       aria-label={`Resize ${props.label} column. Use arrow keys to resize.`}
+      aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
       aria-valuemin={BOARD_LANE_MIN_WIDTH}
-      aria-valuemax={BOARD_LANE_MAX_WIDTH}
       aria-valuenow={props.widthPx}
       title={`Column width: ${props.widthPx}px`}
       className="group absolute inset-y-0 right-0 z-10 w-2 translate-x-1/2 cursor-ew-resize touch-none select-none border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:w-6"
@@ -1759,6 +1946,278 @@ function LaneHeaderCell({
   );
 }
 
+function BoardEntryCard({
+  entry,
+  lanes,
+  draggingKey,
+  draggable,
+  flatAttentionState,
+  flatAttentionAt,
+  onExpandDraft,
+  onDiscardDraft,
+}: {
+  readonly entry: PlacedEntry;
+  readonly lanes: ReadonlyArray<BoardLane>;
+  readonly draggingKey: string | null;
+  readonly draggable: boolean;
+  readonly flatAttentionState?: BoardFlatAttentionState;
+  readonly flatAttentionAt?: string;
+  readonly onExpandDraft: (draftId: DraftId) => void;
+  readonly onDiscardDraft: (draftId: DraftId) => void;
+}) {
+  const boardStateLabel = flatAttentionState
+    ? flatAttentionLabel(flatAttentionState)
+    : BOARD_STATE_BY_ID[entry.boardStateId].label;
+  return entry.kind === "thread" ? (
+    <BoardSessionCard
+      cardKey={entry.key}
+      threadRef={entry.ref}
+      thread={entry.thread}
+      laneId={entry.laneId}
+      workflowLabel={boardLaneLabel(entry.workflowLaneId, lanes)}
+      boardStateId={entry.boardStateId}
+      boardStateLabel={boardStateLabel}
+      draggable={draggable}
+      lanes={lanes}
+      projectTitle={entry.projectTitle}
+      environmentLabel={entry.environmentLabel}
+      environmentConnection={entry.environmentConnection}
+      isDragging={draggingKey === entry.key}
+      visitAcknowledgement={flatAttentionState ? "activate" : "focus"}
+      {...(flatAttentionState === "woke" ? { visualStatusOverride: "woke" as const } : {})}
+      {...(flatAttentionState === "woke" && flatAttentionAt !== undefined
+        ? { activationVisitAt: flatAttentionAt }
+        : {})}
+    />
+  ) : (
+    <BoardDraftCard
+      cardKey={entry.key}
+      draftId={entry.draftId}
+      title="Draft"
+      projectTitle={entry.projectTitle}
+      workflowLabel={boardLaneLabel(entry.workflowLaneId, lanes)}
+      boardStateLabel={boardStateLabel}
+      environmentLabel={entry.environmentLabel}
+      branch={entry.draft.branch}
+      draggable={draggable}
+      onExpand={onExpandDraft}
+      onDiscard={onDiscardDraft}
+    />
+  );
+}
+
+function FlatBoardGrid({
+  entries,
+  lanes,
+  draggingKey,
+  onExpandDraft,
+  onDiscardDraft,
+}: {
+  readonly entries: ReadonlyArray<FlatPlacedEntry>;
+  readonly lanes: ReadonlyArray<BoardLane>;
+  readonly draggingKey: string | null;
+  readonly onExpandDraft: (draftId: DraftId) => void;
+  readonly onDiscardDraft: (draftId: DraftId) => void;
+}) {
+  return (
+    <div className="flex min-h-full min-w-0 flex-wrap content-start items-start gap-2 p-2">
+      <SortableContext
+        items={entries.map((placement) => placement.key)}
+        strategy={rectSortingStrategy}
+      >
+        {entries.map((placement) => (
+          <FlatBoardCardTile
+            key={placement.key}
+            entry={placement.entry}
+            attentionState={placement.attentionState}
+            attentionAt={placement.attentionAt}
+            lanes={lanes}
+            draggingKey={draggingKey}
+            onExpandDraft={onExpandDraft}
+            onDiscardDraft={onDiscardDraft}
+          />
+        ))}
+      </SortableContext>
+    </div>
+  );
+}
+
+function flatBoardAvailableWidth(tile: HTMLElement): number | null {
+  const board = tile.parentElement;
+  if (board === null) return null;
+  const style = window.getComputedStyle(board);
+  const width =
+    board.clientWidth -
+    (Number.parseFloat(style.paddingLeft) || 0) -
+    (Number.parseFloat(style.paddingRight) || 0);
+  return width > 0 ? width : null;
+}
+
+const FlatBoardCardTile = memo(function FlatBoardCardTile({
+  entry,
+  attentionState,
+  attentionAt,
+  lanes,
+  draggingKey,
+  onExpandDraft,
+  onDiscardDraft,
+}: {
+  readonly entry: PlacedEntry;
+  readonly attentionState: BoardFlatAttentionState;
+  readonly attentionAt: string;
+  readonly lanes: ReadonlyArray<BoardLane>;
+  readonly draggingKey: string | null;
+  readonly onExpandDraft: (draftId: DraftId) => void;
+  readonly onDiscardDraft: (draftId: DraftId) => void;
+}) {
+  const storedWidth = useBoardCardStore((state) => selectCardWidth(state.byThreadKey, entry.ref));
+  const setCardWidth = useBoardCardStore((state) => state.setWidth);
+  const [resizingWidth, setResizingWidth] = useState<number | null>(null);
+  const resizeTeardownRef = useRef<(() => void) | null>(null);
+  const resizeFrameRef = useRef<number | null>(null);
+  const widthPx = resizingWidth ?? storedWidth;
+
+  useEffect(
+    () => () => {
+      resizeTeardownRef.current?.();
+      if (resizeFrameRef.current !== null) window.cancelAnimationFrame(resizeFrameRef.current);
+    },
+    [],
+  );
+
+  const handleResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      resizeTeardownRef.current?.();
+
+      const startX = event.clientX;
+      const tile = event.currentTarget.parentElement;
+      if (tile === null) return;
+      const availableWidth = flatBoardAvailableWidth(tile);
+      const startWidth = Math.min(widthPx, availableWidth ?? widthPx);
+      const rowCount = [...(tile.parentElement?.children ?? [])].filter(
+        (candidate) =>
+          candidate instanceof HTMLElement &&
+          candidate.matches("[data-flat-board-card-tile]") &&
+          candidate.offsetTop === tile.offsetTop,
+      ).length;
+      // Flex distributes free space across every card in the row. Scale the
+      // preferred-width delta so the grabbed edge follows the pointer 1:1.
+      const flexCompensation = rowCount > 1 ? rowCount / (rowCount - 1) : 1;
+      let latest = startWidth;
+      const pointerId = event.pointerId;
+      try {
+        event.currentTarget.setPointerCapture(pointerId);
+      } catch {
+        // Window listeners keep the interaction alive outside the handle.
+      }
+      const onMove = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) return;
+        latest = clampCardWidth(startWidth + (moveEvent.clientX - startX) * flexCompensation);
+        if (resizeFrameRef.current !== null) return;
+        resizeFrameRef.current = window.requestAnimationFrame(() => {
+          resizeFrameRef.current = null;
+          setResizingWidth(latest);
+        });
+      };
+      const finish = (finishEvent: PointerEvent) => {
+        if (finishEvent.pointerId !== pointerId) return;
+        resizeTeardownRef.current?.();
+        if (resizeFrameRef.current !== null) {
+          window.cancelAnimationFrame(resizeFrameRef.current);
+          resizeFrameRef.current = null;
+        }
+        setResizingWidth(null);
+        setCardWidth(entry.ref, latest);
+      };
+      const cancel = (cancelEvent: PointerEvent) => {
+        if (cancelEvent.pointerId !== pointerId) return;
+        resizeTeardownRef.current?.();
+        if (resizeFrameRef.current !== null) {
+          window.cancelAnimationFrame(resizeFrameRef.current);
+          resizeFrameRef.current = null;
+        }
+        setResizingWidth(null);
+      };
+      const teardown = () => {
+        resizeTeardownRef.current = null;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", finish);
+        window.removeEventListener("pointercancel", cancel);
+      };
+      resizeTeardownRef.current = teardown;
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", finish);
+      window.addEventListener("pointercancel", cancel);
+    },
+    [entry.ref, setCardWidth, widthPx],
+  );
+
+  const handleResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      const step = event.shiftKey ? 50 : 10;
+      const tile = event.currentTarget.parentElement;
+      const availableWidth = tile === null ? null : flatBoardAvailableWidth(tile);
+      const visibleStartingWidth = Math.min(widthPx, availableWidth ?? widthPx);
+      const next =
+        event.key === "ArrowLeft"
+          ? visibleStartingWidth - step
+          : event.key === "ArrowRight"
+            ? widthPx + step
+            : event.key === "Home"
+              ? CARD_MIN_WIDTH
+              : event.key === "End" && availableWidth !== null
+                ? availableWidth
+                : null;
+      if (next === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setCardWidth(entry.ref, next);
+    },
+    [entry.ref, setCardWidth, widthPx],
+  );
+
+  return (
+    <div
+      data-flat-board-card-tile
+      className="relative min-w-0"
+      style={{
+        flexBasis: `${widthPx}px`,
+        flexGrow: 1,
+        flexShrink: 0,
+        minWidth: `min(100%, ${CARD_MIN_WIDTH}px)`,
+        maxWidth: "100%",
+      }}
+    >
+      <BoardEntryCard
+        entry={entry}
+        lanes={lanes}
+        draggingKey={draggingKey}
+        draggable
+        flatAttentionState={attentionState}
+        flatAttentionAt={attentionAt}
+        onExpandDraft={onExpandDraft}
+        onDiscardDraft={onDiscardDraft}
+      />
+      <button
+        type="button"
+        data-board-resize-handle
+        onPointerDown={handleResizePointerDown}
+        onKeyDown={handleResizeKeyDown}
+        aria-label={`Resize ${entry.kind === "thread" ? entry.thread.title : "draft"} card. Preferred width ${widthPx}px. Use left and right arrow keys to resize.`}
+        aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
+        className={cn(
+          "group absolute inset-y-0 right-0 z-10 w-2 translate-x-1/2 cursor-ew-resize touch-none select-none border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:w-6",
+          draggingKey === entry.key && "pointer-events-none opacity-0",
+        )}
+      >
+        <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-border group-active:bg-primary/60" />
+      </button>
+    </div>
+  );
+});
+
 /** One lane's slice of one project group: the drop target and its cards. */
 function LaneDropCell({
   droppableId,
@@ -1798,38 +2257,15 @@ function LaneDropCell({
       >
         <SortableContext items={entries.map((entry) => entry.key)} strategy={rectSortingStrategy}>
           {entries.map((entry) => (
-            <div key={entry.key} className="w-full max-w-[428px] min-w-0">
-              {entry.kind === "thread" ? (
-                <BoardSessionCard
-                  cardKey={entry.key}
-                  threadRef={entry.ref}
-                  thread={entry.thread}
-                  laneId={entry.laneId}
-                  workflowLabel={boardLaneLabel(entry.workflowLaneId, lanes)}
-                  boardStateId={entry.boardStateId}
-                  boardStateLabel={BOARD_STATE_BY_ID[entry.boardStateId].label}
-                  draggable={draggable}
-                  lanes={lanes}
-                  projectTitle={entry.projectTitle}
-                  environmentLabel={entry.environmentLabel}
-                  environmentConnection={entry.environmentConnection}
-                  isDragging={draggingKey === entry.key}
-                />
-              ) : (
-                <BoardDraftCard
-                  cardKey={entry.key}
-                  draftId={entry.draftId}
-                  title="Draft"
-                  projectTitle={entry.projectTitle}
-                  workflowLabel={boardLaneLabel(entry.workflowLaneId, lanes)}
-                  boardStateLabel={BOARD_STATE_BY_ID.draft.label}
-                  environmentLabel={entry.environmentLabel}
-                  branch={entry.draft.branch}
-                  draggable={draggable}
-                  onExpand={onExpandDraft}
-                  onDiscard={onDiscardDraft}
-                />
-              )}
+            <div key={entry.key} className="w-full min-w-0">
+              <BoardEntryCard
+                entry={entry}
+                lanes={lanes}
+                draggingKey={draggingKey}
+                draggable={draggable}
+                onExpandDraft={onExpandDraft}
+                onDiscardDraft={onDiscardDraft}
+              />
             </div>
           ))}
         </SortableContext>

@@ -13,6 +13,8 @@ import {
   boardStateDimensionKey,
   boardWorkflowDimensionKey,
   buildBoardRows,
+  orderFlatBoardEntries,
+  resolveBoardFlatAttentionState,
   resolveBoardThreadState,
   type BoardOrganizationEntry,
   type BoardStateId,
@@ -197,5 +199,79 @@ describe("buildBoardRows", () => {
     const [ungrouped] = buildBoardRows(entries, "none", "project:zeta");
     expect(ungrouped?.entryCount).toBe(1);
     expect(ungrouped?.entries[0]?.id).toBe("working-zeta");
+  });
+});
+
+describe("orderFlatBoardEntries", () => {
+  const flatEntries = [
+    { key: "working", attentionState: "working", attentionAt: "2026-08-12T16:00:00.000Z" },
+    { key: "idle", attentionState: "idle", attentionAt: "2026-08-12T15:00:00.000Z" },
+    { key: "draft", attentionState: "draft", attentionAt: "2026-08-12T16:00:00.000Z" },
+    { key: "woke", attentionState: "woke", attentionAt: "2026-08-12T12:00:00.000Z" },
+    { key: "done", attentionState: "done", attentionAt: "2026-08-12T11:00:00.000Z" },
+    { key: "failed", attentionState: "failed", attentionAt: "2026-08-12T10:00:00.000Z" },
+    { key: "input", attentionState: "input", attentionAt: "2026-08-12T12:00:00.000Z" },
+    { key: "approval", attentionState: "approval", attentionAt: "2026-08-12T12:00:00.000Z" },
+  ] as const;
+
+  it("sorts attention tiers, then newest attention, then stable key", () => {
+    expect(orderFlatBoardEntries(flatEntries, []).map((value) => value.key)).toEqual([
+      "approval",
+      "input",
+      "failed",
+      "done",
+      "woke",
+      "draft",
+      "idle",
+      "working",
+    ]);
+  });
+
+  it("preserves manual global order while inserting new cards before worse tiers", () => {
+    expect(
+      orderFlatBoardEntries(flatEntries, ["input", "idle", "working"]).map((value) => value.key),
+    ).toEqual(["input", "approval", "failed", "done", "woke", "idle", "draft", "working"]);
+  });
+
+  it("ignores stale manual keys", () => {
+    expect(
+      orderFlatBoardEntries(flatEntries.slice(0, 2), ["missing", "idle"]).map((value) => value.key),
+    ).toEqual(["idle", "working"]);
+  });
+});
+
+describe("resolveBoardFlatAttentionState", () => {
+  it("keeps actionable runtime states ahead of Woke and Done", () => {
+    expect(
+      resolveBoardFlatAttentionState({
+        boardStateId: "input",
+        hasUnseenCompletion: true,
+        isWoke: true,
+      }),
+    ).toBe("input");
+    expect(
+      resolveBoardFlatAttentionState({
+        boardStateId: "working",
+        hasUnseenCompletion: true,
+        isWoke: true,
+      }),
+    ).toBe("working");
+  });
+
+  it("gives Woke precedence when completion is also unseen", () => {
+    expect(
+      resolveBoardFlatAttentionState({
+        boardStateId: "idle",
+        hasUnseenCompletion: true,
+        isWoke: true,
+      }),
+    ).toBe("woke");
+    expect(
+      resolveBoardFlatAttentionState({
+        boardStateId: "idle",
+        hasUnseenCompletion: true,
+        isWoke: false,
+      }),
+    ).toBe("done");
   });
 });

@@ -220,6 +220,30 @@ export function reorderBoardLaneKeys(input: {
   ];
 }
 
+/**
+ * Applies a visible drag order without discarding cards that are temporarily
+ * absent from the board. Hidden cards keep their saved slots, while a scoped
+ * drag replaces only the visible cards that participated in that drag.
+ */
+export function mergeFlatBoardOrder(input: {
+  readonly persistedKeys: ReadonlyArray<string>;
+  readonly visibleKeys: ReadonlyArray<string>;
+  readonly reorderedKeys: ReadonlyArray<string>;
+}): ReadonlyArray<string> {
+  const reorderedSet = new Set(input.reorderedKeys);
+  let reorderedIndex = 0;
+  const nextVisibleKeys = input.visibleKeys.map((key) =>
+    reorderedSet.has(key) ? (input.reorderedKeys[reorderedIndex++] ?? key) : key,
+  );
+
+  const visibleSet = new Set(input.visibleKeys);
+  let visibleIndex = 0;
+  const merged = input.persistedKeys.map((key) =>
+    visibleSet.has(key) ? (nextVisibleKeys[visibleIndex++] ?? key) : key,
+  );
+  return merged.concat(nextVisibleKeys.slice(visibleIndex));
+}
+
 export interface BoardRect {
   readonly top: number;
   readonly bottom: number;
@@ -321,6 +345,7 @@ const BOARD_KEYBOARD_INPUT_SELECTOR = [
   "[role='menu']",
   "[role='menuitem']",
   "[role='separator']",
+  "[data-board-resize-handle]",
 ].join(",");
 
 /** Keeps board-level commands out of editing, terminal, menu, and resize input. */

@@ -33,6 +33,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import {
   isAtomCommandInterrupted,
@@ -106,6 +107,12 @@ const DONE_APPEARANCE = {
   textClass: "text-emerald-700 dark:text-emerald-300",
   surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-emerald-500))]",
 } satisfies ThreadRuntimeStateAppearance;
+const WOKE_APPEARANCE = {
+  label: "Woke",
+  borderClass: "border-amber-500/50 dark:border-amber-300/40",
+  textClass: "text-amber-700 dark:text-amber-300",
+  surfaceClass: "bg-[color-mix(in_srgb,var(--card)_96%,var(--color-amber-500))]",
+} satisfies ThreadRuntimeStateAppearance;
 
 export interface BoardSessionCardProps {
   readonly cardKey: string;
@@ -121,6 +128,9 @@ export interface BoardSessionCardProps {
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly isDragging: boolean;
+  readonly visitAcknowledgement?: "focus" | "activate";
+  readonly activationVisitAt?: string;
+  readonly visualStatusOverride?: Extract<BoardCardVisualState, "woke">;
   readonly snoozeDropRequest?: {
     readonly nonce: number;
     readonly unsettleAfterSnooze: boolean;
@@ -280,9 +290,14 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
   const status = resolveThreadRuntimeState(thread);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[cardKey]);
   const visualStatus: BoardCardVisualState =
-    status === "idle" && hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "done" : status;
+    props.visualStatusOverride ??
+    (status === "idle" && hasUnseenCompletion({ ...thread, lastVisitedAt }) ? "done" : status);
   const appearance =
-    visualStatus === "done" ? DONE_APPEARANCE : threadRuntimeStateAppearance(visualStatus);
+    visualStatus === "done"
+      ? DONE_APPEARANCE
+      : visualStatus === "woke"
+        ? WOKE_APPEARANCE
+        : threadRuntimeStateAppearance(visualStatus);
 
   const [draggingHeight, setDraggingHeight] = useState<number | null>(null);
   const teardownResizeRef = useRef<(() => void) | null>(null);
@@ -399,11 +414,25 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
     [commitRename],
   );
 
+  const acknowledgeVisit = useCallback(() => {
+    const visitedAt = props.activationVisitAt ?? boardCardVisitTimestamp(thread);
+    if (visitedAt !== null) markThreadVisited(cardKey, visitedAt);
+  }, [cardKey, markThreadVisited, props.activationVisitAt, thread]);
+
   const handleCardFocus = useCallback(() => {
     setFocusedKey(cardKey);
-    const visitedAt = boardCardVisitTimestamp(thread);
-    if (visitedAt !== null) markThreadVisited(cardKey, visitedAt);
-  }, [cardKey, markThreadVisited, setFocusedKey, thread]);
+    if (props.visitAcknowledgement !== "activate") acknowledgeVisit();
+  }, [acknowledgeVisit, cardKey, props.visitAcknowledgement, setFocusedKey]);
+
+  const handleCardActivate = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (event.target instanceof Element && event.target.closest("[data-board-drag-handle]")) {
+        return;
+      }
+      if (props.visitAcknowledgement === "activate") acknowledgeVisit();
+    },
+    [acknowledgeVisit, props.visitAcknowledgement],
+  );
 
   return (
     <div
@@ -416,6 +445,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
       aria-label={thread.title}
       onPointerDownCapture={handleCardFocus}
       onFocusCapture={handleCardFocus}
+      onClickCapture={handleCardActivate}
       className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       style={{
         transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
@@ -437,6 +467,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           {draggable ? (
             <button
               type="button"
+              data-board-drag-handle
               {...listeners}
               {...attributes}
               aria-label={`Drag ${thread.title}`}
@@ -1037,6 +1068,9 @@ function BoardStatusIcon({
       break;
     case "monitoring":
       Icon = RadarIcon;
+      break;
+    case "woke":
+      Icon = AlarmClockIcon;
       break;
     case "done":
       break;

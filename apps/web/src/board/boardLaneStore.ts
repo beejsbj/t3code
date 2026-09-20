@@ -6,10 +6,9 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "../lib/storage";
 
 const BOARD_LANE_STORAGE_KEY = "t3code:board-lanes:v1";
-const BOARD_LANE_STORAGE_VERSION = 6;
+const BOARD_LANE_STORAGE_VERSION = 7;
 
 export const BOARD_LANE_MIN_WIDTH = 260;
-export const BOARD_LANE_MAX_WIDTH = 1316;
 export const BOARD_LANE_DEFAULT_WIDTH = 380;
 
 export type BoardLaneId = string;
@@ -139,6 +138,10 @@ export type BoardOrganization =
   | {
       readonly columns: "state";
       readonly rows: "project" | "none";
+    }
+  | {
+      readonly columns: "none";
+      readonly rows: "none";
     };
 
 export type BoardOrganizationColumns = BoardOrganization["columns"];
@@ -162,12 +165,15 @@ interface BoardLaneStoreState {
   readonly laneEntryByThreadKey: Record<string, BoardLaneEntryState>;
   /** Complete user-authored sequences. New arrivals not in a sequence sort above it. */
   readonly orderByLaneId: Record<BoardLaneId, ReadonlyArray<string>>;
+  /** User-authored global sequence for the ungrouped board. */
+  readonly flatOrder: ReadonlyArray<string>;
   readonly byLaneColumnKey: Record<string, BoardLaneState>;
   readonly organization: BoardOrganization;
   readonly setPlacement: (ref: ScopedThreadRef, laneId: BoardLaneId) => void;
   readonly clearPlacement: (ref: ScopedThreadRef) => void;
   readonly recordLaneEntry: (ref: ScopedThreadRef, laneId: BoardLaneId, enteredAt?: string) => void;
   readonly setLaneOrder: (laneId: BoardLaneId, orderedThreadKeys: ReadonlyArray<string>) => void;
+  readonly setFlatOrder: (orderedThreadKeys: ReadonlyArray<string>) => void;
   readonly createLane: (lane: BoardLane) => void;
   readonly updateLane: (laneId: BoardLaneId, draft: BoardLaneDraft) => void;
   readonly archiveLane: (laneId: BoardLaneId) => void;
@@ -179,7 +185,7 @@ interface BoardLaneStoreState {
 
 export function clampBoardLaneWidth(widthPx: number): number {
   if (!Number.isFinite(widthPx)) return BOARD_LANE_DEFAULT_WIDTH;
-  return Math.min(BOARD_LANE_MAX_WIDTH, Math.max(BOARD_LANE_MIN_WIDTH, Math.round(widthPx)));
+  return Math.max(BOARD_LANE_MIN_WIDTH, Math.round(widthPx));
 }
 
 function isFixedBoardLaneId(laneId: BoardLaneId): laneId is (typeof FIXED_BOARD_LANE_IDS)[number] {
@@ -342,6 +348,13 @@ function normalizeOrderByLaneId(
   return orderByLaneId;
 }
 
+function normalizeFlatOrder(value: unknown): ReadonlyArray<string> {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(value.filter((threadKey): threadKey is string => typeof threadKey === "string")),
+  ];
+}
+
 function withoutThreadKey(
   orderByLaneId: Record<BoardLaneId, ReadonlyArray<string>>,
   threadKey: string,
@@ -380,6 +393,9 @@ function normalizeBoardOrganization(value: unknown): BoardOrganization {
   if (columns === "state" && (rows === "project" || rows === "none")) {
     return { columns, rows };
   }
+  if (columns === "none" && rows === "none") {
+    return { columns, rows };
+  }
   return DEFAULT_BOARD_ORGANIZATION;
 }
 
@@ -400,6 +416,7 @@ function migrateBoardLaneState(persistedState: unknown, version: number): unknow
     byLaneColumnKey?: unknown;
     collapsedLifecycleLaneIds?: unknown;
     organization?: unknown;
+    flatOrder?: unknown;
   } | null;
   const versionTwoState =
     version < 2
@@ -450,7 +467,7 @@ function migrateBoardLaneState(persistedState: unknown, version: number): unknow
           };
         })();
   const { collapsedLifecycleLaneIds: _collapsed, ...versionSixState } = versionFiveState ?? {};
-  return versionSixState;
+  return { ...versionSixState, flatOrder: [] };
 }
 
 export interface BoardLaneOrderedEntry {
@@ -501,6 +518,7 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
       placementByThreadKey: {},
       laneEntryByThreadKey: {},
       orderByLaneId: {},
+      flatOrder: [],
       byLaneColumnKey: {},
       organization: DEFAULT_BOARD_ORGANIZATION,
       setPlacement: (ref, laneId) =>
@@ -576,6 +594,17 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
           }
           return { orderByLaneId: { ...state.orderByLaneId, [laneId]: order } };
         }),
+      setFlatOrder: (orderedThreadKeys) =>
+        set((state) => {
+          const flatOrder = [...new Set(orderedThreadKeys)];
+          if (
+            state.flatOrder.length === flatOrder.length &&
+            state.flatOrder.every((key, index) => key === flatOrder[index])
+          ) {
+            return state;
+          }
+          return { flatOrder };
+        }),
       createLane: (lane) =>
         set((state) => {
           if (
@@ -644,6 +673,10 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
         }),
       setOrganizationColumns: (columns) =>
         set((state) => {
+          if (columns === "none") {
+            if (state.organization.columns === "none") return state;
+            return { organization: { columns: "none", rows: "none" } };
+          }
           const rows =
             columns === "state" && state.organization.rows === "state"
               ? "project"
@@ -660,13 +693,20 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
         }),
       setOrganizationRows: (rows) =>
         set((state) => {
-          const columns = rows === "state" ? "workflow" : state.organization.columns;
-          if (state.organization.columns === columns && state.organization.rows === rows) {
-            return state;
+          if (rows === "state") {
+            if (state.organization.columns === "workflow" && state.organization.rows === rows) {
+              return state;
+            }
+            return { organization: { columns: "workflow", rows } };
           }
-          return {
-            organization: rows === "state" ? { columns: "workflow", rows } : { columns, rows },
-          };
+          if (rows === "project" && state.organization.columns === "none") {
+            return { organization: { columns: "workflow", rows } };
+          }
+          if (state.organization.rows === rows) return state;
+          if (state.organization.columns === "none") {
+            return { organization: { columns: "none", rows: "none" } };
+          }
+          return { organization: { columns: state.organization.columns, rows } };
         }),
     }),
     {
@@ -681,6 +721,7 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
         placementByThreadKey: state.placementByThreadKey,
         laneEntryByThreadKey: state.laneEntryByThreadKey,
         orderByLaneId: state.orderByLaneId,
+        flatOrder: state.flatOrder,
         byLaneColumnKey: state.byLaneColumnKey,
         organization: state.organization,
       }),
@@ -690,6 +731,7 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
           placementByThreadKey?: unknown;
           laneEntryByThreadKey?: unknown;
           orderByLaneId?: unknown;
+          flatOrder?: unknown;
           organization?: unknown;
         } | null;
         const lanes = normalizeLanes(persisted?.lanes);
@@ -705,6 +747,7 @@ export const useBoardLaneStore = create<BoardLaneStoreState>()(
             lanes,
           ),
           orderByLaneId: normalizeOrderByLaneId(persisted?.orderByLaneId, lanes),
+          flatOrder: normalizeFlatOrder(persisted?.flatOrder),
           byLaneColumnKey: normalizePersistedByLaneColumnKey(persistedState),
           organization: normalizeBoardOrganization(persisted?.organization),
         };

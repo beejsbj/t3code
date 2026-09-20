@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   BOARD_LANE_DEFAULT_WIDTH,
-  BOARD_LANE_MAX_WIDTH,
   BOARD_LANE_MIN_WIDTH,
   DEFAULT_BOARD_ORGANIZATION,
   DEFAULT_BOARD_LANES,
@@ -26,6 +25,7 @@ beforeEach(() => {
     placementByThreadKey: {},
     laneEntryByThreadKey: {},
     orderByLaneId: {},
+    flatOrder: [],
     byLaneColumnKey: {},
     organization: DEFAULT_BOARD_ORGANIZATION,
   });
@@ -42,17 +42,16 @@ describe("boardLaneStore", () => {
     ]);
   });
 
-  it("setWidth clamps to the min/max lane width", () => {
-    expect(BOARD_LANE_MAX_WIDTH).toBe(1316);
-
+  it("setWidth clamps to the minimum without imposing a maximum", () => {
     useBoardLaneStore.getState().setWidth(laneA, BOARD_LANE_MIN_WIDTH - 100);
     expect(selectBoardLaneWidth(useBoardLaneStore.getState().byLaneColumnKey, laneA)).toBe(
       BOARD_LANE_MIN_WIDTH,
     );
 
-    useBoardLaneStore.getState().setWidth(laneA, BOARD_LANE_MAX_WIDTH + 100);
+    const wideLane = BOARD_LANE_DEFAULT_WIDTH * 10;
+    useBoardLaneStore.getState().setWidth(laneA, wideLane);
     expect(selectBoardLaneWidth(useBoardLaneStore.getState().byLaneColumnKey, laneA)).toBe(
-      BOARD_LANE_MAX_WIDTH,
+      wideLane,
     );
   });
 
@@ -156,6 +155,14 @@ describe("boardLaneStore", () => {
     expect(useBoardLaneStore.getState().orderByLaneId).toEqual({
       triage: ["env-a:thread-2", "env-a:thread-1"],
     });
+  });
+
+  it("stores a deduplicated global sequence for the flat board", () => {
+    useBoardLaneStore
+      .getState()
+      .setFlatOrder(["env-a:thread-2", "env-a:thread-1", "env-a:thread-2"]);
+
+    expect(useBoardLaneStore.getState().flatOrder).toEqual(["env-a:thread-2", "env-a:thread-1"]);
   });
 
   it("orders by lane entry until a manual sequence takes over", () => {
@@ -267,10 +274,11 @@ describe("boardLaneStore", () => {
     expect(useBoardLaneStore.getState().lanes).toEqual(original);
   });
 
-  it("persists local lanes, placements, widths, and board organization", () => {
+  it("persists local lanes, placements, widths, flat order, and board organization", () => {
     const store = useBoardLaneStore.getState();
     store.setPlacement(firstThread, "triage");
     store.setWidth(laneA, 420);
+    store.setFlatOrder(["env-a:thread-1"]);
     store.setOrganizationColumns("state");
     store.setOrganizationRows("none");
 
@@ -281,6 +289,7 @@ describe("boardLaneStore", () => {
       placementByThreadKey?: unknown;
       laneEntryByThreadKey?: unknown;
       orderByLaneId?: unknown;
+      flatOrder?: unknown;
       organization?: unknown;
     };
     expect(persisted.lanes).toEqual(DEFAULT_BOARD_LANES);
@@ -289,6 +298,7 @@ describe("boardLaneStore", () => {
       "env-a:thread-1": expect.objectContaining({ laneId: "triage" }),
     });
     expect(persisted.orderByLaneId).toEqual({});
+    expect(persisted.flatOrder).toEqual(["env-a:thread-1"]);
     expect(persisted.organization).toEqual({ columns: "state", rows: "none" });
   });
 
@@ -311,6 +321,18 @@ describe("boardLaneStore", () => {
     expect(useBoardLaneStore.getState().organization).toEqual({
       columns: "workflow",
       rows: "state",
+    });
+
+    store.setOrganizationColumns("none");
+    expect(useBoardLaneStore.getState().organization).toEqual({
+      columns: "none",
+      rows: "none",
+    });
+
+    store.setOrganizationRows("project");
+    expect(useBoardLaneStore.getState().organization).toEqual({
+      columns: "workflow",
+      rows: "project",
     });
   });
 
@@ -335,6 +357,7 @@ describe("boardLaneStore", () => {
     ).toEqual({
       lanes: DEFAULT_BOARD_LANES,
       organization: { columns: "workflow", rows },
+      flatOrder: [],
     });
   });
 
@@ -357,6 +380,29 @@ describe("boardLaneStore", () => {
     ).toEqual({
       lanes: DEFAULT_BOARD_LANES,
       organization: { columns: "state", rows: "project" },
+      flatOrder: [],
+    });
+  });
+
+  it("adds flat ordering without changing a version six organization", () => {
+    const persistApi = useBoardLaneStore.persist as unknown as {
+      getOptions: () => {
+        migrate: (persistedState: unknown, version: number) => unknown;
+      };
+    };
+
+    expect(
+      persistApi.getOptions().migrate(
+        {
+          lanes: DEFAULT_BOARD_LANES,
+          organization: { columns: "none", rows: "none" },
+        },
+        6,
+      ),
+    ).toEqual({
+      lanes: DEFAULT_BOARD_LANES,
+      organization: { columns: "none", rows: "none" },
+      flatOrder: [],
     });
   });
 
@@ -388,6 +434,38 @@ describe("boardLaneStore", () => {
         useBoardLaneStore.getInitialState(),
       );
     expect(valid.organization).toEqual({ columns: "workflow", rows: "state" });
+
+    const flat = persistApi
+      .getOptions()
+      .merge(
+        { organization: { columns: "none", rows: "none" } },
+        useBoardLaneStore.getInitialState(),
+      );
+    expect(flat.organization).toEqual({ columns: "none", rows: "none" });
+  });
+
+  it("normalizes malformed persisted flat order", () => {
+    const persistApi = useBoardLaneStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useBoardLaneStore.getState>,
+        ) => ReturnType<typeof useBoardLaneStore.getState>;
+      };
+    };
+
+    const merged = persistApi
+      .getOptions()
+      .merge(
+        { flatOrder: ["env-a:one", null, 3, "env-a:one", "env-a:two"] },
+        useBoardLaneStore.getInitialState(),
+      );
+    expect(merged.flatOrder).toEqual(["env-a:one", "env-a:two"]);
+
+    const missing = persistApi
+      .getOptions()
+      .merge({ flatOrder: { invalid: true } }, useBoardLaneStore.getInitialState());
+    expect(missing.flatOrder).toEqual([]);
   });
 
   it("migrates the old environment-scoped store without importing server organization", () => {
@@ -416,6 +494,7 @@ describe("boardLaneStore", () => {
     expect(mergedState.placementByThreadKey).toEqual({});
     expect(mergedState.laneEntryByThreadKey).toEqual({});
     expect(mergedState.orderByLaneId).toEqual({});
+    expect(mergedState.flatOrder).toEqual([]);
     expect(mergedState.organization).toEqual({ columns: "workflow", rows: "none" });
     expect(mergedState.byLaneColumnKey).toEqual({ '["env-a","triage"]': { widthPx: 460 } });
   });
@@ -440,6 +519,7 @@ describe("boardLaneStore", () => {
       laneEntryByThreadKey: {},
       orderByLaneId: {},
       organization: { columns: "workflow", rows: "none" },
+      flatOrder: [],
     });
   });
 
@@ -742,12 +822,14 @@ describe("boardLaneStore", () => {
     const mergedState = persistApi
       .getOptions()
       .merge(
-        { byLaneColumnKey: { [laneB]: { widthPx: BOARD_LANE_MAX_WIDTH + 1000 } } },
+        { byLaneColumnKey: { [laneB]: { widthPx: BOARD_LANE_DEFAULT_WIDTH * 10 } } },
         useBoardLaneStore.getInitialState(),
       );
 
     expect(mergedState.lanes).toEqual(DEFAULT_BOARD_LANES);
-    expect(mergedState.byLaneColumnKey).toEqual({ [laneB]: { widthPx: BOARD_LANE_MAX_WIDTH } });
+    expect(mergedState.byLaneColumnKey).toEqual({
+      [laneB]: { widthPx: BOARD_LANE_DEFAULT_WIDTH * 10 },
+    });
     expect(selectBoardLaneWidth(mergedState.byLaneColumnKey, "missing")).toBe(
       BOARD_LANE_DEFAULT_WIDTH,
     );
