@@ -37,13 +37,16 @@ cards last. Dragging establishes a personal global order, while newly appearing 
 according to that attention order without rearranging the cards you placed. A Done card is
 acknowledged when you interact with it, not when keyboard focus or a drag merely lands on it.
 
-Drag a column's right edge to change its width, drag a normal card's bottom edge to change its
-height, and in the flat view drag a card's right edge to change its preferred width. Cards have a
-340px usability minimum but no artificial count or width cap: each row fits as many as its available
-space allows, and its cards expand together to consume any remainder. On a focused resize handle,
-use the arrow keys for 10px changes or hold Shift for 50px changes. Home restores the minimum; End
-uses the available board width for columns and flat-card handles, and the maximum card height for
-bottom handles. New cards open at the full working height, and that
+Drag a card's bottom-right corner to change its width and height together, in either grouped lanes
+or the flat view. Its right and bottom edges resize one dimension at a time. Draft cards remain
+compact summaries and resize only in width. Drag a column's right edge to change the column width.
+Card widths are preferences within the available lane or board space: each row fits as many cards
+as it can, with a 340px usability minimum, and its cards expand together to consume any remainder.
+A card alone on its row fills that row. While you drag, the card previews its new size over its
+neighbors; releasing the handle repacks the row. Widening a card can move another card onto the next row.
+On a focused resize handle, use the arrow keys for 10px changes or hold Shift for 50px changes.
+Home restores the minimum; End uses the available container width and maximum card height for the
+axes controlled by that handle. New cards open at the full working height, and that
 height is also the resize minimum; cards can be made taller but not compacted below it. There is no
 separate compact-size mode.
 
