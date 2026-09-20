@@ -73,7 +73,6 @@ import {
   CARD_MAX_HEIGHT,
   clampCardHeight,
   selectCardHeight,
-  clampCardWidth,
   useBoardCardStore,
 } from "../../board/boardCardStore.ts";
 import {
@@ -129,6 +128,7 @@ import { Textarea } from "../ui/textarea.tsx";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "~/hooks/useSettings";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
+import { resolveBoardCardResize } from "./BoardCardResize.logic.ts";
 import { BoardSessionCard } from "./BoardSessionCard.tsx";
 import { boardCardVisitTimestamp } from "./BoardSessionCard.logic.ts";
 import { BoardDraftCard } from "./BoardDraftCard.tsx";
@@ -2121,7 +2121,6 @@ export const BoardCardTile = memo(function BoardCardTile({
       const tile = event.currentTarget.parentElement?.parentElement;
       if (tile == null) return;
       const availableWidth = boardCardAvailableWidth(tile);
-      const startWidth = Math.min(widthPx, availableWidth ?? widthPx);
       const renderedWidth = tile.getBoundingClientRect().width;
       let latestPreviewWidth = renderedWidth;
       const rowCount = [...(tile.parentElement?.children ?? [])].filter(
@@ -2132,8 +2131,6 @@ export const BoardCardTile = memo(function BoardCardTile({
       ).length;
       // Keep row packing stable during the gesture. The inner card previews
       // the pointer's actual width; only release changes the flex basis.
-      // Compensate the saved preference for free space shared with neighbors.
-      const flexCompensation = rowCount > 1 ? rowCount / (rowCount - 1) : 1;
       let latest = widthPx;
       const pointerId = event.pointerId;
       try {
@@ -2143,15 +2140,15 @@ export const BoardCardTile = memo(function BoardCardTile({
       }
       const onMove = (moveEvent: PointerEvent) => {
         if (moveEvent.pointerId !== pointerId) return;
-        const deltaX = moveEvent.clientX - startX;
-        latestPreviewWidth = Math.min(
-          availableWidth ?? Number.POSITIVE_INFINITY,
-          clampCardWidth(renderedWidth + deltaX),
-        );
-        latest =
-          deltaX === 0
-            ? widthPx
-            : clampCardWidth(startWidth + (latestPreviewWidth - renderedWidth) * flexCompensation);
+        const resized = resolveBoardCardResize({
+          preferredWidth: widthPx,
+          renderedWidth,
+          availableWidth,
+          rowCount,
+          deltaX: moveEvent.clientX - startX,
+        });
+        latestPreviewWidth = resized.previewWidth;
+        latest = resized.preferredWidth;
         if (resizeHeight) {
           latestHeight = clampCardHeight(storedHeight + moveEvent.clientY - startY);
         }
@@ -2256,7 +2253,7 @@ export const BoardCardTile = memo(function BoardCardTile({
         className="relative"
         style={{
           width: resizingWidth === null ? "100%" : `${resizingWidth}px`,
-          zIndex: resizingWidth === null ? undefined : 30,
+          zIndex: resizingWidth === null ? 0 : 1,
         }}
       >
         <BoardEntryCard

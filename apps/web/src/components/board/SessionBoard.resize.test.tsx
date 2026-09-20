@@ -183,7 +183,7 @@ describe("BoardCardTile resize interaction", () => {
     expect(useBoardFocusStore.getState().focusedThreadKey).toBe(entry.key);
   });
 
-  it("previews rendered width, then persists compensated preferred width on release", () => {
+  it("persists the compensated preferred width only after release", () => {
     const { handle, handleNode } = render();
     act(() =>
       handle.props.onPointerDown({
@@ -195,10 +195,7 @@ describe("BoardCardTile resize interaction", () => {
     );
     act(() => dispatch("pointermove", pointer("pointermove", { clientX: 150 })));
     act(() => frame?.());
-    expect(renderer.root.findAll((node) => node.props.style?.width === "546px")).toHaveLength(1);
-    expect(renderer.root.findAll((node) => node.props.style?.flexBasis === "340px")).toHaveLength(
-      1,
-    );
+    expect(useBoardCardStore.getState().byThreadKey[scopedThreadKey(ref)]?.widthPx).toBe(340);
     act(() => dispatch("pointerup", pointer("pointerup", { clientX: 150 })));
     expect(useBoardCardStore.getState().byThreadKey[scopedThreadKey(ref)]?.widthPx).toBe(440);
   });
@@ -217,10 +214,11 @@ describe("BoardCardTile resize interaction", () => {
     act(() => frame?.());
     act(() => dispatch("pointercancel", pointer("pointercancel", { clientX: 150 })));
     expect(useBoardCardStore.getState().byThreadKey[scopedThreadKey(ref)]?.widthPx).toBe(340);
-    expect(renderer.root.findAll((node) => node.props.style?.width === "100%")).toHaveLength(1);
+    expect(listeners.pointermove).toBeUndefined();
+    expect(listeners.pointerup).toBeUndefined();
   });
 
-  it("keeps a clipped preferred width when a corner drag only moves vertically", () => {
+  it.each([0, 5])("keeps a clipped preferred width with %ipx of sideways jitter", (deltaX) => {
     useBoardCardStore.setState({ byThreadKey: { [scopedThreadKey(ref)]: { widthPx: 600 } } });
     outer.renderedWidth = 364;
     outer.parentElement!.clientWidth = 364;
@@ -233,8 +231,10 @@ describe("BoardCardTile resize interaction", () => {
         stopPropagation: vi.fn(),
       }),
     );
-    act(() => dispatch("pointermove", pointer("pointermove", { clientY: 180 })));
-    act(() => dispatch("pointerup", pointer("pointerup", { clientY: 180 })));
+    act(() =>
+      dispatch("pointermove", pointer("pointermove", { clientX: 100 + deltaX, clientY: 180 })),
+    );
+    act(() => dispatch("pointerup", pointer("pointerup", { clientX: 100 + deltaX, clientY: 180 })));
     expect(useBoardCardStore.getState().byThreadKey[scopedThreadKey(ref)]).toEqual({
       widthPx: 600,
       heightPx: 600,
