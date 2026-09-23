@@ -38,9 +38,7 @@ export function BoardCardExpandedSheet(props: BoardCardExpandedSheetProps) {
         className="flex h-[96dvh] max-h-[96dvh] min-h-0 flex-col overflow-hidden sm:row-span-2 sm:row-start-1 sm:h-[80dvh] sm:max-h-[80dvh] sm:w-[80vw] sm:max-w-[80vw] sm:place-self-center"
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 pe-12">
-          <p className="min-w-0 flex-1 truncate text-sm font-medium" title={target.title}>
-            {target.title}
-          </p>
+          <p className="min-w-0 flex-1 truncate text-sm font-medium">{target.title}</p>
           <Button
             size="sm"
             variant="outline"

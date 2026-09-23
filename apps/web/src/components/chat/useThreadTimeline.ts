@@ -195,6 +195,7 @@ export function useThreadTimeline(input: UseThreadTimelineInput) {
     isWorking,
     activeTurnInProgress,
     activeTurnStartedAt,
+    turnDiffSummaries,
     turnDiffSummaryByAssistantMessageId,
     revertTurnCountByUserMessageId,
     onRevertUserMessage,

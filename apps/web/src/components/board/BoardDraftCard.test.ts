@@ -11,7 +11,6 @@ function draft(overrides: Partial<ComposerThreadDraftState> = {}): ComposerThrea
     nonPersistedImageIds: [],
     persistedAttachments: [],
     terminalContexts: [],
-    elementContexts: [],
     previewAnnotations: [],
     reviewComments: [],
     modelSelectionByProvider: {},

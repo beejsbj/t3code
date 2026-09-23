@@ -75,6 +75,7 @@ function threadShell(overrides: Partial<OrchestrationThreadShell> = {}): Orchest
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    pullRequests: [],
     ...overrides,
   };
 }

@@ -7,7 +7,7 @@ import type { ChatImageAttachment, ChatMessage } from "../../types.ts";
 
 import {
   boardComposerDraftCanBeRestored,
-  buildBoardComposerMessageText,
+  buildBoardComposerMessageFields,
   canBeginBoardComposerSend,
   mergeBoardTimelineMessages,
   resolveBoardComposerModelSelection,
@@ -103,70 +103,43 @@ describe("boardComposerDraftCanBeRestored", () => {
   });
 });
 
-describe("buildBoardComposerMessageText", () => {
-  it("serializes every stored composer context into the outgoing message", () => {
-    const text = buildBoardComposerMessageText({
-      prompt: "Fix this",
-      terminalContexts: [
-        {
-          id: "terminal-context",
-          threadId: ThreadId.make("board-context-thread"),
-          terminalId: "terminal-1",
-          terminalLabel: "dev server",
-          lineStart: 1,
-          lineEnd: 1,
-          text: "server output",
-          createdAt: "2026-08-14T12:00:00.000Z",
-        },
-      ],
-      elementContexts: [
-        {
-          id: "element-context",
-          threadId: ThreadId.make("board-context-thread"),
-          pageUrl: "http://localhost:3000",
-          pageTitle: "App",
-          tagName: "button",
-          selector: ".submit",
-          htmlPreview: "<button>Send</button>",
-          componentName: "SubmitButton",
-          source: null,
-          styles: "color: red",
-          pickedAt: "2026-08-14T12:00:00.000Z",
-        },
-      ],
-      previewAnnotations: [
-        {
-          id: "annotation-1",
-          pageUrl: "http://localhost:3000",
-          pageTitle: "App",
-          comment: "Move this",
-          elements: [],
-          regions: [],
-          strokes: [],
-          styleChanges: [],
-          screenshot: null,
-          createdAt: "2026-08-14T12:00:00.000Z",
-        },
-      ],
-      reviewComments: [
-        {
-          id: "review-1",
-          sectionId: "file:app.ts",
-          sectionTitle: "File comment",
-          filePath: "app.ts",
-          startIndex: 0,
-          endIndex: 0,
-          rangeLabel: "L1",
-          text: "Rename this",
-          diff: "const oldName = true;",
-        },
-      ],
+describe("buildBoardComposerMessageFields", () => {
+  const context = {
+    version: 1 as const,
+    records: [
+      {
+        version: 1 as const,
+        contextId: "terminal:terminal-context" as never,
+        kind: "terminal" as const,
+        label: "dev server line 1",
+        terminalId: "terminal-1",
+        terminalLabel: "dev server",
+        lineStart: 1,
+        lineEnd: 1,
+        text: "server output",
+      },
+    ],
+  };
+
+  it("sends typed context records to current servers", () => {
+    expect(
+      buildBoardComposerMessageFields({
+        text: "Fix this",
+        context,
+        supportsInlineMessageContext: true,
+      }),
+    ).toEqual({ text: "Fix this", context });
+  });
+
+  it("serializes records for older servers", () => {
+    const result = buildBoardComposerMessageFields({
+      text: "Fix this",
+      context,
+      supportsInlineMessageContext: false,
     });
 
-    expect(text).toContain("<terminal_context>");
-    expect(text).toContain("<element_context>");
-    expect(text).toContain("<preview_annotation>");
-    expect(text).toContain("<review_comment");
+    expect(result.context).toBeUndefined();
+    expect(result.text).toContain("<terminal_context>");
   });
 });
 

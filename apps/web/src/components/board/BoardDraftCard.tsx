@@ -48,7 +48,6 @@ export function resolveBoardDraftPreview(
   const attachmentCount =
     Math.max(draft.images.length, draft.persistedAttachments.length) +
     draft.terminalContexts.length +
-    draft.elementContexts.length +
     draft.previewAnnotations.length +
     draft.reviewComments.length;
   return `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
@@ -144,13 +143,8 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
           )}
 
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[11px] font-medium leading-4" title={title ?? "Draft"}>
-              {title?.trim() || "Draft"}
-            </p>
-            <p
-              className="truncate text-[10px] text-muted-foreground/60"
-              title={`${environmentLabel}${branch ? ` · ${branch}` : ""}`}
-            >
+            <p className="truncate text-[11px] font-medium leading-4">{title?.trim() || "Draft"}</p>
+            <p className="truncate text-[10px] text-muted-foreground/60">
               {environmentLabel}
               {branch ? ` · ${branch}` : ""}
             </p>
@@ -158,23 +152,21 @@ export const BoardDraftCard = memo(function BoardDraftCard(props: BoardDraftCard
 
           <Button
             size="icon-xs"
-            variant="ghost"
+            variant="ghost-destructive"
             onClick={handleDiscard}
             aria-label="Discard draft"
             title="Discard draft"
-            className="text-muted-foreground/60 hover:text-destructive"
           >
             <Trash2Icon className="size-3.5" />
           </Button>
           <Button
             size="icon-xs"
-            variant="ghost"
+            variant="ghost-muted"
             onClick={handleExpand}
             aria-label="Open draft"
             aria-expanded={expanded}
             aria-haspopup="dialog"
             title="Open draft"
-            className="text-muted-foreground/60 hover:text-foreground"
           >
             <Maximize2Icon className="size-3.5" />
           </Button>
@@ -212,7 +204,7 @@ function DimensionBadge(props: {
       size="sm"
       variant={props.draft ? "warning" : "outline"}
       title={`${props.dimension}: ${props.label}`}
-      className="max-w-full gap-1 font-normal"
+      className="max-w-full"
     >
       <span className="text-[9px] uppercase tracking-wide opacity-60">{props.dimension}</span>
       <span className="max-w-32 truncate">{props.label}</span>

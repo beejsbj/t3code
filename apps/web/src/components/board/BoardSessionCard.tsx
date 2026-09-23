@@ -9,6 +9,11 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
+import {
+  derivePendingRequests,
+  type PendingApproval,
+  type PendingUserInput,
+} from "@t3tools/client-runtime/pending-requests";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AlarmClockIcon,
@@ -58,12 +63,6 @@ import { useTheme } from "../../hooks/useTheme.ts";
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu.ts";
 import { useClientSettings } from "../../hooks/useSettings.ts";
 import { ensureLocalApi } from "../../localApi.ts";
-import {
-  derivePendingApprovals,
-  derivePendingUserInputs,
-  type PendingApproval,
-  type PendingUserInput,
-} from "../../session-logic.ts";
 import { readProject, useServerConfigs, useThread } from "../../state/entities.ts";
 import {
   resolveThreadRuntimeState,
@@ -495,16 +494,13 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
                 className="h-4 w-full rounded-sm border border-input bg-card px-1 text-[11px] font-medium leading-4 outline-none focus:border-foreground"
               />
             ) : (
-              <p className="truncate text-[11px] font-medium leading-4" title={thread.title}>
-                {thread.title}
-              </p>
+              <p className="truncate text-[11px] font-medium leading-4">{thread.title}</p>
             )}
             <div className="flex min-w-0 items-center gap-1 overflow-hidden text-[9px] text-muted-foreground/75">
               <span
                 data-board-dimension="project"
                 aria-label={`Project: ${projectTitle}`}
                 className="max-w-28 truncate rounded bg-muted px-1 py-0.5"
-                title={`Project: ${projectTitle}`}
               >
                 {projectTitle}
               </span>
@@ -512,7 +508,6 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
                 data-board-dimension="workflow"
                 aria-label={`Workflow: ${workflowLabel}`}
                 className="max-w-24 truncate rounded bg-muted px-1 py-0.5"
-                title={`Workflow: ${workflowLabel}`}
               >
                 {workflowLabel}
               </span>
@@ -520,15 +515,11 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
                 data-board-dimension="state"
                 aria-label={`State: ${boardStateLabel}`}
                 className="max-w-20 truncate rounded bg-muted px-1 py-0.5"
-                title={`State: ${boardStateLabel}`}
               >
                 {boardStateLabel}
               </span>
             </div>
-            <p
-              className="truncate text-[10px] text-muted-foreground/60"
-              title={`${environmentLabel} · ${environmentConnection.phase}${thread.branch ? ` · ${thread.branch}` : ""}`}
-            >
+            <p className="truncate text-[10px] text-muted-foreground/60">
               {environmentLabel}
               {environmentConnection.phase === "connected"
                 ? ""
@@ -545,14 +536,7 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           {showSnoozeButton || props.snoozeDropRequest ? (
             <Menu open={snoozeMenuOpen} onOpenChange={handleSnoozeMenuOpenChange}>
               <MenuTrigger
-                render={
-                  <Button
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Snooze session"
-                    className="text-muted-foreground/60 hover:text-foreground"
-                  />
-                }
+                render={<Button size="icon-xs" variant="ghost-muted" aria-label="Snooze session" />}
               >
                 <AlarmClockIcon className="size-3.5" />
               </MenuTrigger>
@@ -571,23 +555,21 @@ export const BoardSessionCard = memo(function BoardSessionCard(props: BoardSessi
           {settlementSupported ? (
             <Button
               size="icon-xs"
-              variant="ghost"
+              variant="ghost-muted"
               onClick={() => void settle()}
               aria-label="Settle session"
-              className="text-muted-foreground/60 hover:text-foreground"
             >
               <CheckIcon className="size-3.5" />
             </Button>
           ) : null}
           <Button
             size="icon-xs"
-            variant="ghost"
+            variant="ghost-muted"
             onClick={() => setExpanded(true)}
             aria-label="Zoom into session"
             aria-expanded={expanded}
             aria-haspopup="dialog"
             data-testid={`board-card-zoom-${thread.id}`}
-            className="text-muted-foreground/60 hover:text-foreground"
           >
             <Maximize2Icon className="size-3.5" />
           </Button>
@@ -689,8 +671,10 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     ? null
     : timelineAnchorMessageId;
 
-  const pendingApprovals = useMemo(() => derivePendingApprovals(activities), [activities]);
-  const pendingUserInputs = useMemo(() => derivePendingUserInputs(activities), [activities]);
+  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
+    () => derivePendingRequests(activities),
+    [activities],
+  );
 
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
@@ -755,9 +739,7 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     runningTurnId,
     isWorking,
     activeTurnStartedAt,
-    turnDiffSummaryByAssistantMessageId,
-    revertTurnCountByUserMessageId,
-    onRevertUserMessage,
+    turnDiffSummaries,
     markdownCwd,
     workspaceRoot,
     resolvedTheme: timelineTheme,
@@ -948,11 +930,15 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
           timelineEntries={timelineEntries}
           latestTurn={latestTurn}
           runningTurnId={runningTurnId}
-          turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+          turnDiffSummaries={turnDiffSummaries}
           routeThreadKey={routeThreadKey}
           onOpenTurnDiff={onOpenTurnDiff}
-          revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-          onRevertUserMessage={onRevertUserMessage}
+          supportsConversationRollback={providerStatuses.some(
+            (provider) =>
+              provider.instanceId === thread.modelSelection.instanceId &&
+              provider.supportsConversationRollback !== false,
+          )}
+          onRevertToTurnCount={(turnCount) => void onRevertToTurnCount(turnCount)}
           isRevertingCheckpoint={timelineIsRevertingCheckpoint}
           onImageExpand={onExpandTimelineImage}
           activeThreadEnvironmentId={activeThreadEnvironmentId}
@@ -1084,7 +1070,6 @@ function BoardStatusIcon({
       aria-label={appearance.label}
       data-testid="board-card-status"
       data-status={status}
-      title={appearance.label}
       className={cn(
         "mt-0.5 inline-flex shrink-0 items-center justify-center",
         appearance.textClass,

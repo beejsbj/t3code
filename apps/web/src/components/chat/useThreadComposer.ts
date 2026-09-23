@@ -2,6 +2,7 @@ import {
   type ApprovalRequestId,
   type MessageId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationThreadActivity,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
@@ -20,14 +21,14 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-
 import {
-  derivePendingApprovals,
-  derivePendingUserInputs,
-  derivePhase,
+  derivePendingRequests,
   type PendingApproval,
   type PendingUserInput,
-} from "../../session-logic.ts";
+} from "@t3tools/client-runtime/pending-requests";
+import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+
+import { derivePhase } from "../../session-logic.ts";
 import { useEnvironmentSettings } from "../../hooks/useSettings.ts";
 import { newMessageId } from "../../lib/utils.ts";
 import { primaryServerKeybindingsAtom } from "../../state/server.ts";
@@ -64,19 +65,10 @@ import {
 } from "../../composerDraftStore.ts";
 import { useAssetUrls } from "../../assets/assetUrls.ts";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection.ts";
-import {
-  appendTerminalContextsToPrompt,
-  type TerminalContextDraft,
-} from "../../lib/terminalContext.ts";
-import {
-  appendElementContextsToPrompt,
-  type ElementContextDraft,
-} from "../../lib/elementContext.ts";
-import { appendPreviewAnnotationPrompt } from "../../lib/previewAnnotation.ts";
-import {
-  appendReviewCommentsToPrompt,
-  type ReviewCommentContext,
-} from "../../reviewCommentContext.ts";
+import { type TerminalContextDraft } from "../../lib/terminalContext.ts";
+import { type ReviewCommentContext } from "../../reviewCommentContext.ts";
+import { buildMessageContext, terminalContextReference } from "../../lib/composerContextRecords.ts";
+import { removeInlineContextReference } from "../../lib/composerContextReferences.ts";
 import type { ChatComposerProps } from "./ChatComposer.tsx";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview.tsx";
 import { toastManager } from "../ui/toast.tsx";
@@ -114,23 +106,20 @@ export function resolveBoardComposerSubmission(input: {
   return { text };
 }
 
-export function buildBoardComposerMessageText(input: {
-  readonly prompt: string;
-  readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
-  readonly elementContexts: ReadonlyArray<ElementContextDraft>;
-  readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
-  readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
-}): string {
-  const withTerminalContexts = appendTerminalContextsToPrompt(input.prompt, input.terminalContexts);
-  const withElementContexts = appendElementContextsToPrompt(
-    withTerminalContexts,
-    input.elementContexts,
-  );
-  const withPreviewAnnotations = input.previewAnnotations.reduce(
-    (text, annotation) => appendPreviewAnnotationPrompt(text, annotation),
-    withElementContexts,
-  );
-  return appendReviewCommentsToPrompt(withPreviewAnnotations, input.reviewComments);
+export function buildBoardComposerMessageFields(input: {
+  readonly text: string;
+  readonly context: OrchestrationMessageContext | undefined;
+  readonly supportsInlineMessageContext: boolean;
+}): { readonly text: string; readonly context?: OrchestrationMessageContext } {
+  if (input.context === undefined) return { text: input.text };
+  return input.supportsInlineMessageContext
+    ? { text: input.text, context: input.context }
+    : {
+        text: serializeLegacyContextMessage({
+          text: input.text,
+          records: input.context.records,
+        }),
+      };
 }
 
 export function boardComposerDraftCanBeRestored(
@@ -139,11 +128,7 @@ export function boardComposerDraftCanBeRestored(
         Partial<
           Pick<
             ComposerThreadDraftState,
-            | "files"
-            | "terminalContexts"
-            | "elementContexts"
-            | "previewAnnotations"
-            | "reviewComments"
+            "files" | "terminalContexts" | "previewAnnotations" | "reviewComments"
           >
         >)
     | null,
@@ -154,7 +139,6 @@ export function boardComposerDraftCanBeRestored(
       draft.images.length === 0 &&
       (draft.files?.length ?? 0) === 0 &&
       (draft.terminalContexts?.length ?? 0) === 0 &&
-      (draft.elementContexts?.length ?? 0) === 0 &&
       (draft.previewAnnotations?.length ?? 0) === 0 &&
       (draft.reviewComments?.length ?? 0) === 0)
   );
@@ -214,12 +198,8 @@ export function resolveBoardComposerModelSelection(
 
 export function useThreadComposerRouteState(thread: Thread | null | undefined) {
   const threadActivities = thread?.activities ?? EMPTY_ACTIVITIES;
-  const pendingApprovals = useMemo(
-    () => derivePendingApprovals(threadActivities),
-    [threadActivities],
-  );
-  const pendingUserInputs = useMemo(
-    () => derivePendingUserInputs(threadActivities),
+  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
+    () => derivePendingRequests(threadActivities),
     [threadActivities],
   );
   const phase = derivePhase(thread?.session ?? null);
@@ -263,13 +243,12 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
-  // Board composer doesn't support inline terminal/element context chips, so
+  // Board composer doesn't support inline terminal context chips, so
   // these start empty; typed explicitly rather than inferred as `never[]` to
   // match what ChatComposerProps expects. Each card gets its own array — a
   // ref is a mutable cell, so seeding several from one shared array would let
   // a future in-place write leak across every card on the board.
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
-  const composerElementContextsRef = useRef<ElementContextDraft[]>([]);
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
   }, []);
@@ -308,6 +287,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     thread,
     selectedProvider: null,
     threadProvider: summary.modelSelection.instanceId,
+    providers: providerStatuses,
   });
 
   const phase: SessionPhase = derivePhase(summary.session ?? null);
@@ -480,7 +460,6 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
         readonly prompt: string;
         readonly images: ComposerImageAttachment[];
         readonly terminalContexts: TerminalContextDraft[];
-        readonly elementContexts: ElementContextDraft[];
         readonly previewAnnotations: PreviewAnnotationPayload[];
         readonly reviewComments: ReviewCommentContext[];
       } | null = null;
@@ -493,18 +472,32 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           prompt: draft.prompt,
           imageCount: draft.images.length,
           terminalContexts: draft.terminalContexts,
-          elementContextCount:
-            draft.elementContexts.length +
-            draft.previewAnnotations.length +
-            draft.reviewComments.length,
+          elementContextCount: draft.previewAnnotations.length + draft.reviewComments.length,
         });
         if (!sendState.hasSendableContent) return;
-        const outgoingMessageText = buildBoardComposerMessageText({
-          prompt: draft.prompt,
+        const messageText = draft.terminalContexts
+          .filter((context) => !sendState.sendableTerminalContexts.includes(context))
+          .reduce(
+            (text, context) =>
+              removeInlineContextReference(text, terminalContextReference(context).contextId)
+                .prompt,
+            draft.prompt,
+          )
+          .trim();
+        const messageContext = buildMessageContext({
           terminalContexts: sendState.sendableTerminalContexts,
-          elementContexts: draft.elementContexts,
           previewAnnotations: draft.previewAnnotations,
           reviewComments: draft.reviewComments,
+          attachments: draft.images.map((attachment) => ({
+            attachment,
+            attachmentId: attachment.id,
+          })),
+        });
+        const outgoingMessage = buildBoardComposerMessageFields({
+          text: messageText,
+          context: messageContext,
+          supportsInlineMessageContext:
+            environmentConfig?.environment.capabilities.inlineMessageContext === true,
         });
         const requestedModelSelection = resolveBoardComposerModelSelection(
           draft,
@@ -535,7 +528,6 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           prompt: draft.prompt,
           images: [...draft.images],
           terminalContexts: [...draft.terminalContexts],
-          elementContexts: [...draft.elementContexts],
           previewAnnotations: [...draft.previewAnnotations],
           reviewComments: [...draft.reviewComments],
         };
@@ -545,7 +537,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
           {
             id: messageId,
             role: "user",
-            text: outgoingMessageText,
+            ...outgoingMessage,
             ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
             turnId: null,
             createdAt,
@@ -594,7 +586,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             message: {
               messageId,
               role: "user",
-              text: outgoingMessageText,
+              ...outgoingMessage,
               attachments,
             },
             modelSelection,
@@ -629,12 +621,10 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
             promptRef.current = sentDraft.prompt;
             composerImagesRef.current = retryImages;
             composerTerminalContextsRef.current = sentDraft.terminalContexts;
-            composerElementContextsRef.current = sentDraft.elementContexts;
             const draftStore = useComposerDraftStore.getState();
             draftStore.setPrompt(threadRef, sentDraft.prompt);
             draftStore.addImages(threadRef, retryImages);
             draftStore.setTerminalContexts(threadRef, sentDraft.terminalContexts);
-            draftStore.setElementContexts(threadRef, sentDraft.elementContexts);
             draftStore.setPreviewAnnotations(threadRef, sentDraft.previewAnnotations);
             draftStore.setReviewComments(threadRef, sentDraft.reviewComments);
             composerRef.current?.resetCursorState({
@@ -661,6 +651,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     [
       environmentConnection.phase,
       environmentId,
+      environmentConfig,
       providerStatuses,
       startThreadTurn,
       summary,
@@ -821,6 +812,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       attachmentUploadsCapabilityKnown: environmentConfig !== undefined,
       supportsAttachmentUploads:
         environmentConfig?.environment.capabilities.attachmentUploads === true,
+      supportsQuestionAttachments: false,
       // The embedded board sender currently serializes images directly. Keep
       // generic files visible in retained drafts, but require the full thread
       // route to send them instead of silently dropping them.
@@ -828,9 +820,14 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       routeKind: "server",
       routeThreadRef: threadRef,
       draftId: null,
+      multipleModelSelections: null,
+      supportsMultipleModels: false,
+      onMultipleModelSelectionsChange: NOOP,
       activeThreadId: summary.id,
       activeThreadEnvironmentId: environmentId,
       activeThread: thread ?? undefined,
+      activeThreadShell: null,
+      promptHistoryMessages: timelineMessages,
       isServerThread: true,
       isLocalDraftThread: false,
       forceExpandedOnMobile: false,
@@ -865,6 +862,7 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       interactionMode,
       lockedProvider,
       providerStatuses,
+      providerCatalogKnown: environmentConfig !== undefined,
       activeProjectDefaultModelSelection: project?.defaultModelSelection,
       activeThreadModelSelection: summary.modelSelection,
       activeContextWindow: null,
@@ -876,27 +874,31 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       keybindings,
       terminalOpen: false,
       gitCwd,
+      pullRequestProjectId: null,
+      pullRequestRepository: null,
       restingControlsHost: null,
       restingControlsHaveLeadingContext: false,
       onRestingControlsVisibilityChange: NOOP,
       getTimelineScrollableNode: NO_TIMELINE_SCROLLABLE_NODE,
       isTimelineAtLogicalEnd: TIMELINE_IS_AT_LOGICAL_END,
+      timelineOverflows: false,
       onComposerOverlayHeightChange: NOOP,
       onRestingChange: NOOP,
       promptRef,
       composerImagesRef,
       composerFilesRef,
       composerTerminalContextsRef,
-      composerElementContextsRef,
       onPageScrollKeyDown: NOOP,
       onPageScrollKeyUp: NOOP,
       onPageScrollRelease: NOOP,
+      onCompactContext: NOOP,
       onSend,
       onInterrupt,
       onImplementPlanInNewThread: NOOP,
       onRespondToApproval,
       onSelectActivePendingUserInputOption: NOOP,
       onAdvanceActivePendingUserInput: NOOP,
+      onDismissActivePendingUserInput: NOOP,
       onPreviousActivePendingUserInputQuestion: NOOP,
       onChangeActivePendingUserInputCustomAnswer: NOOP,
       onProviderModelSelect,
@@ -935,8 +937,9 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
       gitCwd,
       promptRef,
       composerImagesRef,
+      composerFilesRef,
       composerTerminalContextsRef,
-      composerElementContextsRef,
+      timelineMessages,
       onSend,
       onInterrupt,
       onRespondToApproval,

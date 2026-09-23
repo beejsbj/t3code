@@ -1,3 +1,4 @@
+import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
@@ -157,7 +158,7 @@ export function useThreadActionMenu(input: {
   }, [threadRef, unsnoozeThread]);
 
   const snooze = useCallback(
-    async (preset: ReturnType<typeof resolveSnoozePresets>[number]) => {
+    async (preset: { readonly snoozedUntil: string }) => {
       if (threadRef === null) return false;
       const result = await snoozeThread(threadRef, preset.snoozedUntil);
       if (result._tag === "Failure") {
@@ -210,11 +211,13 @@ export function useThreadActionMenu(input: {
         const isSnoozed = supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() });
         // Snooze owns the visible lifecycle while it is active, matching the
         // sidebar partition.
-        const isSettled =
-          !isSnoozed && supports.settlement && thread.settledOverride === "settled";
+        const isSettled = !isSnoozed && supports.settlement && thread.settledOverride === "settled";
         const items = [
           ...buildThreadActionMenuItems({
             branch: thread.branch ?? null,
+            // The chat header has no project-scoped thread list behind the
+            // menu, so the "Filter by project" affordance is sidebar-only.
+            projectFilter: null,
             isPinned: thread.pinnedAt != null,
             isSettled,
             isSnoozed,
@@ -237,7 +240,10 @@ export function useThreadActionMenu(input: {
         }
         const action = clicked.value as ThreadActionMenuId;
         if (action.startsWith("snooze:")) {
-          const preset = snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
+          const preset =
+            action === "snooze:custom"
+              ? await requestCustomSnooze()
+              : snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
           if (!preset) return;
           await snooze(preset);
           return;

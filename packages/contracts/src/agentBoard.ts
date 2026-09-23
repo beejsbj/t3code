@@ -82,6 +82,6 @@ export const AgentBoardHostResponse = Schema.Struct({
 );
 export type AgentBoardHostResponse = typeof AgentBoardHostResponse.Type;
 
-export class AgentBoardError extends Schema.TaggedErrorClass<AgentBoardError>()("AgentBoardError", {
+export class AgentBoardError extends Schema.TaggedError<AgentBoardError>()("AgentBoardError", {
   message: TrimmedNonEmptyString,
 }) {}

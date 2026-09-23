@@ -52,6 +52,7 @@ const entry = {
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    pullRequests: [],
   },
   environmentConnection: { phase: "connected", error: null, traceId: null },
 } satisfies ComponentProps<typeof BoardCardTile>["entry"];

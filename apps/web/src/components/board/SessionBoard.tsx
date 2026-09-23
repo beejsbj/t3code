@@ -115,13 +115,7 @@ import { isTerminalFocused } from "../../lib/terminalFocus.ts";
 import { primaryServerKeybindingsAtom } from "../../state/server.ts";
 import { Button } from "../ui/button.tsx";
 import { Input } from "../ui/input.tsx";
-import {
-  Popover,
-  PopoverDescription,
-  PopoverPopup,
-  PopoverTitle,
-  PopoverTrigger,
-} from "../ui/popover.tsx";
+import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover.tsx";
 import { SidebarInset } from "../ui/sidebar.tsx";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select.tsx";
 import { Textarea } from "../ui/textarea.tsx";
@@ -1313,7 +1307,7 @@ export function SessionBoard() {
   }, [draftThreadsByThreadKey, threads]);
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
       {draftPromotionPairs.map((pair) => (
         <BoardDraftPromotionReconciler
           key={pair.draftId}
@@ -1647,10 +1641,8 @@ function NewLanePopover({
       <PopoverPopup align="end" className="w-80">
         <form className="space-y-3" onSubmit={(event) => void handleSubmit(event)}>
           <div className="space-y-1">
-            <PopoverTitle className="text-sm">Create lane</PopoverTitle>
-            <PopoverDescription className="text-xs">
-              Add an intent column to this board.
-            </PopoverDescription>
+            <PopoverTitle>Create lane</PopoverTitle>
+            <p className="text-xs text-muted-foreground">Add an intent column to this board.</p>
           </div>
           <LaneFields
             name={name}
@@ -1725,8 +1717,8 @@ function LaneEditorPopover({
       <PopoverPopup align="start" className="w-80">
         <form className="space-y-3" onSubmit={(event) => void handleSubmit(event)}>
           <div className="space-y-1">
-            <PopoverTitle className="text-sm">Manage lane</PopoverTitle>
-            <PopoverDescription className="text-xs">Lane id: {lane.id}</PopoverDescription>
+            <PopoverTitle>Manage lane</PopoverTitle>
+            <p className="text-xs text-muted-foreground">Lane id: {lane.id}</p>
           </div>
           <LaneFields
             name={name}
@@ -1880,7 +1872,6 @@ function LaneResizeHandle(props: {
       aria-keyshortcuts="ArrowLeft ArrowRight Shift+ArrowLeft Shift+ArrowRight Home End"
       aria-valuemin={BOARD_LANE_MIN_WIDTH}
       aria-valuenow={props.widthPx}
-      title={`Column width: ${props.widthPx}px`}
       className="group absolute inset-y-0 right-0 z-10 w-2 translate-x-1/2 cursor-ew-resize touch-none select-none border-0 bg-transparent p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:w-6"
     >
       <span className="pointer-events-none absolute inset-y-1 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-border group-active:bg-primary/60" />
@@ -1923,9 +1914,7 @@ function LaneHeaderCell({
       )}
     >
       <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs font-medium" title={lane.name}>
-          {lane.name}
-        </span>
+        <span className="min-w-0 flex-1 truncate text-xs font-medium">{lane.name}</span>
         <span className="ml-auto text-[11px] text-muted-foreground/70">{memberCount}</span>
         {isBoardFixedLaneId(lane.id) ? null : (
           <LaneEditorPopover
@@ -1938,9 +1927,7 @@ function LaneHeaderCell({
           />
         )}
       </div>
-      <p className="truncate text-[11px] text-muted-foreground/60" title={lane.description}>
-        {lane.description}
-      </p>
+      <p className="truncate text-[11px] text-muted-foreground/60">{lane.description}</p>
       <LaneResizeHandle
         label={lane.name}
         widthPx={widthPx}

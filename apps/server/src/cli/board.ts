@@ -39,17 +39,17 @@ class BoardCliError extends CliError.UserError {
 
 const fail = (message: string) => Effect.fail(new BoardCliError({ cause: message }));
 
-const clientFlag = Flag.string("client").pipe(
+const clientFlag = Flag.String("client").pipe(
   Flag.withDescription("Stable client ID shown by `t3 board clients`."),
   Flag.optional,
 );
 
-const threadFlag = Flag.string("thread").pipe(
+const threadFlag = Flag.String("thread").pipe(
   Flag.withDescription("Thread ID from the T3 chat URL to inspect or move."),
   Flag.optional,
 );
 
-const directoryFlag = Flag.string("directory").pipe(
+const directoryFlag = Flag.String("directory").pipe(
   Flag.withDescription("Project directory in which to install the opt-in filesystem skill."),
   Flag.optional,
 );
@@ -294,7 +294,7 @@ const moveCommand = Command.make("move", {
   ...projectLocationFlags,
   client: clientFlag,
   thread: threadFlag,
-  lane: Argument.string("lane"),
+  lane: Argument.String("lane"),
 }).pipe(
   Command.withDescription("Move a thread by lane ID or exact lane name."),
   Command.withHandler(({ lane, ...flags }) =>
