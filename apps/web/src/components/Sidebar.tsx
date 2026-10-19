@@ -1334,26 +1334,29 @@ function SidebarAttentionHeader(props: { count: number }) {
 }
 
 // A project group inside Active. Collapsing hides its rows but never a row
-// that needs the user: those already sit in the attention band above.
+// that needs the user: those already sit in the attention band above. A
+// collapsed group with a finished, unvisited thread shows an unread dot.
 function SidebarProjectGroupHeader(props: {
   groupKey: string;
   label: string;
   project: ProjectFaviconProject | null;
   count: number;
   expanded: boolean;
+  hasUnread: boolean;
   onToggle: (groupKey: string) => void;
+  onNewThread: ((groupKey: string) => void) | null;
 }) {
   return (
     <SortableSidebarMarker
       marker={sidebarProjectGroupMarker(props.groupKey)}
       data-testid="sidebar-project-group"
-      className="mx-0.5 h-7"
+      className="group/project-header mx-0.5 flex h-7 items-center rounded-md hover:bg-sidebar-row-hover"
     >
       <button
         type="button"
         aria-expanded={props.expanded}
         onClick={() => props.onToggle(props.groupKey)}
-        className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left text-xs font-medium text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left text-xs font-medium text-sidebar-muted-foreground outline-none group-hover/project-header:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <ChevronRightIcon
           aria-hidden
@@ -1366,10 +1369,27 @@ function SidebarProjectGroupHeader(props: {
           <ProjectFavicon project={props.project} className="size-3.5 shrink-0" />
         ) : null}
         <span className="min-w-0 flex-1 truncate">{props.label}</span>
+        {props.hasUnread ? (
+          <span
+            role="img"
+            aria-label="Unread threads"
+            className="size-1.5 shrink-0 rounded-full bg-info"
+          />
+        ) : null}
         <span className="shrink-0 tabular-nums text-sidebar-muted-foreground/60">
           {props.count}
         </span>
       </button>
+      {props.onNewThread ? (
+        <button
+          type="button"
+          aria-label={`New thread in ${props.label}`}
+          onClick={() => props.onNewThread?.(props.groupKey)}
+          className="me-0.5 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground opacity-0 outline-none hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 group-hover/project-header:opacity-100"
+        >
+          <PlusIcon aria-hidden className="size-3.5" />
+        </button>
+      ) : null}
     </SortableSidebarMarker>
   );
 }
@@ -2961,6 +2981,12 @@ export default function Sidebar() {
     NO_COLLAPSED_PROJECT_GROUPS,
     CollapsedProjectGroupsSchema,
   );
+  const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const startThreadInProjectGroup = (groupKey: string) => {
+    const project = projectGroupByScopeKey.get(groupKey)?.memberProjects[0];
+    if (project)
+      void handleNewThreadRef.current(scopeProjectRef(project.environmentId, project.id));
+  };
   const toggleProjectGroup = (groupKey: string) =>
     setCollapsedProjectGroups((current) =>
       current.includes(groupKey)
@@ -3734,6 +3760,23 @@ export default function Sidebar() {
       : null;
   const groupedThreadKeys = new Set(
     projectGrouping?.buckets.flatMap((bucket) => bucket.threads.map(threadShellKey)) ?? [],
+  );
+  const unreadProjectGroups = new Set(
+    projectGrouping?.buckets
+      .filter(
+        (bucket) =>
+          collapsedProjectGroups.includes(bucket.groupKey) &&
+          bucket.threads.some((thread) =>
+            hasUnseenCompletion({
+              ...thread,
+              lastVisitedAt: resolveThreadLastVisitedAt(
+                thread.lastVisitedAt,
+                threadLastVisitedAtById[threadShellKey(thread)],
+              ),
+            }),
+          ),
+      )
+      .map((bucket) => bucket.groupKey) ?? [],
   );
   const projectGroupSizes = new Map(
     projectGrouping?.buckets.map((bucket) => [bucket.groupKey, bucket.threads.length] as const) ??
@@ -5309,7 +5352,9 @@ export default function Sidebar() {
                                 project={group?.memberProjects[0] ?? null}
                                 count={projectGroupSizes.get(groupKey) ?? 0}
                                 expanded={!collapsedProjectGroups.includes(groupKey)}
+                                hasUnread={unreadProjectGroups.has(groupKey)}
                                 onToggle={toggleProjectGroup}
+                                onNewThread={group ? startThreadInProjectGroup : null}
                               />,
                             );
                           }
