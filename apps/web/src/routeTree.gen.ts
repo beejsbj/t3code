@@ -188,8 +188,8 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
-  '/new': typeof ChatNewRoute
   '/board': typeof ChatBoardRoute
+  '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -216,8 +216,8 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
-  '/new': typeof ChatNewRoute
   '/board': typeof ChatBoardRoute
+  '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -247,8 +247,8 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
-  '/_chat/new': typeof ChatNewRoute
   '/_chat/board': typeof ChatBoardRoute
+  '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
@@ -279,8 +279,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/welcome'
-    | '/new'
     | '/board'
+    | '/new'
     | '/pull-requests'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -307,8 +307,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/welcome'
-    | '/new'
     | '/board'
+    | '/new'
     | '/pull-requests'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -337,8 +337,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/usage'
     | '/welcome'
-    | '/_chat/new'
     | '/_chat/board'
+    | '/_chat/new'
     | '/_chat/pull-requests'
     | '/projects/$projectKey'
     | '/settings/appearance'
@@ -573,8 +573,8 @@ declare module '@tanstack/react-router' {
 }
 
 interface ChatRouteChildren {
-  ChatNewRoute: typeof ChatNewRoute
   ChatBoardRoute: typeof ChatBoardRoute
+  ChatNewRoute: typeof ChatNewRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
@@ -582,8 +582,8 @@ interface ChatRouteChildren {
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
-  ChatNewRoute: ChatNewRoute,
   ChatBoardRoute: ChatBoardRoute,
+  ChatNewRoute: ChatNewRoute,
   ChatPullRequestsRoute: ChatPullRequestsRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
