@@ -140,7 +140,21 @@ export type SidebarListMarker =
   | "pinned-divider"
   | "working-header"
   | "snoozed-header"
-  | "settled-header";
+  | "settled-header"
+  | "attention-header"
+  | SidebarProjectGroupMarker;
+
+/** Header of one project group inside Active. Group headers never change the
+    drop section: everything between the divider and the first shelf is Active. */
+export type SidebarProjectGroupMarker = `project:${string}`;
+
+export function sidebarProjectGroupMarker(groupKey: string): SidebarProjectGroupMarker {
+  return `project:${groupKey}`;
+}
+
+export function sidebarProjectGroupKey(marker: SidebarListMarker): string | null {
+  return marker.startsWith("project:") ? marker.slice("project:".length) : null;
+}
 
 export function sidebarMarkerId(marker: SidebarListMarker): string {
   return `${SIDEBAR_MARKER_PREFIX}${marker}`;
@@ -979,6 +993,52 @@ export function resolveSidebarV2TopStatus(input: {
 
 export function shouldShowSidebarV2Duration(status: SidebarThreadStatus): boolean {
   return status === "working";
+}
+
+/** Statuses that need the user: these rows leave their project group and
+    collect at the top of Active, so a collapsed project can't hide them. */
+const SIDEBAR_ATTENTION_STATUSES: ReadonlySet<SidebarThreadStatus> = new Set([
+  "approval",
+  "input",
+  "failed",
+  "limited",
+]);
+
+export function isSidebarAttentionStatus(status: SidebarThreadStatus): boolean {
+  return SIDEBAR_ATTENTION_STATUSES.has(status);
+}
+
+export interface SidebarProjectBucket<T> {
+  readonly groupKey: string;
+  readonly threads: readonly T[];
+}
+
+/**
+ * Splits already-ordered Active threads into an attention band and per-project
+ * buckets. Buckets keep first-seen order, so with recency-ordered input the
+ * most recently used project leads and each bucket stays recency-ordered.
+ */
+export function bucketSidebarActiveThreads<T>(input: {
+  readonly threads: readonly T[];
+  readonly groupKeyOf: (thread: T) => string;
+  readonly needsAttention: (thread: T) => boolean;
+}): { readonly attention: readonly T[]; readonly buckets: readonly SidebarProjectBucket<T>[] } {
+  const attention: T[] = [];
+  const buckets = new Map<string, T[]>();
+  for (const thread of input.threads) {
+    if (input.needsAttention(thread)) {
+      attention.push(thread);
+      continue;
+    }
+    const groupKey = input.groupKeyOf(thread);
+    const bucket = buckets.get(groupKey);
+    if (bucket) bucket.push(thread);
+    else buckets.set(groupKey, [thread]);
+  }
+  return {
+    attention,
+    buckets: Array.from(buckets, ([groupKey, threads]) => ({ groupKey, threads })),
+  };
 }
 
 export function firstValidTimestampMs(

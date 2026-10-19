@@ -60,6 +60,11 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  bucketSidebarActiveThreads,
+  isSidebarAttentionStatus,
+  sidebarProjectGroupKey,
+  sidebarProjectGroupMarker,
+  type SidebarThreadStatus,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
@@ -2415,6 +2420,73 @@ describe("Working shelf (beta)", () => {
         unsettle: false,
         unsnooze: false,
       });
+    });
+  });
+});
+
+describe("bucketSidebarActiveThreads", () => {
+  type Row = { id: string; project: string; status: SidebarThreadStatus };
+  const bucket = (threads: Row[]) =>
+    bucketSidebarActiveThreads({
+      threads,
+      groupKeyOf: (thread) => thread.project,
+      needsAttention: (thread) => isSidebarAttentionStatus(thread.status),
+    });
+
+  it("orders projects by their most recent thread and keeps thread order inside each", () => {
+    const result = bucket([
+      { id: "a1", project: "a", status: "ready" },
+      { id: "b1", project: "b", status: "ready" },
+      { id: "a2", project: "a", status: "ready" },
+    ]);
+    expect(result.buckets.map((group) => [group.groupKey, group.threads.map((t) => t.id)])).toEqual(
+      [
+        ["a", ["a1", "a2"]],
+        ["b", ["b1"]],
+      ],
+    );
+  });
+
+  it("lifts threads that need the user out of their project", () => {
+    const result = bucket([
+      { id: "a1", project: "a", status: "ready" },
+      { id: "b1", project: "b", status: "input" },
+      { id: "b2", project: "b", status: "failed" },
+      { id: "c1", project: "c", status: "approval" },
+    ]);
+    expect(result.attention.map((thread) => thread.id)).toEqual(["b1", "b2", "c1"]);
+    expect(result.buckets.map((group) => group.groupKey)).toEqual(["a"]);
+  });
+
+  it("treats usage limits as needing attention but not waiting or working threads", () => {
+    expect(isSidebarAttentionStatus("limited")).toBe(true);
+    expect(isSidebarAttentionStatus("waiting")).toBe(false);
+    expect(isSidebarAttentionStatus("working")).toBe(false);
+  });
+});
+
+describe("sidebar project group markers", () => {
+  it("round-trips group keys that contain separators", () => {
+    const marker = sidebarProjectGroupMarker("env:project:with:colons");
+    expect(sidebarProjectGroupKey(marker)).toBe("env:project:with:colons");
+    expect(sidebarProjectGroupKey("settled-header")).toBeNull();
+  });
+
+  it("keeps rows under group headers in the Active drop section", () => {
+    const items: SidebarListItem[] = [
+      { kind: "marker", marker: "pinned-header" },
+      { kind: "marker", marker: "pinned-divider" },
+      { kind: "marker", marker: "active-placeholder" },
+      { kind: "marker", marker: sidebarProjectGroupMarker("a") },
+      { kind: "thread", key: "a1", section: "active" },
+      { kind: "marker", marker: sidebarProjectGroupMarker("b") },
+      { kind: "thread", key: "b1", section: "active" },
+      { kind: "marker", marker: "settled-header" },
+      { kind: "marker", marker: "settled-placeholder" },
+    ];
+    expect(resolveSidebarDropTarget(items, "b1", "a1")).toMatchObject({
+      section: "active",
+      activeOrder: ["b1", "a1"],
     });
   });
 });

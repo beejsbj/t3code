@@ -112,17 +112,21 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
-### Fold working threads (beta)
+### Working section and project groups
 
-Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →
-Thread behavior → Working section** on iOS and Android, to move threads that are working or
-monitoring into a collapsed **Working** section below the active list. A thread returns to the top
-of the active list when it finishes, fails, or needs an approval or answer. The Working section
-lists the thread you last sent work to first. Pinned threads stay in the pinned section. Each
-device keeps its own choice.
+**Settings → General → Working section** is on by default on web and desktop. It moves threads
+that are working or monitoring into a collapsed **Working** section below the active list, one
+line each with a status light and elapsed time. A thread returns to the active list when it
+finishes, fails, or needs an approval or answer. Pinned threads stay in the pinned section. Each
+device keeps its own choice; on iOS and Android it is **Settings → Thread behavior → Working
+section**.
 
-While this is on, the active list is ordered by when each thread last came back to you, so you
-cannot drag or move threads within it. Your saved order returns when you turn it off.
+While this is on, the active list is ordered by recent activity and grouped by project, with the
+most recently used project first. Click a project header to collapse it; the open thread stays
+visible. Threads waiting on an answer, an approval, or a failure collect under **Needs you** at
+the top, so a collapsed project never hides them. Filtering the sidebar to one project shows a
+flat list. You cannot drag threads within the active list; turn the setting off to return to your
+saved order.
 
 ## Settle finished work
 
