@@ -135,21 +135,9 @@ workflow lanes. Choosing a lane updates only that scoped environment and thread 
 client. Choosing Triage clears any explicit workflow override. These local commands are not
 registered by the React Native app while it has no dedicated board.
 
-## Use Board Commands From An Agent Or Shell
+## Use Board Commands From A Shell
 
-The board skill is opt-in. Install it in a project, then start a new provider session so the provider
-can discover the ordinary project-local skill:
-
-```bash
-t3 board skill install --directory /path/to/project
-```
-
-After an explicit request, an agent can run `t3-board lanes`, `t3-board lane`, or
-`t3-board move <lane>`. This dedicated agent command leaves any globally installed `t3` CLI alone.
-Those commands apply only to the current thread on the client that started
-the turn. If that client is unavailable, the command fails instead of choosing another client.
-
-For manual use from a shell, first list the board-capable windows connected to that T3 server:
+First list the board-capable windows connected to that T3 server:
 
 ```bash
 t3 board clients
@@ -159,5 +147,4 @@ t3 board move <lane> --client <client-id> --thread <thread-id>
 ```
 
 Client IDs identify one browser tab or desktop renderer for its current lifetime. Run
-`t3 board clients` again after reloading that window. Manual targeting is unavailable inside an
-agent process, which remains restricted to its originating client and current thread.
+`t3 board clients` again after reloading that window.

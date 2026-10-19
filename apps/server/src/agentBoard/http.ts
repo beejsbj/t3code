@@ -7,7 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -42,13 +42,13 @@ export const layer = Layer.unwrap(
             ? authorization.slice("Bearer ".length).trim()
             : "";
           const scope = yield* registry.resolve(token);
-          if (!scope || !scope.capabilities.has("board")) {
+          if (!scope?.thread || !scope.capabilities.has("board")) {
             return jsonError(401, "A valid provider-scoped board credential is required.");
           }
           const raw = yield* request.json.pipe(Effect.orElseSucceed(() => undefined));
           const command = yield* decodeAgentBoardCommand(raw).pipe(Effect.option);
           if (command._tag === "None") return jsonError(400, "Invalid board command.");
-          return yield* broker.invoke(scope.threadId, command.value).pipe(
+          return yield* broker.invoke(scope.thread.threadId, command.value).pipe(
             Effect.map((result) =>
               HttpServerResponse.jsonUnsafe(result, {
                 headers: { "cache-control": "no-store" },

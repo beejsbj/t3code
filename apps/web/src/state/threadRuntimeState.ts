@@ -1,6 +1,6 @@
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
-import { isLatestTurnSettled } from "../session-logic";
+import { isLatestRunSettled } from "../session-logic";
 
 export type ThreadRuntimeState =
   | "approval"
@@ -13,35 +13,41 @@ export type ThreadRuntimeState =
   | "idle";
 
 export type ThreadRuntimeStateInput = Pick<
-  OrchestrationThreadShell,
-  "hasPendingApprovals" | "hasPendingUserInput" | "session"
+  EnvironmentThreadShell,
+  "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
 > &
   Partial<
     Pick<
-      OrchestrationThreadShell,
-      "backgroundLiveness" | "hasActionableProposedPlan" | "interactionMode" | "latestTurn"
+      EnvironmentThreadShell,
+      "pendingSubagentRequest" | "hasActionableProposedPlan" | "interactionMode" | "latestRun"
     >
   >;
 
 /** Canonical precedence for native thread runtime state. */
 export function resolveThreadRuntimeState(thread: ThreadRuntimeStateInput): ThreadRuntimeState {
-  if (thread.hasPendingApprovals) return "approval";
-  if (thread.hasPendingUserInput) return "input";
+  if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
+    return "approval";
+  }
+  if (thread.hasPendingUserInput || thread.pendingSubagentRequest === "user_input") {
+    return "input";
+  }
 
-  if (thread.session?.status === "running") return "working";
-  if (thread.session?.status === "starting") return "connecting";
-  if (thread.session?.status === "error") return "failed";
+  const status = thread.runtime?.status;
+  if (status === "preparing" || status === "starting") return "connecting";
+  if (status === "queued" || status === "running" || status === "waiting") return "working";
+  if (status === "failed") return "failed";
 
   if (
     thread.interactionMode === "plan" &&
-    isLatestTurnSettled(thread.latestTurn ?? null, thread.session) &&
+    isLatestRunSettled(thread.latestRun ?? null, thread.runtime) &&
     thread.hasActionableProposedPlan
   ) {
     return "plan-ready";
   }
 
-  if (thread.backgroundLiveness === "working") return "working";
-  if (thread.backgroundLiveness === "monitoring") return "monitoring";
+  // An idle runtime is parked on background work (watch loops, dev servers)
+  // that can still wake the agent.
+  if (status === "idle") return "monitoring";
 
   return "idle";
 }

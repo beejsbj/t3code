@@ -1,6 +1,7 @@
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
-
-import { resolveThreadRuntimeState } from "../state/threadRuntimeState.ts";
+import {
+  resolveThreadRuntimeState,
+  type ThreadRuntimeStateInput,
+} from "../state/threadRuntimeState.ts";
 
 export type BoardStateId = "draft" | "approval" | "input" | "failed" | "working" | "idle";
 
@@ -36,7 +37,7 @@ export type BoardThreadLifecycle = "visible" | "archived" | "snoozed" | "settled
  * acknowledged turns both rest in Idle.
  */
 export function resolveBoardThreadState(
-  thread: OrchestrationThreadShell,
+  thread: ThreadRuntimeStateInput,
   lifecycle: BoardThreadLifecycle,
 ): BoardStateId | null {
   if (lifecycle !== "visible") return null;

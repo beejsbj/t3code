@@ -47,6 +47,8 @@ export function resolveBoardDraftPreview(
   // max rather than sum to avoid counting the same image twice.
   const attachmentCount =
     Math.max(draft.images.length, draft.persistedAttachments.length) +
+    draft.files.length +
+    draft.threadContexts.length +
     draft.terminalContexts.length +
     draft.previewAnnotations.length +
     draft.reviewComments.length;

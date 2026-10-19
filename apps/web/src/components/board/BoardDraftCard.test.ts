@@ -13,6 +13,7 @@ function draft(overrides: Partial<ComposerThreadDraftState> = {}): ComposerThrea
     terminalContexts: [],
     previewAnnotations: [],
     reviewComments: [],
+    threadContexts: [],
     modelSelectionByProvider: {},
     activeProvider: null,
     runtimeMode: null,

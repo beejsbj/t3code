@@ -102,7 +102,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import {
   useProjects,
   useServerConfigs,
-  useThreadDetail,
+  useThreadShell,
   useThreadShells,
 } from "../../state/entities.ts";
 import type { SidebarThreadSummary } from "../../types.ts";
@@ -231,7 +231,7 @@ function resolveFlatAttention(
   const { boardStateId, createdAt, thread } = entry;
   if (thread === undefined) return { attentionState: "draft", attentionAt: createdAt };
 
-  const activityAt = thread.session?.updatedAt ?? thread.updatedAt ?? createdAt;
+  const activityAt = thread.runtime?.updatedAt ?? thread.updatedAt ?? createdAt;
   const wokeAt = threadWokeAt(thread, { now });
   const lastVisitedAtMs = lastVisitedAt === undefined ? Number.NaN : Date.parse(lastVisitedAt);
   const isWoke =
@@ -249,7 +249,7 @@ function resolveFlatAttention(
       attentionState === "woke"
         ? (wokeAt ?? activityAt)
         : attentionState === "done"
-          ? (thread.latestTurn?.completedAt ?? activityAt)
+          ? (thread.latestRun?.completedAt ?? activityAt)
           : activityAt,
   };
 }
@@ -1542,7 +1542,7 @@ function BoardDraftPromotionReconciler(props: {
   readonly draftId: DraftId;
   readonly threadRef: ScopedThreadRef;
 }) {
-  const thread = useThreadDetail(props.threadRef);
+  const thread = useThreadShell(props.threadRef);
   const expandedTarget = useBoardFocusStore((state) => state.expandedTarget);
   const setExpandedTarget = useBoardFocusStore((state) => state.setExpanded);
 

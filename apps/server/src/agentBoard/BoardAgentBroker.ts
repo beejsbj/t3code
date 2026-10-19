@@ -299,7 +299,7 @@ export const make = Effect.gen(function* () {
     unavailableMessage: string,
   ) {
     const deferred = yield* Deferred.make<AgentBoardResult, AgentBoardError>();
-    const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     // Leave time for the receipt to cross the socket before the broker's
     // 15-second response timeout.
     const expiresAtMs = (yield* Clock.currentTimeMillis) + REQUEST_EXECUTION_WINDOW_MS;

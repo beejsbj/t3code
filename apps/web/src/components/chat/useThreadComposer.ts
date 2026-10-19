@@ -1,55 +1,46 @@
 import {
-  type ApprovalRequestId,
+  AuthOrchestrationOperateScope,
   type MessageId,
   type ModelSelection,
   type OrchestrationMessageContext,
-  type OrchestrationThreadActivity,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type ProviderInteractionMode,
   type PreviewAnnotationPayload,
   type RuntimeMode,
+  type RuntimeRequestId,
   type ScopedThreadRef,
   type ServerProvider,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import { projectScriptCwd } from "@t3tools/shared/projectScripts";
-import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import {
-  derivePendingRequests,
-  type PendingApproval,
-  type PendingUserInput,
-} from "@t3tools/client-runtime/pending-requests";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import { useAtomValue } from "@effect/atom-react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 
-import { derivePhase } from "../../session-logic.ts";
+import { deriveCanInterruptRunningThread, derivePhase } from "../../session-logic.ts";
 import { useEnvironmentSettings } from "../../hooks/useSettings.ts";
 import { newMessageId } from "../../lib/utils.ts";
 import { primaryServerKeybindingsAtom } from "../../state/server.ts";
 import { useProject, useServerConfigs } from "../../state/entities.ts";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { useEnvironmentScope } from "../../state/session.ts";
 import { threadEnvironment } from "../../state/threads.ts";
 import { useAtomCommand } from "../../state/use-atom-command.ts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
-  type SessionPhase,
-  type SidebarThreadSummary,
   type ChatMessage,
-  type Thread,
+  type SidebarThreadSummary,
 } from "../../types.ts";
-import { isImageAttachment } from "../../types.ts";
 import {
   deriveLockedProvider,
-  buildThreadTurnInterruptInput,
   cloneComposerImageForRetry,
-  collectUserMessageBlobPreviewUrls,
   getStartedThreadModelChangeBlockReason,
   readFileAsDataUrl,
   revokeBlobPreviewUrl,
@@ -63,39 +54,28 @@ import {
   type ComposerImageAttachment,
   type ComposerThreadDraftState,
 } from "../../composerDraftStore.ts";
-import { useAssetUrls } from "../../assets/assetUrls.ts";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection.ts";
 import { type TerminalContextDraft } from "../../lib/terminalContext.ts";
 import { type ReviewCommentContext } from "../../reviewCommentContext.ts";
 import { buildMessageContext, terminalContextReference } from "../../lib/composerContextRecords.ts";
 import { removeInlineContextReference } from "../../lib/composerContextReferences.ts";
-import type { ChatComposerProps } from "./ChatComposer.tsx";
+import type { ChatComposerHandle, ChatComposerProps } from "./ChatComposer.tsx";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview.tsx";
 import { toastManager } from "../ui/toast.tsx";
 
-// Hoisted so `thread?.activities ?? []` doesn't allocate a fresh array (and
-// bust the memos keyed on it) on every render when a thread has no activities.
-const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
+// The board composer never surfaces inline approvals or user-input prompts
+// (the card shows an attention strip that opens the full session instead), so
+// these are always empty. Hoisted so ChatComposer's memo sees stable values.
 const EMPTY_PENDING_USER_INPUT_DRAFT_ANSWERS = {} as const;
-
-// Board composer never surfaces inline approvals/user-input prompts (that UI
-// lives on the route only), so these are always-empty by construction. Hoisted
-// so `ChatComposer`'s `memo` sees a stable reference for them across renders.
-const EMPTY_PENDING_APPROVALS: PendingApproval[] = [];
-const EMPTY_PENDING_USER_INPUTS: PendingUserInput[] = [];
-const EMPTY_RESPONDING_REQUEST_IDS: ApprovalRequestId[] = [];
-const EMPTY_PROVIDER_STATUSES: ServerProvider[] = [];
-const EMPTY_CHAT_MESSAGES: ReadonlyArray<ChatMessage> = [];
+const EMPTY_PENDING_APPROVALS: ChatComposerProps["pendingApprovals"] = [];
+const EMPTY_PENDING_USER_INPUTS: ChatComposerProps["pendingUserInputs"] = [];
+const EMPTY_RESPONDING_REQUEST_IDS: RuntimeRequestId[] = [];
 const EMPTY_COMPOSER_BANNER_ITEMS = [] as const;
-// Shared no-op for the handful of board composer callbacks that are inert
-// (plan sidebar, focus scheduling, etc. don't apply to embedded cards). A
-// zero-arg function is structurally assignable to every callback prop type
-// below regardless of its arity, so one constant covers all of them.
+const EMPTY_PROMPT_HISTORY: ReadonlyArray<ChatMessage> = [];
+// Inert callbacks for composer features that only the full session view owns.
 const NOOP = () => {};
 const NO_TIMELINE_SCROLLABLE_NODE = () => null;
 const TIMELINE_IS_AT_LOGICAL_END = () => true;
-
-export type ThreadComposerSurface = "route" | "board";
 
 export function resolveBoardComposerSubmission(input: {
   readonly prompt: string;
@@ -144,41 +124,6 @@ export function boardComposerDraftCanBeRestored(
   );
 }
 
-export function mergeBoardTimelineMessages(
-  serverMessages: ReadonlyArray<ChatMessage>,
-  optimisticUserMessages: ReadonlyArray<ChatMessage>,
-  attachmentPreviewHandoffByMessageId: Readonly<Record<string, ReadonlyArray<string>>>,
-): ReadonlyArray<ChatMessage> {
-  const serverMessagesWithPreviewHandoff = serverMessages.map((message) => {
-    const handoffPreviewUrls = attachmentPreviewHandoffByMessageId[message.id];
-    if (
-      message.role !== "user" ||
-      !handoffPreviewUrls ||
-      !message.attachments ||
-      message.attachments.length === 0
-    ) {
-      return message;
-    }
-    let imageIndex = 0;
-    let changed = false;
-    const attachments = message.attachments.map((attachment) => {
-      if (!isImageAttachment(attachment)) return attachment;
-      const previewUrl = handoffPreviewUrls[imageIndex];
-      imageIndex += 1;
-      if (!previewUrl || attachment.previewUrl === previewUrl) return attachment;
-      changed = true;
-      return { ...attachment, previewUrl };
-    });
-    return changed ? { ...message, attachments } : message;
-  });
-  if (optimisticUserMessages.length === 0) return serverMessagesWithPreviewHandoff;
-  const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
-  const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
-  return pendingMessages.length === 0
-    ? serverMessagesWithPreviewHandoff
-    : [...serverMessagesWithPreviewHandoff, ...pendingMessages];
-}
-
 export function canBeginBoardComposerSend(
   connection: EnvironmentConnectionPresentation,
   sendInFlight: boolean,
@@ -196,62 +141,51 @@ export function resolveBoardComposerModelSelection(
   return (draft.activeProvider && draft.modelSelectionByProvider[draft.activeProvider]) || fallback;
 }
 
-export function useThreadComposerRouteState(thread: Thread | null | undefined) {
-  const threadActivities = thread?.activities ?? EMPTY_ACTIVITIES;
-  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
-    () => derivePendingRequests(threadActivities),
-    [threadActivities],
-  );
-  const phase = derivePhase(thread?.session ?? null);
-  return {
-    pendingApprovals,
-    pendingUserInputs,
-    phase,
-    activePendingApproval: pendingApprovals[0] ?? null,
-    activePendingUserInput: pendingUserInputs[0] ?? null,
-  };
-}
-
 export type UseBoardThreadComposerInput = {
   readonly threadRef: ScopedThreadRef;
-  readonly thread: Thread | null | undefined;
   readonly summary: SidebarThreadSummary;
   readonly environmentLabel: string;
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly resolvedTheme: "light" | "dark";
+  readonly providerStatuses: ReadonlyArray<ServerProvider>;
+  /** User messages the server already has; their optimistic rows retire. */
+  readonly serverAcknowledgedUserMessageIds: ReadonlySet<MessageId>;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
 };
 
+/**
+ * The compact composer behind each live board card: a plain follow-up sender
+ * for an existing thread. Approvals, questions, plans, and the other
+ * session-level controls stay in the full session view.
+ */
 export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const {
     threadRef,
-    thread,
     summary,
     environmentLabel,
     environmentConnection,
     resolvedTheme,
+    serverAcknowledgedUserMessageIds,
     onExpandImage,
   } = input;
+  const providerStatuses = input.providerStatuses as ServerProvider[];
   const navigate = useNavigate();
   const environmentId = threadRef.environmentId;
+  const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const settings = useEnvironmentSettings(environmentId);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const serverConfigs = useServerConfigs();
-  const environmentConfig = serverConfigs.get(environmentId);
+  const environmentConfig = useServerConfigs().get(environmentId);
 
-  const composerRef = useRef<import("./ChatComposer.tsx").ChatComposerHandle | null>(null);
+  const composerRef = useRef<ChatComposerHandle | null>(null);
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
-  // Board composer doesn't support inline terminal context chips, so
-  // these start empty; typed explicitly rather than inferred as `never[]` to
-  // match what ChatComposerProps expects. Each card gets its own array — a
-  // ref is a mutable cell, so seeding several from one shared array would let
-  // a future in-place write leak across every card on the board.
+  // Each card gets its own array: a ref is a mutable cell, so seeding several
+  // from one shared array would let an in-place write leak across cards.
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
-  const focusComposer = useCallback(() => {
+  const focusComposer = () => {
     composerRef.current?.focusAtEnd();
-  }, []);
+  };
 
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
@@ -270,11 +204,6 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     reportFailure: false,
   });
 
-  const providerStatuses = useMemo<ServerProvider[]>(
-    () => [...(serverConfigs.get(environmentId)?.providers ?? EMPTY_PROVIDER_STATUSES)],
-    [environmentId, serverConfigs],
-  );
-
   const project = useProject(scopeProjectRef(summary.environmentId, summary.projectId));
   const gitCwd = project
     ? projectScriptCwd({
@@ -284,162 +213,33 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     : null;
 
   const lockedProvider = deriveLockedProvider({
-    thread,
+    thread: summary,
     selectedProvider: null,
     threadProvider: summary.modelSelection.instanceId,
     providers: providerStatuses,
   });
 
-  const phase: SessionPhase = derivePhase(summary.session ?? null);
+  const phase = derivePhase(summary.runtime);
   const isConnecting = phase === "connecting";
+  const canInterrupt = canOperateThread && deriveCanInterruptRunningThread(true, summary.runtime);
   const sendInFlightRef = useRef(false);
   const [isSendBusy, setIsSendBusy] = useState(false);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
-  optimisticUserMessagesRef.current = optimisticUserMessages;
-  const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
-    Record<string, ReadonlyArray<string>>
-  >({});
-  const attachmentPreviewHandoffByMessageIdRef = useRef(attachmentPreviewHandoffByMessageId);
-  attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
+  useEffect(() => {
+    optimisticUserMessagesRef.current = optimisticUserMessages;
+  }, [optimisticUserMessages]);
+  // Rows the server already has are hidden at once and pruned on the next send.
+  const pendingOptimisticUserMessages = optimisticUserMessages.filter(
+    (message) => !serverAcknowledgedUserMessageIds.has(message.id),
+  );
   const [timelineAnchorMessageId, setTimelineAnchorMessageId] = useState<MessageId | null>(null);
-  const clearTimelineAnchor = useCallback(() => setTimelineAnchorMessageId(null), []);
-
-  const serverMessages = thread?.messages ?? EMPTY_CHAT_MESSAGES;
-  const serverAttachmentIds = useMemo(() => {
-    const attachmentIds = new Set<string>();
-    for (const message of serverMessages) {
-      for (const attachment of message.attachments ?? []) {
-        attachmentIds.add(attachment.id);
-      }
-    }
-    return [...attachmentIds];
-  }, [serverMessages]);
-  const serverAttachmentResources = useMemo(
-    () =>
-      serverAttachmentIds.map((attachmentId) => ({
-        _tag: "attachment" as const,
-        attachmentId,
-      })),
-    [serverAttachmentIds],
-  );
-  const serverAttachmentUrls = useAssetUrls(environmentId, serverAttachmentResources);
-  const serverAttachmentUrlById = useMemo(
-    () =>
-      new Map(
-        serverAttachmentIds.flatMap((attachmentId, index) => {
-          const url = serverAttachmentUrls[index];
-          return url ? [[attachmentId, url] as const] : [];
-        }),
-      ),
-    [serverAttachmentIds, serverAttachmentUrls],
-  );
-  const displayServerMessages = useMemo<ReadonlyArray<ChatMessage>>(
-    () =>
-      serverMessages.map((message) => {
-        if (!message.attachments || message.attachments.length === 0) return message;
-        return {
-          ...message,
-          attachments: message.attachments.map((attachment) => {
-            const previewUrl = serverAttachmentUrlById.get(attachment.id);
-            return previewUrl ? { ...attachment, previewUrl } : attachment;
-          }),
-        };
-      }),
-    [serverAttachmentUrlById, serverMessages],
-  );
-
-  const timelineMessages = useMemo(
-    () =>
-      mergeBoardTimelineMessages(
-        displayServerMessages,
-        optimisticUserMessages,
-        attachmentPreviewHandoffByMessageId,
-      ),
-    [attachmentPreviewHandoffByMessageId, displayServerMessages, optimisticUserMessages],
-  );
-
-  useEffect(() => {
-    const serverIds = new Set(serverMessages.map((message) => message.id));
-    if (serverIds.size === 0) return;
-    const projectedMessages = optimisticUserMessages.filter((message) => serverIds.has(message.id));
-    if (projectedMessages.length === 0) return;
-    setAttachmentPreviewHandoffByMessageId((existing) => {
-      const additions: Record<string, ReadonlyArray<string>> = {};
-      for (const message of projectedMessages) {
-        const previewUrls = collectUserMessageBlobPreviewUrls(message);
-        if (previewUrls.length === 0) {
-          revokeUserMessagePreviewUrls(message);
-          continue;
-        }
-        additions[message.id] = previewUrls;
-      }
-      return Object.keys(additions).length === 0 ? existing : { ...existing, ...additions };
-    });
-    setOptimisticUserMessages((existing) =>
-      existing.filter((message) => !serverIds.has(message.id)),
-    );
-  }, [optimisticUserMessages, serverMessages]);
-
-  useEffect(() => {
-    if (typeof Image === "undefined") return;
-    const cleanups: Array<() => void> = [];
-    for (const [messageId, handoffPreviewUrls] of Object.entries(
-      attachmentPreviewHandoffByMessageId,
-    )) {
-      const serverMessage = displayServerMessages.find((message) => message.id === messageId);
-      const serverPreviewUrls = (serverMessage?.attachments ?? []).flatMap((attachment) =>
-        isImageAttachment(attachment) && attachment.previewUrl ? [attachment.previewUrl] : [],
-      );
-      if (
-        serverPreviewUrls.length !== handoffPreviewUrls.length ||
-        serverPreviewUrls.some((previewUrl) => previewUrl.startsWith("blob:"))
-      ) {
-        continue;
-      }
-      let cancelled = false;
-      const images: HTMLImageElement[] = [];
-      void Promise.all(
-        serverPreviewUrls.map(
-          (previewUrl) =>
-            new Promise<void>((resolve, reject) => {
-              const image = new Image();
-              images.push(image);
-              image.addEventListener("load", () => resolve(), { once: true });
-              image.addEventListener("error", () => reject(), { once: true });
-              image.src = previewUrl;
-            }),
-        ),
-      ).then(
-        () => {
-          if (cancelled) return;
-          setAttachmentPreviewHandoffByMessageId((existing) => {
-            if (!(messageId in existing)) return existing;
-            const next = { ...existing };
-            delete next[messageId];
-            return next;
-          });
-          for (const previewUrl of handoffPreviewUrls) revokeBlobPreviewUrl(previewUrl);
-        },
-        () => {},
-      );
-      cleanups.push(() => {
-        cancelled = true;
-        for (const image of images) image.src = "";
-      });
-    }
-    return () => {
-      for (const cleanup of cleanups) cleanup();
-    };
-  }, [attachmentPreviewHandoffByMessageId, displayServerMessages]);
+  const clearTimelineAnchor = () => setTimelineAnchorMessageId(null);
 
   useEffect(
     () => () => {
       for (const message of optimisticUserMessagesRef.current) {
         revokeUserMessagePreviewUrls(message);
-      }
-      for (const previewUrls of Object.values(attachmentPreviewHandoffByMessageIdRef.current)) {
-        for (const previewUrl of previewUrls) revokeBlobPreviewUrl(previewUrl);
       }
     },
     [],
@@ -447,517 +247,437 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
 
   const runtimeMode = summary.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode = summary.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const hasStartedSession = summary.runtime !== null;
+  const currentProviderInstanceId = summary.runtime?.providerInstanceId ?? null;
 
-  const onSend = useCallback(
-    async (event?: { preventDefault: () => void }) => {
-      event?.preventDefault();
-      if (!canBeginBoardComposerSend(environmentConnection, sendInFlightRef.current)) return;
+  const onSend = async (event?: { preventDefault: () => void }) => {
+    event?.preventDefault();
+    if (!canBeginBoardComposerSend(environmentConnection, sendInFlightRef.current)) return;
 
-      sendInFlightRef.current = true;
-      setIsSendBusy(true);
-      let optimisticMessageId: MessageId | null = null;
-      let sentDraft: {
-        readonly prompt: string;
-        readonly images: ComposerImageAttachment[];
-        readonly terminalContexts: TerminalContextDraft[];
-        readonly previewAnnotations: PreviewAnnotationPayload[];
-        readonly reviewComments: ReviewCommentContext[];
-      } | null = null;
-      let sendSucceeded = false;
-      let sendError: unknown = null;
-      try {
-        const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
-        if (!draft) return;
-        const sendState = deriveComposerSendState({
-          prompt: draft.prompt,
-          imageCount: draft.images.length,
-          terminalContexts: draft.terminalContexts,
-          elementContextCount: draft.previewAnnotations.length + draft.reviewComments.length,
-        });
-        if (!sendState.hasSendableContent) return;
-        const messageText = draft.terminalContexts
-          .filter((context) => !sendState.sendableTerminalContexts.includes(context))
-          .reduce(
-            (text, context) =>
-              removeInlineContextReference(text, terminalContextReference(context).contextId)
-                .prompt,
-            draft.prompt,
-          )
-          .trim();
-        const messageContext = buildMessageContext({
-          terminalContexts: sendState.sendableTerminalContexts,
-          previewAnnotations: draft.previewAnnotations,
-          reviewComments: draft.reviewComments,
-          attachments: draft.images.map((attachment) => ({
-            attachment,
-            attachmentId: attachment.id,
-          })),
-        });
-        const outgoingMessage = buildBoardComposerMessageFields({
-          text: messageText,
-          context: messageContext,
-          supportsInlineMessageContext:
-            environmentConfig?.environment.capabilities.inlineMessageContext === true,
-        });
-        const requestedModelSelection = resolveBoardComposerModelSelection(
-          draft,
-          summary.modelSelection,
-        );
-        const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
-          providers: providerStatuses,
-          hasStartedSession: summary.session !== null,
-          currentModelSelection: summary.modelSelection,
-          currentProviderInstanceId: summary.session?.providerInstanceId ?? null,
-          nextModelSelection: requestedModelSelection,
-        });
-        const modelSelection = modelChangeBlockReason
-          ? summary.modelSelection
-          : requestedModelSelection;
-        const messageId = newMessageId();
-        const createdAt = new Date().toISOString();
-        const optimisticAttachments = draft.images.map((image) => ({
-          type: "image" as const,
-          id: image.id,
-          name: image.name,
-          mimeType: image.mimeType,
-          sizeBytes: image.sizeBytes,
-          previewUrl: image.previewUrl,
-        }));
-        optimisticMessageId = messageId;
-        sentDraft = {
-          prompt: draft.prompt,
-          images: [...draft.images],
-          terminalContexts: [...draft.terminalContexts],
-          previewAnnotations: [...draft.previewAnnotations],
-          reviewComments: [...draft.reviewComments],
-        };
-        setTimelineAnchorMessageId(messageId);
-        setOptimisticUserMessages((existing) => [
-          ...existing,
-          {
-            id: messageId,
-            role: "user",
-            ...outgoingMessage,
-            ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-            turnId: null,
-            createdAt,
-            updatedAt: createdAt,
-            streaming: false,
-          },
-        ]);
-        promptRef.current = "";
-        composerImagesRef.current = [];
-        useComposerDraftStore.getState().clearComposerContent(threadRef);
-        composerRef.current?.resetCursorState();
+    sendInFlightRef.current = true;
+    setIsSendBusy(true);
+    let optimisticMessageId: MessageId | null = null;
+    let sentDraft: {
+      readonly prompt: string;
+      readonly images: ComposerImageAttachment[];
+      readonly terminalContexts: TerminalContextDraft[];
+      readonly previewAnnotations: PreviewAnnotationPayload[];
+      readonly reviewComments: ReviewCommentContext[];
+    } | null = null;
+    let sendSucceeded = false;
+    let sendError: unknown = null;
+    try {
+      const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+      if (!draft) return;
+      const sendState = deriveComposerSendState({
+        prompt: draft.prompt,
+        imageCount: draft.images.length,
+        terminalContexts: draft.terminalContexts,
+        elementContextCount: draft.previewAnnotations.length + draft.reviewComments.length,
+      });
+      if (!sendState.hasSendableContent) return;
+      const messageText = draft.terminalContexts
+        .filter((context) => !sendState.sendableTerminalContexts.includes(context))
+        .reduce(
+          (text, context) =>
+            removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
+          draft.prompt,
+        )
+        .trim();
+      const messageContext = buildMessageContext({
+        terminalContexts: sendState.sendableTerminalContexts,
+        previewAnnotations: draft.previewAnnotations,
+        reviewComments: draft.reviewComments,
+        attachments: draft.images.map((attachment) => ({
+          attachment,
+          attachmentId: attachment.id,
+        })),
+      });
+      const outgoingMessage = buildBoardComposerMessageFields({
+        text: messageText,
+        context: messageContext,
+        supportsInlineMessageContext:
+          environmentConfig?.environment.capabilities.inlineMessageContext === true,
+      });
+      const requestedModelSelection = resolveBoardComposerModelSelection(
+        draft,
+        summary.modelSelection,
+      );
+      const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
+        providers: providerStatuses,
+        hasStartedSession,
+        currentModelSelection: summary.modelSelection,
+        currentProviderInstanceId,
+        nextModelSelection: requestedModelSelection,
+      });
+      const modelSelection = modelChangeBlockReason
+        ? summary.modelSelection
+        : requestedModelSelection;
+      const messageId = newMessageId();
+      const createdAt = new Date().toISOString();
+      const optimisticAttachments = draft.images.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      }));
+      optimisticMessageId = messageId;
+      sentDraft = {
+        prompt: draft.prompt,
+        images: [...draft.images],
+        terminalContexts: [...draft.terminalContexts],
+        previewAnnotations: [...draft.previewAnnotations],
+        reviewComments: [...draft.reviewComments],
+      };
+      setTimelineAnchorMessageId(messageId);
+      for (const message of optimisticUserMessagesRef.current) {
+        if (serverAcknowledgedUserMessageIds.has(message.id)) revokeUserMessagePreviewUrls(message);
+      }
+      setOptimisticUserMessages((existing) => [
+        ...existing.filter((message) => !serverAcknowledgedUserMessageIds.has(message.id)),
+        {
+          id: messageId,
+          role: "user",
+          ...outgoingMessage,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          runId: null,
+          createdAt,
+          updatedAt: createdAt,
+          streaming: false,
+        },
+      ]);
+      promptRef.current = "";
+      composerImagesRef.current = [];
+      useComposerDraftStore.getState().clearComposerContent(threadRef);
+      composerRef.current?.resetCursorState();
 
-        const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
-          currentModelSelection: summary.modelSelection,
-          nextModelSelection: modelSelection,
-          currentBranch: summary.branch,
-        });
-        if (metadataUpdate !== null) {
-          const metadataResult = await updateThreadMetadata({
-            environmentId,
-            input: {
-              threadId: threadRef.threadId,
-              ...metadataUpdate,
-            },
-          });
-          if (metadataResult._tag === "Failure") {
-            if (!isAtomCommandInterrupted(metadataResult)) {
-              sendError = squashAtomCommandFailure(metadataResult);
-            }
-            return;
-          }
-        }
-        const attachments = await Promise.all(
-          draft.images.map(async (image) => ({
-            type: "image" as const,
-            name: image.name,
-            mimeType: image.mimeType,
-            sizeBytes: image.sizeBytes,
-            dataUrl: await readFileAsDataUrl(image.file),
-          })),
-        );
-        const result = await startThreadTurn({
-          environmentId: threadRef.environmentId,
+      const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: summary.modelSelection,
+        nextModelSelection: modelSelection,
+        currentBranch: summary.branch,
+      });
+      if (metadataUpdate !== null) {
+        const metadataResult = await updateThreadMetadata({
+          environmentId,
           input: {
             threadId: threadRef.threadId,
-            message: {
-              messageId,
-              role: "user",
-              ...outgoingMessage,
-              attachments,
-            },
-            modelSelection,
-            titleSeed: summary.title,
-            runtimeMode: summary.runtimeMode,
-            interactionMode: summary.interactionMode,
-            createdAt,
+            ...metadataUpdate,
           },
         });
-        if (result._tag === "Failure") {
-          if (!isAtomCommandInterrupted(result)) {
-            sendError = squashAtomCommandFailure(result);
+        if (metadataResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(metadataResult)) {
+            sendError = squashAtomCommandFailure(metadataResult);
           }
           return;
         }
-        sendSucceeded = true;
-      } catch (error) {
-        sendError = error;
-      } finally {
-        if (!sendSucceeded && optimisticMessageId !== null && sentDraft !== null) {
-          setOptimisticUserMessages((existing) =>
-            existing.filter((message) => message.id !== optimisticMessageId),
-          );
-          setTimelineAnchorMessageId((current) =>
-            current === optimisticMessageId ? null : current,
-          );
-
-          const currentDraft = useComposerDraftStore.getState().getComposerDraft(threadRef);
-          if (boardComposerDraftCanBeRestored(currentDraft)) {
-            const retryImages = sentDraft.images.map(cloneComposerImageForRetry);
-            for (const image of sentDraft.images) revokeBlobPreviewUrl(image.previewUrl);
-            promptRef.current = sentDraft.prompt;
-            composerImagesRef.current = retryImages;
-            composerTerminalContextsRef.current = sentDraft.terminalContexts;
-            const draftStore = useComposerDraftStore.getState();
-            draftStore.setPrompt(threadRef, sentDraft.prompt);
-            draftStore.addImages(threadRef, retryImages);
-            draftStore.setTerminalContexts(threadRef, sentDraft.terminalContexts);
-            draftStore.setPreviewAnnotations(threadRef, sentDraft.previewAnnotations);
-            draftStore.setReviewComments(threadRef, sentDraft.reviewComments);
-            composerRef.current?.resetCursorState({
-              prompt: sentDraft.prompt,
-              cursor: sentDraft.prompt.length,
-              detectTrigger: true,
-            });
-          } else {
-            for (const image of sentDraft.images) revokeBlobPreviewUrl(image.previewUrl);
-          }
-          if (sendError !== null) {
-            toastManager.add({
-              type: "error",
-              title: "Failed to send message",
-              description:
-                sendError instanceof Error ? sendError.message : "The message was restored.",
-            });
-          }
-        }
-        sendInFlightRef.current = false;
-        setIsSendBusy(false);
       }
-    },
-    [
-      environmentConnection.phase,
-      environmentId,
-      environmentConfig,
-      providerStatuses,
-      startThreadTurn,
-      summary,
-      threadRef,
-      updateThreadMetadata,
-    ],
-  );
+      const attachments = await Promise.all(
+        draft.images.map(async (image) => ({
+          type: "image" as const,
+          name: image.name,
+          mimeType: image.mimeType,
+          sizeBytes: image.sizeBytes,
+          dataUrl: await readFileAsDataUrl(image.file),
+        })),
+      );
+      const result = await startThreadTurn({
+        environmentId: threadRef.environmentId,
+        input: {
+          threadId: threadRef.threadId,
+          message: {
+            messageId,
+            role: "user",
+            ...outgoingMessage,
+            attachments,
+          },
+          modelSelection,
+          titleSeed: summary.title,
+          runtimeMode: summary.runtimeMode,
+          interactionMode: summary.interactionMode,
+          createdAt,
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          sendError = squashAtomCommandFailure(result);
+        }
+        return;
+      }
+      sendSucceeded = true;
+    } catch (error) {
+      sendError = error;
+    } finally {
+      if (!sendSucceeded && optimisticMessageId !== null && sentDraft !== null) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== optimisticMessageId),
+        );
+        setTimelineAnchorMessageId((current) => (current === optimisticMessageId ? null : current));
 
-  const onInterrupt = useCallback(async () => {
+        const currentDraft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+        if (boardComposerDraftCanBeRestored(currentDraft)) {
+          const retryImages = sentDraft.images.map(cloneComposerImageForRetry);
+          for (const image of sentDraft.images) revokeBlobPreviewUrl(image.previewUrl);
+          promptRef.current = sentDraft.prompt;
+          composerImagesRef.current = retryImages;
+          composerTerminalContextsRef.current = sentDraft.terminalContexts;
+          const draftStore = useComposerDraftStore.getState();
+          draftStore.setPrompt(threadRef, sentDraft.prompt);
+          draftStore.addImages(threadRef, retryImages);
+          draftStore.setTerminalContexts(threadRef, sentDraft.terminalContexts);
+          draftStore.setPreviewAnnotations(threadRef, sentDraft.previewAnnotations);
+          draftStore.setReviewComments(threadRef, sentDraft.reviewComments);
+          composerRef.current?.resetCursorState({
+            prompt: sentDraft.prompt,
+            cursor: sentDraft.prompt.length,
+            detectTrigger: true,
+          });
+        } else {
+          for (const image of sentDraft.images) revokeBlobPreviewUrl(image.previewUrl);
+        }
+        if (sendError !== null) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to send message",
+            description:
+              sendError instanceof Error ? sendError.message : "The message was restored.",
+          });
+        }
+      }
+      sendInFlightRef.current = false;
+      setIsSendBusy(false);
+    }
+  };
+
+  const onInterrupt = async () => {
     await interruptThreadTurn({
       environmentId,
-      input: buildThreadTurnInterruptInput(summary),
+      input: { threadId: threadRef.threadId },
     });
-  }, [environmentId, interruptThreadTurn, summary]);
+  };
 
-  const onRespondToApproval = useCallback(
-    async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
-      await respondToThreadApproval({
-        environmentId,
-        input: { threadId: threadRef.threadId, requestId, decision },
-      });
-    },
-    [environmentId, respondToThreadApproval, threadRef],
-  );
+  const onRespondToApproval = (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) =>
+    respondToThreadApproval({
+      environmentId,
+      input: { threadId: threadRef.threadId, requestId, decision },
+    });
 
   const setComposerDraftModelSelection = useComposerDraftStore((state) => state.setModelSelection);
-  const onProviderModelSelect = useCallback(
-    (instanceId: ProviderInstanceId, model: string) => {
-      const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
-      const resolvedDriverKind = entry?.driver ?? null;
+  const onProviderModelSelect = (instanceId: ProviderInstanceId, model: string) => {
+    const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
+    const resolvedDriverKind = entry?.driver ?? null;
+    if (
+      lockedProvider !== null &&
+      resolvedDriverKind !== null &&
+      resolvedDriverKind !== lockedProvider
+    ) {
+      focusComposer();
+      return;
+    }
+    if (lockedProvider !== null && currentProviderInstanceId) {
+      const currentEntry = providerStatuses.find(
+        (snapshot) => snapshot.instanceId === currentProviderInstanceId,
+      );
       if (
-        lockedProvider !== null &&
-        resolvedDriverKind !== null &&
-        resolvedDriverKind !== lockedProvider
+        currentEntry?.continuation?.groupKey &&
+        entry?.continuation?.groupKey &&
+        currentEntry.continuation.groupKey !== entry.continuation.groupKey
       ) {
         focusComposer();
         return;
       }
-      if (lockedProvider !== null && summary.session?.providerInstanceId) {
-        const currentEntry = providerStatuses.find(
-          (snapshot) => snapshot.instanceId === summary.session?.providerInstanceId,
-        );
-        if (
-          currentEntry?.continuation?.groupKey &&
-          entry?.continuation?.groupKey &&
-          currentEntry.continuation.groupKey !== entry.continuation.groupKey
-        ) {
-          focusComposer();
-          return;
-        }
-      }
-      const resolvedModel = resolveAppModelSelectionForInstance(
-        instanceId,
-        settings,
-        providerStatuses,
-        model,
-      );
-      if (!resolvedModel) {
-        focusComposer();
-        return;
-      }
-      const nextModelSelection: ModelSelection = { instanceId, model: resolvedModel };
-      const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
-        providers: providerStatuses,
-        hasStartedSession: summary.session !== null,
-        currentModelSelection: summary.modelSelection,
-        currentProviderInstanceId: summary.session?.providerInstanceId ?? null,
-        nextModelSelection,
-      });
-      if (modelChangeBlockReason) {
-        toastManager.add({
-          type: "warning",
-          title: modelChangeBlockReason.title,
-          description: modelChangeBlockReason.description,
-        });
-        focusComposer();
-        return;
-      }
-      setComposerDraftModelSelection(threadRef, nextModelSelection);
-      focusComposer();
-    },
-    [
-      focusComposer,
-      lockedProvider,
-      providerStatuses,
-      setComposerDraftModelSelection,
+    }
+    const resolvedModel = resolveAppModelSelectionForInstance(
+      instanceId,
       settings,
-      summary,
-      threadRef,
-    ],
-  );
-
-  const onOpenProviderSetup = useCallback(
-    (instanceId: ProviderInstanceId) => {
-      void navigate({
-        to: "/settings/providers",
-        search: { environmentId, instanceId },
+      providerStatuses,
+      model,
+    );
+    if (!resolvedModel) {
+      focusComposer();
+      return;
+    }
+    const nextModelSelection: ModelSelection = { instanceId, model: resolvedModel };
+    const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
+      providers: providerStatuses,
+      hasStartedSession,
+      currentModelSelection: summary.modelSelection,
+      currentProviderInstanceId,
+      nextModelSelection,
+    });
+    if (modelChangeBlockReason) {
+      toastManager.add({
+        type: "warning",
+        title: modelChangeBlockReason.title,
+        description: modelChangeBlockReason.description,
       });
-    },
-    [environmentId, navigate],
-  );
+      focusComposer();
+      return;
+    }
+    setComposerDraftModelSelection(threadRef, nextModelSelection);
+    focusComposer();
+  };
 
-  const getModelDisabledReason = useCallback(
-    (instanceId: ProviderInstanceId, model: string) => {
-      const reason = getStartedThreadModelChangeBlockReason({
-        providers: providerStatuses,
-        hasStartedSession: summary.session !== null,
-        currentModelSelection: summary.modelSelection,
-        currentProviderInstanceId: summary.session?.providerInstanceId ?? null,
-        nextModelSelection: { instanceId, model },
-      });
-      return reason ? `${reason.description} Start a new thread to use this model.` : null;
-    },
-    [providerStatuses, summary],
-  );
+  const onOpenProviderSetup = (instanceId: ProviderInstanceId) => {
+    void navigate({
+      to: "/settings/providers",
+      search: { environmentId, instanceId },
+    });
+  };
 
-  const toggleInteractionMode = useCallback(() => {
-    const next: ProviderInteractionMode =
-      interactionMode === "plan" ? DEFAULT_INTERACTION_MODE : "plan";
+  const getModelDisabledReason = (instanceId: ProviderInstanceId, model: string) => {
+    const reason = getStartedThreadModelChangeBlockReason({
+      providers: providerStatuses,
+      hasStartedSession,
+      currentModelSelection: summary.modelSelection,
+      currentProviderInstanceId,
+      nextModelSelection: { instanceId, model },
+    });
+    return reason ? `${reason.description} Start a new thread to use this model.` : null;
+  };
+
+  const handleInteractionModeChange = (mode: ProviderInteractionMode) => {
     void setThreadInteractionMode({
       environmentId,
-      input: { threadId: threadRef.threadId, interactionMode: next },
+      input: { threadId: threadRef.threadId, interactionMode: mode },
     });
-  }, [environmentId, interactionMode, setThreadInteractionMode, threadRef]);
+  };
+  const toggleInteractionMode = () =>
+    handleInteractionModeChange(interactionMode === "plan" ? DEFAULT_INTERACTION_MODE : "plan");
 
-  const handleRuntimeModeChange = useCallback(
-    (mode: RuntimeMode) => {
-      void setThreadRuntimeMode({
-        environmentId,
-        input: { threadId: threadRef.threadId, runtimeMode: mode },
-      });
-    },
-    [environmentId, setThreadRuntimeMode, threadRef],
-  );
-
-  const handleInteractionModeChange = useCallback(
-    (mode: ProviderInteractionMode) => {
-      void setThreadInteractionMode({
-        environmentId,
-        input: { threadId: threadRef.threadId, interactionMode: mode },
-      });
-    },
-    [environmentId, setThreadInteractionMode, threadRef],
-  );
-
-  // `ChatComposer` is wrapped in `React.memo`, and a board renders one live
-  // instance of it per card, so this object must not be rebuilt on every
-  // render — that would hand every field a fresh reference and defeat the
-  // memo for every card on every board tick. Deps list only values that can
-  // actually vary; the ~30 always-empty/no-op fields above are inlined here
-  // straight from module-level constants so recomputation (when it does
-  // happen) doesn't reallocate them either.
-  const chatComposerProps = useMemo<ChatComposerProps>(
-    () => ({
-      composerRef,
-      composerDraftTarget: threadRef,
+  const handleRuntimeModeChange = (mode: RuntimeMode) => {
+    void setThreadRuntimeMode({
       environmentId,
-      attachmentUploadsCapabilityKnown: environmentConfig !== undefined,
-      supportsAttachmentUploads:
-        environmentConfig?.environment.capabilities.attachmentUploads === true,
-      supportsQuestionAttachments: false,
-      // The embedded board sender currently serializes images directly. Keep
-      // generic files visible in retained drafts, but require the full thread
-      // route to send them instead of silently dropping them.
-      maxFileAttachmentBytes: null,
-      routeKind: "server",
-      routeThreadRef: threadRef,
-      draftId: null,
-      multipleModelSelections: null,
-      supportsMultipleModels: false,
-      onMultipleModelSelectionsChange: NOOP,
-      activeThreadId: summary.id,
-      activeThreadEnvironmentId: environmentId,
-      activeThread: thread ?? undefined,
-      activeThreadShell: null,
-      promptHistoryMessages: timelineMessages,
-      isServerThread: true,
-      isLocalDraftThread: false,
-      forceExpandedOnMobile: false,
-      projectSelectionRequired: false,
-      phase,
-      isConnecting,
-      isSendBusy,
-      // Board cards mount their own timeline rather than the route's thread
-      // detail, so there is no loading gate to report here.
-      sendDisabledReason: null,
-      isPreparingWorktree: false,
-      bannerItems: EMPTY_COMPOSER_BANNER_ITEMS,
-      environmentUnavailable:
-        environmentConnection.phase === "connected"
-          ? null
-          : { label: environmentLabel, connection: environmentConnection },
-      activePendingApproval: null,
-      pendingApprovals: EMPTY_PENDING_APPROVALS,
-      pendingUserInputs: EMPTY_PENDING_USER_INPUTS,
-      activePendingProgress: null,
-      activePendingResolvedAnswers: null,
-      activePendingIsResponding: false,
-      activePendingDraftAnswers: EMPTY_PENDING_USER_INPUT_DRAFT_ANSWERS,
-      activePendingQuestionIndex: 0,
-      respondingRequestIds: EMPTY_RESPONDING_REQUEST_IDS,
-      showPlanFollowUpPrompt: false,
-      activeProposedPlan: null,
-      activeTasksProgress: null,
-      activeTaskSteps: null,
-      threadSyncPhase: null,
-      runtimeMode,
-      interactionMode,
-      lockedProvider,
-      providerStatuses,
-      providerCatalogKnown: environmentConfig !== undefined,
-      activeProjectDefaultModelSelection: project?.defaultModelSelection,
-      activeThreadModelSelection: summary.modelSelection,
-      activeContextWindow: null,
-      compactThreadUnavailable: false,
-      compactDisabled: false,
-      compactDisabledReason: null,
-      resolvedTheme,
-      settings,
-      keybindings,
-      terminalOpen: false,
-      gitCwd,
-      pullRequestProjectId: null,
-      pullRequestRepository: null,
-      restingControlsHost: null,
-      restingControlsHaveLeadingContext: false,
-      onRestingControlsVisibilityChange: NOOP,
-      getTimelineScrollableNode: NO_TIMELINE_SCROLLABLE_NODE,
-      isTimelineAtLogicalEnd: TIMELINE_IS_AT_LOGICAL_END,
-      timelineOverflows: false,
-      onComposerOverlayHeightChange: NOOP,
-      onRestingChange: NOOP,
-      promptRef,
-      composerImagesRef,
-      composerFilesRef,
-      composerTerminalContextsRef,
-      onPageScrollKeyDown: NOOP,
-      onPageScrollKeyUp: NOOP,
-      onPageScrollRelease: NOOP,
-      onCompactContext: NOOP,
-      onSend,
-      onInterrupt,
-      onImplementPlanInNewThread: NOOP,
-      onRespondToApproval,
-      onSelectActivePendingUserInputOption: NOOP,
-      onAdvanceActivePendingUserInput: NOOP,
-      onDismissActivePendingUserInput: NOOP,
-      onPreviousActivePendingUserInputQuestion: NOOP,
-      onChangeActivePendingUserInputCustomAnswer: NOOP,
-      onProviderModelSelect,
-      onOpenProviderSetup,
-      getModelDisabledReason,
-      toggleInteractionMode,
-      handleRuntimeModeChange,
-      handleInteractionModeChange,
-      focusComposer,
-      scheduleComposerFocus: focusComposer,
-      setThreadError: NOOP,
-      onExpandImage,
-      onFileOpen: NOOP,
-      density: "compact",
-    }),
-    [
-      composerRef,
-      threadRef,
-      environmentId,
-      environmentConfig,
-      thread,
-      phase,
-      isConnecting,
-      isSendBusy,
-      environmentConnection,
-      environmentLabel,
-      runtimeMode,
-      interactionMode,
-      lockedProvider,
-      providerStatuses,
-      project,
-      summary,
-      resolvedTheme,
-      settings,
-      keybindings,
-      gitCwd,
-      promptRef,
-      composerImagesRef,
-      composerFilesRef,
-      composerTerminalContextsRef,
-      timelineMessages,
-      onSend,
-      onInterrupt,
-      onRespondToApproval,
-      onProviderModelSelect,
-      onOpenProviderSetup,
-      getModelDisabledReason,
-      toggleInteractionMode,
-      handleRuntimeModeChange,
-      handleInteractionModeChange,
-      focusComposer,
-      onExpandImage,
-    ],
-  );
+      input: { threadId: threadRef.threadId, runtimeMode: mode },
+    });
+  };
+
+  const chatComposerProps: ChatComposerProps = {
+    composerRef,
+    composerDraftTarget: threadRef,
+    environmentId,
+    canOperateThread,
+    attachmentUploadsCapabilityKnown: environmentConfig !== undefined,
+    supportsAttachmentUploads:
+      environmentConfig?.environment.capabilities.attachmentUploads === true,
+    supportsQuestionAttachments: false,
+    // The embedded board sender serializes images directly. Generic files stay
+    // visible in retained drafts, but the full session view sends them.
+    maxFileAttachmentBytes: null,
+    routeKind: "server",
+    routeThreadRef: threadRef,
+    draftId: null,
+    multipleModelSelections: null,
+    supportsMultipleModels: false,
+    onMultipleModelSelectionsChange: NOOP,
+    activeThreadId: summary.id,
+    activeThreadEnvironmentId: environmentId,
+    activeThread: summary,
+    activeThreadShell: null,
+    // The card supplies its timeline's messages when it renders the composer.
+    promptHistoryMessages: EMPTY_PROMPT_HISTORY,
+    isServerThread: true,
+    isLocalDraftThread: false,
+    forceExpandedOnMobile: false,
+    projectSelectionRequired: false,
+    phase,
+    canInterrupt,
+    isConnecting,
+    isSendBusy,
+    canResume: false,
+    sendDisabledReason: null,
+    isPreparingWorktree: false,
+    isCompacting: false,
+    bannerItems: EMPTY_COMPOSER_BANNER_ITEMS,
+    resumeCompactionTokens: null,
+    keepFullHistory: false,
+    onToggleKeepFullHistory: NOOP,
+    environmentUnavailable:
+      environmentConnection.phase === "connected"
+        ? null
+        : { label: environmentLabel, connection: environmentConnection },
+    activePendingApproval: null,
+    pendingApprovals: EMPTY_PENDING_APPROVALS,
+    pendingUserInputs: EMPTY_PENDING_USER_INPUTS,
+    activePendingProgress: null,
+    activePendingResolvedAnswers: null,
+    activePendingIsResponding: false,
+    activePendingDraftAnswers: EMPTY_PENDING_USER_INPUT_DRAFT_ANSWERS,
+    activePendingQuestionIndex: 0,
+    respondingRequestIds: EMPTY_RESPONDING_REQUEST_IDS,
+    showPlanFollowUpPrompt: false,
+    activeProposedPlan: null,
+    activeTasksProgress: null,
+    activeTaskSteps: null,
+    threadSyncPhase: null,
+    runtimeMode,
+    interactionMode,
+    lockedProvider,
+    providerStatuses,
+    providerCatalogKnown: environmentConfig !== undefined,
+    activeProjectDefaultModelSelection: project?.defaultModelSelection,
+    activeThreadModelSelection: summary.modelSelection,
+    activeProjectId: summary.projectId,
+    activeContextWindow: null,
+    compactThreadUnavailable: false,
+    compactDisabled: false,
+    compactDisabledReason: null,
+    resolvedTheme,
+    settings,
+    keybindings,
+    terminalOpen: false,
+    gitCwd,
+    pullRequestProjectId: null,
+    pullRequestRepository: null,
+    threadPullRequests: undefined,
+    restingControlsHost: null,
+    restingControlsHaveLeadingContext: false,
+    onRestingControlsVisibilityChange: NOOP,
+    getTimelineScrollableNode: NO_TIMELINE_SCROLLABLE_NODE,
+    isTimelineAtLogicalEnd: TIMELINE_IS_AT_LOGICAL_END,
+    timelineOverflows: false,
+    onComposerOverlayHeightChange: NOOP,
+    onRestingChange: NOOP,
+    promptRef,
+    composerImagesRef,
+    composerFilesRef,
+    composerTerminalContextsRef,
+    onPageScrollKeyDown: NOOP,
+    onPageScrollKeyUp: NOOP,
+    onPageScrollRelease: NOOP,
+    editingQueuedAttachments: null,
+    onRemoveEditingQueuedAttachment: NOOP,
+    onCompactContext: NOOP,
+    onSend: (event) => void onSend(event),
+    onResume: NOOP,
+    onInterrupt: () => void onInterrupt(),
+    onImplementPlanInNewThread: NOOP,
+    onRespondToApproval,
+    onSelectActivePendingUserInputOption: NOOP,
+    onAdvanceActivePendingUserInput: NOOP,
+    onDismissActivePendingUserInput: NOOP,
+    onPreviousActivePendingUserInputQuestion: NOOP,
+    onChangeActivePendingUserInputCustomAnswer: NOOP,
+    onProviderModelSelect,
+    onOpenProviderSetup,
+    getModelDisabledReason,
+    toggleInteractionMode,
+    handleRuntimeModeChange,
+    handleInteractionModeChange,
+    focusComposer,
+    scheduleComposerFocus: focusComposer,
+    setThreadError: NOOP,
+    onExpandImage,
+    onFileOpen: NOOP,
+    density: "compact",
+  };
 
   return {
     chatComposerProps,
     composerRef,
-    timelineMessages,
+    isSendBusy,
+    optimisticUserMessages: pendingOptimisticUserMessages,
     timelineAnchorMessageId,
     clearTimelineAnchor,
   };

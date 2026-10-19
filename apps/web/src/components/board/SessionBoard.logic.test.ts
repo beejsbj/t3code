@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import {
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  TurnId,
-  type OrchestrationThreadShell,
-} from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { ProviderInstanceId, RunId } from "@t3tools/contracts";
 
 import type { BoardLane } from "../../board/boardLaneStore.ts";
 import {
@@ -43,39 +38,41 @@ import {
 
 const NOW = "2026-08-12T16:00:00.000Z";
 
-function threadShell(overrides: Partial<OrchestrationThreadShell> = {}): OrchestrationThreadShell {
+type ThreadShellFixture = Pick<
+  EnvironmentThreadShell,
+  | "archivedAt"
+  | "settledOverride"
+  | "settledAt"
+  | "snoozedUntil"
+  | "snoozedAt"
+  | "pinnedAt"
+  | "latestRun"
+  | "runtime"
+  | "latestUserMessageAt"
+  | "hasPendingApprovals"
+  | "hasPendingUserInput"
+>;
+
+function threadShell(overrides: Partial<ThreadShellFixture> = {}): ThreadShellFixture {
   return {
-    id: ThreadId.make("thread-1"),
-    projectId: ProjectId.make("project-1"),
-    title: "Thread",
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    latestTurn: {
-      turnId: TurnId.make("turn-1"),
-      state: "completed",
+    latestRun: {
+      runId: RunId.make("run-1"),
+      status: "completed",
       requestedAt: "2026-08-12T15:00:00.000Z",
       startedAt: "2026-08-12T15:00:01.000Z",
       completedAt: "2026-08-12T15:01:00.000Z",
       assistantMessageId: null,
     },
-    createdAt: "2026-08-12T14:00:00.000Z",
-    updatedAt: "2026-08-12T15:01:00.000Z",
     archivedAt: null,
     settledOverride: null,
     settledAt: null,
     snoozedUntil: null,
     snoozedAt: null,
     pinnedAt: null,
-    pinOrderKey: null,
-    session: null,
+    runtime: null,
     latestUserMessageAt: "2026-08-12T15:00:00.000Z",
     hasPendingApprovals: false,
     hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
-    pullRequests: [],
     ...overrides,
   };
 }
@@ -189,12 +186,11 @@ describe("resolveBoardThreadVisibility", () => {
         threadShell({
           settledOverride: "settled",
           settledAt: "2026-08-12T15:30:00.000Z",
-          session: {
-            threadId: ThreadId.make("thread-1"),
+          runtime: {
             status: "running",
+            activeRunId: RunId.make("run-2"),
+            providerInstanceId: ProviderInstanceId.make("codex"),
             providerName: "Codex",
-            runtimeMode: "full-access",
-            activeTurnId: TurnId.make("turn-2"),
             lastError: null,
             updatedAt: "2026-08-12T15:45:00.000Z",
           },

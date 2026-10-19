@@ -7,15 +7,15 @@ import {
 } from "./BoardSessionCard.logic.ts";
 
 describe("board card focus", () => {
-  it("acknowledges the completed turn currently on screen", () => {
+  it("acknowledges the completed run currently on screen", () => {
     expect(
       boardCardVisitTimestamp({
-        latestTurn: {
+        latestRun: {
           completedAt: "2026-08-15T05:00:00.000Z",
         },
       }),
     ).toBe("2026-08-15T05:00:00.000Z");
-    expect(boardCardVisitTimestamp({ latestTurn: null })).toBeNull();
+    expect(boardCardVisitTimestamp({ latestRun: null })).toBeNull();
   });
 });
 
