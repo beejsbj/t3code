@@ -184,3 +184,16 @@ describe("retainUnacknowledgedMessages", () => {
     ]);
   });
 });
+
+describe("retainUnacknowledgedMessages after pruning", () => {
+  it("keeps one identity once acknowledged rows have left state", () => {
+    const sent = { id: MessageId.make("sent") };
+    const ack = new Set([sent.id]);
+    const pruned = retainUnacknowledgedMessages([sent], ack);
+    expect(pruned).toEqual([]);
+    // The composer stores `pruned` as its state; later renders must hand the
+    // timeline that same array, not a fresh one.
+    expect(retainUnacknowledgedMessages(pruned, ack)).toBe(pruned);
+    expect(retainUnacknowledgedMessages(pruned, ack)).toBe(pruned);
+  });
+});

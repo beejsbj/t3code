@@ -247,16 +247,27 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
   const canInterrupt = canOperateThread && deriveCanInterruptRunningThread(true, summary.runtime);
   const sendInFlightRef = useRef(false);
   const [isSendBusy, setIsSendBusy] = useState(false);
-  const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [optimisticUserMessages, setOptimisticUserMessages] = useState<ReadonlyArray<ChatMessage>>(
+    [],
+  );
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   useEffect(() => {
+    // Rows that left state (acknowledged, failed, or replaced) release their previews.
+    for (const message of optimisticUserMessagesRef.current) {
+      if (!optimisticUserMessages.includes(message)) revokeUserMessagePreviewUrls(message);
+    }
     optimisticUserMessagesRef.current = optimisticUserMessages;
   }, [optimisticUserMessages]);
-  // Rows the server already has are hidden at once and pruned on the next send.
+  // Rows the server already has leave state as soon as it acknowledges them, so
+  // the pending array keeps one identity between sends. The timeline rederives
+  // on every new identity; filtering on each render loops.
   const pendingOptimisticUserMessages = retainUnacknowledgedMessages(
     optimisticUserMessages,
     serverAcknowledgedUserMessageIds,
   );
+  if (pendingOptimisticUserMessages !== optimisticUserMessages) {
+    setOptimisticUserMessages(pendingOptimisticUserMessages);
+  }
   const [timelineAnchorMessageId, setTimelineAnchorMessageId] = useState<MessageId | null>(null);
   const clearTimelineAnchor = () => setTimelineAnchorMessageId(null);
 
