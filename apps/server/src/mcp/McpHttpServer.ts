@@ -70,6 +70,8 @@ import {
   DeviceScreenshotToolkit,
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
+import * as BoardHandlers from "./toolkits/board/handlers.ts";
+import { BoardToolkit } from "./toolkits/board/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 
@@ -1042,6 +1044,8 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+export const layerBoardToolkit = toolkitRegistration(BoardToolkit, BoardHandlers.layer);
+
 export const layerMcpTransport = McpServer.layerHttp({
   name: "T3 Code",
   version: packageJson.version,
@@ -1062,4 +1066,5 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerBoardToolkit,
 ).pipe(Layer.provideMerge(layerMcpTransport));

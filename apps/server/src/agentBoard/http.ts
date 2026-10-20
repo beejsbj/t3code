@@ -1,5 +1,4 @@
 import {
-  AgentBoardCommand,
   AgentBoardManualCommandRequest,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -10,7 +9,6 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
-import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as BoardAgentBroker from "./BoardAgentBroker.ts";
 
 const jsonError = (status: number, message: string) =>
@@ -19,12 +17,14 @@ const jsonError = (status: number, message: string) =>
     { status, headers: { "cache-control": "no-store" } },
   );
 
-const decodeAgentBoardCommand = Schema.decodeUnknownEffect(AgentBoardCommand);
 const decodeManualBoardCommand = Schema.decodeUnknownEffect(AgentBoardManualCommandRequest);
 
+/**
+ * Routes for the human `t3 board` CLI, which names its target client and
+ * thread explicitly. Agents use the `board_lanes` and `board_move` MCP tools.
+ */
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
-    const registry = yield* McpSessionRegistry.McpSessionRegistry;
     const broker = yield* BoardAgentBroker.BoardAgentBroker;
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
 
@@ -32,32 +32,6 @@ export const layer = Layer.unwrap(
       environmentAuth.authenticateHttpRequest(request).pipe(Effect.option);
 
     return Layer.mergeAll(
-      HttpRouter.add(
-        "POST",
-        "/agent/board",
-        Effect.gen(function* () {
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const authorization = request.headers.authorization;
-          const token = authorization?.startsWith("Bearer ")
-            ? authorization.slice("Bearer ".length).trim()
-            : "";
-          const scope = yield* registry.resolve(token);
-          if (!scope?.thread || !scope.capabilities.has("board")) {
-            return jsonError(401, "A valid provider-scoped board credential is required.");
-          }
-          const raw = yield* request.json.pipe(Effect.orElseSucceed(() => undefined));
-          const command = yield* decodeAgentBoardCommand(raw).pipe(Effect.option);
-          if (command._tag === "None") return jsonError(400, "Invalid board command.");
-          return yield* broker.invoke(scope.thread.threadId, command.value).pipe(
-            Effect.map((result) =>
-              HttpServerResponse.jsonUnsafe(result, {
-                headers: { "cache-control": "no-store" },
-              }),
-            ),
-            Effect.catch((error) => Effect.succeed(jsonError(409, error.message))),
-          );
-        }),
-      ),
       HttpRouter.add(
         "GET",
         "/api/board/clients",
