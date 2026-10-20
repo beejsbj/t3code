@@ -2558,7 +2558,6 @@ describe("resolveSidebarCardDetails", () => {
     hasTerminal: false,
     hasPullRequest: false,
     hasDiff: false,
-    isRemote: false,
   } as const;
 
   it("collapses a grouped card on the default branch to one line", () => {
@@ -2587,7 +2586,6 @@ describe("resolveSidebarCardDetails", () => {
       "hasTerminal",
       "hasPullRequest",
       "hasDiff",
-      "isRemote",
     ] as const) {
       expect(resolveSidebarCardDetails({ ...plain, branch: "main", [indicator]: true })).toEqual({
         branch: null,

@@ -2394,7 +2394,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     hasTerminal: runningTerminalIds.length > 0,
     hasPullRequest: prBadge !== null,
     hasDiff: diff !== null,
-    isRemote: isRemote && !showsScratchMachine,
   });
   const providerStack = (
     <SidebarProviderStack
@@ -2443,6 +2442,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             )}
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
+              <span aria-hidden className="pointer-events-none inline-flex shrink-0 items-center">
+                {providerStack}
+              </span>
+              {isRemote && !showsScratchMachine ? (
+                <span
+                  aria-hidden
+                  className="pointer-events-none inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
+                >
+                  <EnvironmentMachineIcon
+                    aria-hidden
+                    kind={props.environmentMachine}
+                    className="size-3.5"
+                  />
+                </span>
+              ) : null}
               {draftIndicator}
               {title}
               {isRegeneratingTitle ? (
@@ -2451,11 +2465,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 </span>
               ) : null}
               {pinIndicator}
-              {cardDetails.hasDetailRow ? null : (
-                <span aria-hidden className="pointer-events-none inline-flex shrink-0 items-center">
-                  {providerStack}
-                </span>
-              )}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -2646,21 +2655,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     </span>
                   </span>
                 ) : null}
-                <span
-                  aria-hidden
-                  className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-                >
-                  {isRemote && !showsScratchMachine ? (
-                    <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                      <EnvironmentMachineIcon
-                        aria-hidden
-                        kind={props.environmentMachine}
-                        className="size-3.5"
-                      />
-                    </span>
-                  ) : null}
-                  {providerStack}
-                </span>
               </div>
             ) : null}
           </div>

@@ -1044,9 +1044,8 @@ const SIDEBAR_DEFAULT_BRANCH_NAMES: ReadonlySet<string> = new Set(["main", "mast
  * repository's default branch in the project checkout says nothing the
  * project doesn't, so that branch name is left out; a worktree's branch always
  * shows. The projects contract carries no default branch, so "default" means
- * main or master. When nothing meaningful is left (the provider icon alone
- * doesn't count) the card collapses to one line and the provider icon moves
- * up beside the time.
+ * main or master. Provider and machine icons live beside the title, so they
+ * don't require a second line.
  */
 export function resolveSidebarCardDetails(input: {
   readonly branch: string | null;
@@ -1056,7 +1055,6 @@ export function resolveSidebarCardDetails(input: {
   readonly hasTerminal: boolean;
   readonly hasPullRequest: boolean;
   readonly hasDiff: boolean;
-  readonly isRemote: boolean;
 }): { readonly branch: string | null; readonly hasDetailRow: boolean } {
   const isDefaultCheckout =
     input.branch !== null &&
@@ -1071,8 +1069,7 @@ export function resolveSidebarCardDetails(input: {
       input.showsScratchMachine ||
       input.hasTerminal ||
       input.hasPullRequest ||
-      input.hasDiff ||
-      input.isRemote,
+      input.hasDiff,
   };
 }
 
