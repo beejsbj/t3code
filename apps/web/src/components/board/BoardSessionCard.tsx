@@ -81,10 +81,7 @@ import type { SidebarThreadSummary } from "../../types.ts";
 import { useUiStateStore } from "../../uiStateStore.ts";
 import { cn } from "~/lib/utils";
 import { hasUnseenCompletion } from "../Sidebar.logic.ts";
-import {
-  deriveServerAcknowledgedUserMessageIds,
-  useThreadTimeline,
-} from "../chat/useThreadTimeline.ts";
+import { useThreadTimeline } from "../chat/useThreadTimeline.ts";
 import { ChatComposer } from "../chat/ChatComposer.tsx";
 import { resolveRenameCommit } from "../threadRename.logic.ts";
 import { resolveSnoozePresets } from "../Sidebar.snooze.ts";
@@ -684,10 +681,8 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
     environmentConnection,
     resolvedTheme,
     providerStatuses,
-    serverAcknowledgedUserMessageIds: deriveServerAcknowledgedUserMessageIds(
-      visibleTurnItems,
-      detail,
-    ),
+    visibleTurnItems,
+    detail,
     onExpandImage: onExpandTimelineImage,
   });
   activeTimelineAnchorRef.current = timelineFollowCancellationRef.current.cancelled

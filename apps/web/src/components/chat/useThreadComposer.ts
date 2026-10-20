@@ -3,6 +3,7 @@ import {
   type MessageId,
   type ModelSelection,
   type OrchestrationMessageContext,
+  type OrchestrationV2ProjectedTurnItem,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type ProviderInteractionMode,
@@ -14,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThread } from "@t3tools/client-runtime/state/models";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -61,6 +63,7 @@ import { buildMessageContext, terminalContextReference } from "../../lib/compose
 import { removeInlineContextReference } from "../../lib/composerContextReferences.ts";
 import type { ChatComposerHandle, ChatComposerProps } from "./ChatComposer.tsx";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview.tsx";
+import { deriveServerAcknowledgedUserMessageIds } from "./useThreadTimeline.ts";
 import { toastManager } from "../ui/toast.tsx";
 
 // The board composer never surfaces inline approvals or user-input prompts
@@ -124,6 +127,20 @@ export function boardComposerDraftCanBeRestored(
   );
 }
 
+/**
+ * Optimistic sends the server has not acknowledged. Returns `messages` itself
+ * when none were acknowledged: the timeline rederives whenever this array's
+ * identity changes, and a fresh empty array on every render loops forever.
+ */
+export function retainUnacknowledgedMessages<M extends { readonly id: MessageId }>(
+  messages: ReadonlyArray<M>,
+  acknowledged: ReadonlySet<MessageId>,
+): ReadonlyArray<M> {
+  return messages.some((message) => acknowledged.has(message.id))
+    ? messages.filter((message) => !acknowledged.has(message.id))
+    : messages;
+}
+
 export function canBeginBoardComposerSend(
   connection: EnvironmentConnectionPresentation,
   sendInFlight: boolean,
@@ -148,8 +165,9 @@ export type UseBoardThreadComposerInput = {
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly resolvedTheme: "light" | "dark";
   readonly providerStatuses: ReadonlyArray<ServerProvider>;
-  /** User messages the server already has; their optimistic rows retire. */
-  readonly serverAcknowledgedUserMessageIds: ReadonlySet<MessageId>;
+  /** The thread's server state; optimistic rows retire once it has their message. */
+  readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+  readonly detail: EnvironmentThread | null;
   readonly onExpandImage: (preview: ExpandedImagePreview) => void;
 };
 
@@ -165,9 +183,14 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     environmentLabel,
     environmentConnection,
     resolvedTheme,
-    serverAcknowledgedUserMessageIds,
     onExpandImage,
   } = input;
+  // Derived here rather than by the caller: the React Compiler memoizes this
+  // hook, so the set keeps its identity until the thread's server state changes.
+  const serverAcknowledgedUserMessageIds = deriveServerAcknowledgedUserMessageIds(
+    input.visibleTurnItems,
+    input.detail,
+  );
   const providerStatuses = input.providerStatuses as ServerProvider[];
   const navigate = useNavigate();
   const environmentId = threadRef.environmentId;
@@ -230,8 +253,9 @@ export function useBoardThreadComposer(input: UseBoardThreadComposerInput) {
     optimisticUserMessagesRef.current = optimisticUserMessages;
   }, [optimisticUserMessages]);
   // Rows the server already has are hidden at once and pruned on the next send.
-  const pendingOptimisticUserMessages = optimisticUserMessages.filter(
-    (message) => !serverAcknowledgedUserMessageIds.has(message.id),
+  const pendingOptimisticUserMessages = retainUnacknowledgedMessages(
+    optimisticUserMessages,
+    serverAcknowledgedUserMessageIds,
   );
   const [timelineAnchorMessageId, setTimelineAnchorMessageId] = useState<MessageId | null>(null);
   const clearTimelineAnchor = () => setTimelineAnchorMessageId(null);
