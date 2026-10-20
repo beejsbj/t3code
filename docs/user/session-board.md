@@ -135,6 +135,19 @@ workflow lanes. Choosing a lane updates only that scoped environment and thread 
 client. Choosing Triage clears any explicit workflow override. These local commands are not
 registered by the React Native app while it has no dedicated board.
 
+## Let Agents Move Their Cards
+
+Agents running inside T3 Code can see the board's lanes and move their own thread's card with the
+`board_lanes` and `board_move` tools on the T3 Code MCP server. An agent can only move the card of
+the thread it is running in. Ask for it directly, or put it in standing instructions such as "move
+your card to Review when you finish".
+
+Because lanes are saved by each window, the move goes to the web or desktop window that last sent a
+message to that thread. If that window is closed and exactly one other window is open, that window's
+board is used. If several windows are open and none of them sent the last message, the move fails
+instead of guessing; send a message to the thread from the window whose board should change. When
+no window is open, there is no board to update and the move fails.
+
 ## Use Board Commands From A Shell
 
 First list the board-capable windows connected to that T3 server:
