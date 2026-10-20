@@ -14,10 +14,7 @@ import {
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 
-import {
-  boardLaneForMoveAction,
-  buildBoardLaneMoveContextMenuItems,
-} from "../board/boardPlacementMenu.ts";
+import { boardLaneForMoveAction, withBoardLaneMoveItems } from "../board/boardPlacementMenu.ts";
 import { boardLaneController } from "../board/boardLaneController.ts";
 import type { BoardLane } from "../board/boardLaneStore.ts";
 import { resolveSnoozePresets, snoozeWakeDescription } from "../components/Sidebar.snooze";
@@ -199,23 +196,21 @@ export function useThreadActionMenu(input: {
       // Snooze owns the visible lifecycle while it is active, matching the
       // sidebar partition.
       const isSettled = !isSnoozed && supports.settlement && thread.settledOverride === "settled";
-      const items = [
-        ...buildThreadActionMenuItems({
-          canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
-          branch: thread.branch ?? null,
-          projectFilter: null,
-          isPinned: thread.pinnedAt != null,
-          isSettled,
-          autoSettleEnabled: thread.autoSettleDisabledAt == null,
-          isSnoozed,
-          canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
-          isRegeneratingTitle,
-          isRunning: !threadRuntimeCanArchive(thread.runtime),
-          supports,
-          snoozePresets,
-        }),
-        ...(boardLanes ? buildBoardLaneMoveContextMenuItems(boardLanes) : []),
-      ];
+      const threadItems = buildThreadActionMenuItems({
+        canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
+        branch: thread.branch ?? null,
+        projectFilter: null,
+        isPinned: thread.pinnedAt != null,
+        isSettled,
+        autoSettleEnabled: thread.autoSettleDisabledAt == null,
+        isSnoozed,
+        canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
+        isRegeneratingTitle,
+        isRunning: !threadRuntimeCanArchive(thread.runtime),
+        supports,
+        snoozePresets,
+      });
+      const items = boardLanes ? withBoardLaneMoveItems(threadItems, boardLanes) : threadItems;
       const clicked = await settlePromise(() => api.contextMenu.show(items, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
       const laneId = boardLanes ? boardLaneForMoveAction(clicked.value, boardLanes) : undefined;

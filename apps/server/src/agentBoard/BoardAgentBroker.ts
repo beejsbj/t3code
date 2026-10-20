@@ -34,7 +34,7 @@ const MAX_REMEMBERED_ORIGINS = 2_048;
 interface State {
   readonly hosts: ReadonlyMap<number, Host>;
   readonly rpcClientIdByStableId: ReadonlyMap<string, number>;
-  /** Stable board client id of the board client that last sent a message to each thread. */
+  /** Board client id (one per page load, kept across socket reconnects) that last messaged each thread. */
   readonly origins: ReadonlyMap<ThreadId, string>;
   readonly pending: ReadonlyMap<string, Pending>;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useComposerDraftStore, type ComposerImageAttachment } from "../../composerDraftStore.ts";
 
@@ -9,6 +9,7 @@ import {
   canBeginBoardComposerSend,
   resolveBoardComposerModelSelection,
   resolveBoardComposerSubmission,
+  retainUnacknowledgedMessages,
 } from "./useThreadComposer.ts";
 
 const connection = (phase: "connected" | "reconnecting") => ({
@@ -162,5 +163,24 @@ describe("resolveBoardComposerModelSelection", () => {
         fallback,
       ),
     ).toEqual(fallback);
+  });
+});
+
+describe("retainUnacknowledgedMessages", () => {
+  const sent = { id: MessageId.make("message-sent") };
+  const acknowledged = { id: MessageId.make("message-acknowledged") };
+
+  it("returns the same array when the server has acknowledged none of it", () => {
+    // A new array here on every render re-derives the board card's timeline and loops.
+    const none: ReadonlyArray<typeof sent> = [];
+    const pending = [sent];
+    expect(retainUnacknowledgedMessages(none, new Set([acknowledged.id]))).toBe(none);
+    expect(retainUnacknowledgedMessages(pending, new Set([acknowledged.id]))).toBe(pending);
+  });
+
+  it("drops the rows the server already has", () => {
+    expect(retainUnacknowledgedMessages([sent, acknowledged], new Set([acknowledged.id]))).toEqual([
+      sent,
+    ]);
   });
 });
