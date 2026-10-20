@@ -1160,6 +1160,11 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
+// Effect RPC numbers clients per protocol, and every websocket gets its own
+// protocol, so `metadata.client.id` is 0 on every connection. Board routing
+// needs to tell windows apart, so each connection takes a key from here.
+let nextBoardConnectionKey = 1;
+
 const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1171,6 +1176,7 @@ const layerWsRpc = (
   ServerWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const boardConnectionKey = nextBoardConnectionKey++;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;
       const intakeContext = yield* Effect.context<
@@ -1791,11 +1797,13 @@ const layerWsRpc = (
         return result;
       });
 
-      const recordBoardOrigin = (rpcClientId: number, threadId: ThreadId | undefined) =>
-        threadId === undefined ? Effect.void : boardAgentBroker.recordOrigin(rpcClientId, threadId);
+      const recordBoardOrigin = (threadId: ThreadId | undefined) =>
+        threadId === undefined
+          ? Effect.void
+          : boardAgentBroker.recordOrigin(boardConnectionKey, threadId);
 
       const handlers = ServerWsRpcGroup.of({
-        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command, metadata) =>
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
             "orchestration_v2.command_type": command.type,
@@ -1814,7 +1822,7 @@ const layerWsRpc = (
               : {}),
           }).pipe(
             // Before the dispatch, so the run it starts can already reach this window's board.
-            Effect.andThen(recordBoardOrigin(metadata.client.id, boardOriginThreadId(command))),
+            Effect.andThen(recordBoardOrigin(boardOriginThreadId(command))),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -1928,13 +1936,13 @@ const layerWsRpc = (
                 ),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input, metadata) =>
+        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
             // A draft's first message starts its run here, not through message.dispatch.
-            Effect.andThen(recordBoardOrigin(metadata.client.id, input.threadId)),
+            Effect.andThen(recordBoardOrigin(input.threadId)),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -1985,7 +1993,7 @@ const layerWsRpc = (
                       ),
                   ),
                   // A launch without a client-chosen id learns its thread id only now.
-                  Effect.tap((result) => recordBoardOrigin(metadata.client.id, result.threadId)),
+                  Effect.tap((result) => recordBoardOrigin(result.threadId)),
                   Effect.map((result) => ({
                     ...result,
                     projection: projectThreadProjectionForWire(result.projection),
@@ -2877,10 +2885,10 @@ const layerWsRpc = (
         [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
         [WS_METHODS.previewReportProfiles]: (input) => serverBrowser.reportProfiles(input),
         [WS_METHODS.previewReportStatus]: (input) => previewManager.reportStatus(input),
-        [WS_METHODS.agentBoardConnect]: (input, metadata) =>
-          Stream.unwrap(boardAgentBroker.connect(metadata.client.id, input)),
-        [WS_METHODS.agentBoardRespond]: (input, metadata) =>
-          boardAgentBroker.respond(metadata.client.id, input),
+        [WS_METHODS.agentBoardConnect]: (input) =>
+          Stream.unwrap(boardAgentBroker.connect(boardConnectionKey, input)),
+        [WS_METHODS.agentBoardRespond]: (input) =>
+          boardAgentBroker.respond(boardConnectionKey, input),
         [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
