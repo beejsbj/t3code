@@ -13,12 +13,29 @@ export function buildBoardLaneMoveContextMenuItems(
     {
       id: "move-to-lane",
       label: "Move to lane…",
+      icon: "square-kanban",
       children: workflowLanes.map((lane) => ({
         id: `${MOVE_TO_LANE_PREFIX}${lane.id}`,
         label: boardLaneLabel(lane.id, lanes),
       })),
     },
   ];
+}
+
+/**
+ * Adds "Move to lane…" to a thread menu beside the other organize actions (pin,
+ * settle, snooze), ahead of the rename group and well above Archive and Delete.
+ */
+export function withBoardLaneMoveItems(
+  items: ReadonlyArray<ContextMenuItem>,
+  lanes: ReadonlyArray<BoardLane>,
+): ReadonlyArray<ContextMenuItem> {
+  const laneItems = buildBoardLaneMoveContextMenuItems(lanes);
+  const firstUnorganized = items.findIndex(
+    (item) => item.id === "rename" || item.separatorBefore === true || item.destructive === true,
+  );
+  if (firstUnorganized === -1) return [...items, ...laneItems];
+  return [...items.slice(0, firstUnorganized), ...laneItems, ...items.slice(firstUnorganized)];
 }
 
 export function boardLaneForMoveAction(

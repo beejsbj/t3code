@@ -1,5 +1,8 @@
-import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  effectiveSnoozed,
+  type ThreadSnoozeShell,
+} from "@t3tools/client-runtime/state/thread-settled";
 
 import {
   isObsoleteBoardLaneId,
@@ -12,13 +15,16 @@ export const BOARD_WORKFLOW_COLUMN_WIDTH = 380;
 
 export type BoardThreadVisibility = "visible" | "archived" | "snoozed" | "settled";
 
+export type BoardVisibilityThread = ThreadSnoozeShell &
+  Pick<EnvironmentThreadShell, "archivedAt" | "pinnedAt" | "settledOverride">;
+
 /**
  * Lifecycle state stays server-backed. The board consumes only `visible`;
  * preserving the other classifications lets its snooze wake timer restore a
  * thread without inventing separate board membership.
  */
 export function resolveBoardThreadVisibility(
-  thread: OrchestrationThreadShell,
+  thread: BoardVisibilityThread,
   options: {
     /** Exact wall clock for second-precise snooze wake boundaries. */
     readonly now: string;

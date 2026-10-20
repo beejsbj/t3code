@@ -1,19 +1,19 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useSortable } from "@dnd-kit/sortable";
 import type { LegendListRef } from "@legendapp/list/react";
 import type {
   MessageId,
+  RunId,
   ScopedThreadRef,
   ServerProvider,
-  ServerProviderSkill,
-  TurnId,
+  ThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
-import {
-  derivePendingRequests,
-  type PendingApproval,
-  type PendingUserInput,
-} from "@t3tools/client-runtime/pending-requests";
+import type {
+  ThreadPendingApproval as PendingApproval,
+  ThreadPendingUserInput as PendingUserInput,
+} from "@t3tools/client-runtime/state/thread-requests";
+import { useNavigate } from "@tanstack/react-router";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AlarmClockIcon,
@@ -62,8 +62,14 @@ import { useRightPanelStore } from "../../rightPanelStore.ts";
 import { useTheme } from "../../hooks/useTheme.ts";
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu.ts";
 import { useClientSettings } from "../../hooks/useSettings.ts";
-import { ensureLocalApi } from "../../localApi.ts";
-import { readProject, useServerConfigs, useThread } from "../../state/entities.ts";
+import {
+  readProject,
+  useServerConfigs,
+  useThreadProjection,
+  useThreadVisibleTurnItems,
+} from "../../state/entities.ts";
+import { useEnvironmentProviders } from "../../state/environments.ts";
+import { buildThreadRouteParams } from "../../threadRoutes.ts";
 import {
   resolveThreadRuntimeState,
   threadRuntimeStateAppearance,
@@ -99,7 +105,8 @@ import {
 import { ExpandedImageDialog } from "../chat/ExpandedImageDialog.tsx";
 import { type ExpandedImagePreview } from "../chat/ExpandedImagePreview.tsx";
 
-const EMPTY_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
+const NOOP_ANCHOR_SIZE_CHANGED = () => {};
 const DONE_APPEARANCE = {
   label: "Done",
   borderClass: "border-emerald-500/50 dark:border-emerald-300/40",
@@ -628,139 +635,93 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
   readonly environmentConnection: EnvironmentConnectionPresentation;
   readonly focusRequestNonce: number | null;
 }) {
-  const fullThread = useThread(threadRef);
-  const serverConfigs = useServerConfigs();
+  const detail = useThreadProjection(threadRef);
+  const visibleTurnItems = useThreadVisibleTurnItems(threadRef);
+  const providerStatuses =
+    useEnvironmentProviders().get(threadRef.environmentId) ?? EMPTY_PROVIDERS;
   const { resolvedTheme } = useTheme();
   const legendListRef = useRef<LegendListRef | null>(null);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
-  const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const activeTimelineAnchorRef = useRef<MessageId | null>(null);
   const timelineFollowCancellationRef = useRef({ cancelled: false, leftEndBand: false });
-  const revertThreadCheckpoint = useAtomCommand(threadEnvironment.revertCheckpoint, {
-    reportFailure: false,
-  });
 
-  const providerStatuses = useMemo<ReadonlyArray<ServerProvider>>(
-    () => serverConfigs.get(threadRef.environmentId)?.providers ?? [],
-    [serverConfigs, threadRef.environmentId],
-  );
-
-  const activities = fullThread?.activities ?? [];
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
+  // History-editing actions (revert, checkpoint rollback, fork) need the full
+  // session's confirmation flows, so the card hands them to the expanded view.
+  const openFullSession = useCallback(() => {
+    useBoardFocusStore.getState().setExpanded({ kind: "thread", threadKey: cardKey });
+  }, [cardKey]);
+  const openFullSessionAsync = useCallback(async () => openFullSession(), [openFullSession]);
+  const navigate = useNavigate();
+  const onOpenThread = useCallback(
+    (threadId: ThreadId) => {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(threadRef.environmentId, threadId)),
+      });
+    },
+    [navigate, threadRef.environmentId],
+  );
 
   const {
     chatComposerProps,
     composerRef,
-    timelineMessages,
+    isSendBusy,
+    optimisticUserMessages,
     timelineAnchorMessageId,
     clearTimelineAnchor,
   } = useBoardThreadComposer({
     threadRef,
-    thread: fullThread,
     summary: thread,
     environmentLabel,
     environmentConnection,
     resolvedTheme,
+    providerStatuses,
+    visibleTurnItems,
+    detail,
     onExpandImage: onExpandTimelineImage,
   });
   activeTimelineAnchorRef.current = timelineFollowCancellationRef.current.cancelled
     ? null
     : timelineAnchorMessageId;
 
-  const { approvals: pendingApprovals, userInputs: pendingUserInputs } = useMemo(
-    () => derivePendingRequests(activities),
-    [activities],
-  );
-
-  const onRevertToTurnCount = useCallback(
-    async (turnCount: number) => {
-      if (!fullThread || isRevertingCheckpoint) {
-        return;
-      }
-      if (environmentConnection.phase !== "connected") {
-        toastManager.add({
-          type: "warning",
-          title: `Reconnect ${environmentLabel}`,
-          description: "Reconnect this environment before reverting checkpoints.",
-        });
-        return;
-      }
-      if (thread.session?.status === "starting" || thread.session?.status === "running") {
-        toastManager.add({
-          type: "warning",
-          title: "Session is working",
-          description: "Interrupt the current turn before reverting checkpoints.",
-        });
-        return;
-      }
-      const confirmed = await ensureLocalApi().dialogs.confirm(
-        [
-          `Revert this thread to checkpoint ${turnCount}?`,
-          "This will discard newer messages and turn diffs in this thread.",
-          "This action cannot be undone.",
-        ].join("\n"),
-      );
-      if (!confirmed) {
-        return;
-      }
-
-      setIsRevertingCheckpoint(true);
-      const result = await revertThreadCheckpoint({
-        environmentId: threadRef.environmentId,
-        input: {
-          threadId: threadRef.threadId,
-          turnCount,
-        },
-      });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        console.error(error instanceof Error ? error.message : "Failed to revert thread state.");
-      }
-      setIsRevertingCheckpoint(false);
-    },
-    [
-      environmentConnection.phase,
-      environmentLabel,
-      fullThread,
-      isRevertingCheckpoint,
-      revertThreadCheckpoint,
-      thread.session?.status,
-      threadRef,
-    ],
-  );
-
   const {
     timelineEntries,
-    latestTurn,
-    runningTurnId,
+    runs,
+    latestRun,
+    runningRunId,
     isWorking,
+    runlessWorkActive,
+    activeTurnInProgress,
     activeTurnStartedAt,
     turnDiffSummaries,
+    pendingApprovals,
+    pendingUserInputs,
     markdownCwd,
     workspaceRoot,
-    resolvedTheme: timelineTheme,
     timestampFormat,
     skills,
     routeThreadKey,
-    activeThreadEnvironmentId,
-    isRevertingCheckpoint: timelineIsRevertingCheckpoint,
   } = useThreadTimeline({
     threadRef,
-    thread: fullThread,
-    timelineMessages,
-    isRevertingCheckpoint,
-    onRevertToTurnCount,
-    resolvedTheme,
-    skills: providerSkills(providerStatuses, thread) ?? EMPTY_SKILLS,
+    shell: thread,
+    detail,
+    visibleTurnItems,
+    optimisticMessages: optimisticUserMessages,
+    providerStatuses,
+    isSendBusy,
   });
+  const promptHistoryMessages = timelineEntries.flatMap((entry) =>
+    entry.kind === "message" ? [entry.message] : [],
+  );
 
   const onOpenTurnDiff = useCallback(
-    (turnId: TurnId, filePath?: string) => {
-      useDiffPanelStore.getState().selectTurn(threadRef, turnId, filePath);
+    (runId: RunId, filePath?: string) => {
+      useDiffPanelStore.getState().selectTurn(threadRef, runId, filePath);
       useRightPanelStore.getState().open(threadRef, "diff");
     },
     [threadRef],
@@ -925,30 +886,33 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
           minimapVariant="compact"
           viewportClassName="pointer-coarse:overflow-y-hidden pointer-coarse:overscroll-y-auto pointer-coarse:touch-pan-y"
           isWorking={isWorking}
+          runlessWorkActive={runlessWorkActive}
+          activeTurnInProgress={activeTurnInProgress}
           activeTurnStartedAt={activeTurnStartedAt}
           listRef={legendListRef}
           timelineEntries={timelineEntries}
-          latestTurn={latestTurn}
-          runningTurnId={runningTurnId}
+          runs={runs}
+          latestRun={latestRun}
+          runningRunId={runningRunId}
           turnDiffSummaries={turnDiffSummaries}
           routeThreadKey={routeThreadKey}
           onOpenTurnDiff={onOpenTurnDiff}
-          supportsConversationRollback={providerStatuses.some(
-            (provider) =>
-              provider.instanceId === thread.modelSelection.instanceId &&
-              provider.supportsConversationRollback !== false,
-          )}
-          onRevertToTurnCount={(turnCount) => void onRevertToTurnCount(turnCount)}
-          isRevertingCheckpoint={timelineIsRevertingCheckpoint}
+          onOpenThread={onOpenThread}
+          onForkFromRun={openFullSessionAsync}
+          onRollbackCheckpoint={openFullSession}
+          supportsConversationRollback={false}
+          onRevertToTurnCount={openFullSession}
+          isRevertingCheckpoint={false}
           onImageExpand={onExpandTimelineImage}
-          activeThreadEnvironmentId={activeThreadEnvironmentId}
+          activeThreadEnvironmentId={threadRef.environmentId}
           markdownCwd={markdownCwd}
-          resolvedTheme={timelineTheme}
+          resolvedTheme={resolvedTheme}
           timestampFormat={timestampFormat}
           workspaceRoot={workspaceRoot}
           skills={skills}
           anchorMessageId={timelineAnchorMessageId}
           onAnchorReady={onTimelineAnchorReady}
+          onAnchorSizeChanged={NOOP_ANCHOR_SIZE_CHANGED}
           contentInsetEndAdjustment={0}
           liveFollowEnabled={timelineLiveFollowEnabled}
           onIsAtEndChange={onTimelineIsAtEndChange}
@@ -971,20 +935,11 @@ const BoardCardChatSurface = memo(function BoardCardChatSurface({
       />
 
       <div className="shrink-0 border-t border-border/60 px-1.5 py-1">
-        <ChatComposer {...chatComposerProps} />
+        <ChatComposer {...chatComposerProps} promptHistoryMessages={promptHistoryMessages} />
       </div>
     </>
   );
 });
-
-function providerSkills(
-  providerStatuses: ReadonlyArray<ServerProvider>,
-  thread: SidebarThreadSummary,
-): ReadonlyArray<ServerProviderSkill> | null {
-  const instanceId = thread.modelSelection.instanceId;
-  const match = providerStatuses.find((provider) => provider.instanceId === instanceId);
-  return match?.skills ?? null;
-}
 
 function AttentionStrip({
   pendingApprovals,

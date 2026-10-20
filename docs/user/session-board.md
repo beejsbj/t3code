@@ -135,21 +135,22 @@ workflow lanes. Choosing a lane updates only that scoped environment and thread 
 client. Choosing Triage clears any explicit workflow override. These local commands are not
 registered by the React Native app while it has no dedicated board.
 
-## Use Board Commands From An Agent Or Shell
+## Let Agents Move Their Cards
 
-The board skill is opt-in. Install it in a project, then start a new provider session so the provider
-can discover the ordinary project-local skill:
+Agents running inside T3 Code can see the board's lanes and move their own thread's card with the
+`board_lanes` and `board_move` tools on the T3 Code MCP server. An agent can only move the card of
+the thread it is running in. Ask for it directly, or put it in standing instructions such as "move
+your card to Review when you finish".
 
-```bash
-t3 board skill install --directory /path/to/project
-```
+Because lanes are saved by each window, the move goes to the web or desktop window that last sent a
+message to that thread. If that window is closed and exactly one other window is open, that window's
+board is used. If several windows are open and none of them sent the last message, the move fails
+instead of guessing; send a message to the thread from the window whose board should change. When
+no window is open, there is no board to update and the move fails.
 
-After an explicit request, an agent can run `t3-board lanes`, `t3-board lane`, or
-`t3-board move <lane>`. This dedicated agent command leaves any globally installed `t3` CLI alone.
-Those commands apply only to the current thread on the client that started
-the turn. If that client is unavailable, the command fails instead of choosing another client.
+## Use Board Commands From A Shell
 
-For manual use from a shell, first list the board-capable windows connected to that T3 server:
+First list the board-capable windows connected to that T3 server:
 
 ```bash
 t3 board clients
@@ -159,5 +160,4 @@ t3 board move <lane> --client <client-id> --thread <thread-id>
 ```
 
 Client IDs identify one browser tab or desktop renderer for its current lifetime. Run
-`t3 board clients` again after reloading that window. Manual targeting is unavailable inside an
-agent process, which remains restricted to its originating client and current thread.
+`t3 board clients` again after reloading that window.

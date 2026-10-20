@@ -2,8 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { HttpServer } from "effect/unstable/http";
-import * as NetAddress from "effect/unstable/net/NetAddress";
+import { HttpServer } from "effect/http";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -43,12 +43,14 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
       capabilities: new Set(["preview"]),
     });
     expect(issued.config.endpoint).toBe("http://127.0.0.1:43123/mcp");
-    expect(issued.config.agentEndpoint).toBe("http://127.0.0.1:43123/agent/board");
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
     expect(token.length).toBeGreaterThan(20);
 
     const resolved = yield* registry.resolve(token);
-    expect(resolved?.threadId).toBe(threadId);
+    expect(resolved?.thread.threadId).toBe(threadId);
+    expect(resolved?.capabilities).toEqual(
+      new Set(["preview", "orchestration", "worktree", "pull-requests", "board"]),
+    );
 
     yield* registry.revokeThread(threadId);
     expect(yield* registry.resolve(token)).toBeUndefined();
@@ -57,33 +59,52 @@ it.effect("stores only a token hash, resolves the bearer token, and revokes by t
   }),
 );
 
-it.effect("always grants pull-requests and gates browser and device access independently", () =>
-  Effect.gen(function* () {
-    const registry = yield* makeRegistry(() => 1_000);
-    const withPreview = yield* registry.issue({
-      threadId: ThreadId.make("thread-preview"),
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      capabilities: new Set(["preview"]),
-    });
-    const withoutPreview = yield* registry.issue({
-      threadId: ThreadId.make("thread-no-preview"),
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      capabilities: new Set(),
-    });
-    const withDevice = yield* registry.issue({
-      threadId: ThreadId.make("thread-device"),
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      capabilities: new Set(["device"]),
-    });
-    const capabilitiesOf = (issued: typeof withPreview) =>
-      registry
-        .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
-        .pipe(Effect.map((scope) => [...(scope?.capabilities ?? [])].sort()));
+it.effect(
+  "always grants pull-requests and board and gates browser and device access independently",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry(() => 1_000);
+      const withPreview = yield* registry.issue({
+        threadId: ThreadId.make("thread-preview"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["preview"]),
+      });
+      const withoutPreview = yield* registry.issue({
+        threadId: ThreadId.make("thread-no-preview"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(),
+      });
+      const withDevice = yield* registry.issue({
+        threadId: ThreadId.make("thread-device"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        capabilities: new Set(["device"]),
+      });
+      const capabilitiesOf = (issued: typeof withPreview) =>
+        registry
+          .resolve(issued.config.authorizationHeader.replace(/^Bearer\s+/, ""))
+          .pipe(Effect.map((scope) => [...(scope?.capabilities ?? [])].sort()));
 
-    expect(yield* capabilitiesOf(withPreview)).toEqual(["preview", "pull-requests"]);
-    expect(yield* capabilitiesOf(withoutPreview)).toEqual(["pull-requests"]);
-    expect(yield* capabilitiesOf(withDevice)).toEqual(["device", "pull-requests"]);
-  }),
+      expect(yield* capabilitiesOf(withPreview)).toEqual([
+        "board",
+        "orchestration",
+        "preview",
+        "pull-requests",
+        "worktree",
+      ]);
+      expect(yield* capabilitiesOf(withoutPreview)).toEqual([
+        "board",
+        "orchestration",
+        "pull-requests",
+        "worktree",
+      ]);
+      expect(yield* capabilitiesOf(withDevice)).toEqual([
+        "board",
+        "device",
+        "orchestration",
+        "pull-requests",
+        "worktree",
+      ]);
+    }),
 );
 
 it.effect("builds MCP endpoints from the bound server host", () =>
@@ -135,14 +156,12 @@ it.effect("keeps a credential alive across turns that never touch an MCP tool", 
     });
     const token = issued.config.authorizationHeader.replace(/^Bearer\s+/, "");
 
-    // Well past the liveness window in total, but each turn reports in before
-    // it lapses — this is the long-session case that used to lose the toolkit.
     for (let turn = 0; turn < 10; turn += 1) {
       timestamp += 99;
       yield* registry.touch(threadId);
     }
 
-    expect((yield* registry.resolve(token))?.threadId).toBe(threadId);
+    expect((yield* registry.resolve(token))?.thread.threadId).toBe(threadId);
   }),
 );
 

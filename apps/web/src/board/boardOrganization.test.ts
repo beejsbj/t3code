@@ -1,12 +1,8 @@
-import {
-  ProjectId,
-  ProviderInstanceId,
-  ThreadId,
-  TurnId,
-  type OrchestrationThreadShell,
-} from "@t3tools/contracts";
+import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/models";
+import { ProviderInstanceId, RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import type { ThreadRuntimeStateInput } from "../state/threadRuntimeState.ts";
 import {
   BOARD_STATES,
   boardProjectDimensionKey,
@@ -20,39 +16,32 @@ import {
   type BoardStateId,
 } from "./boardOrganization.ts";
 
-function threadShell(overrides: Partial<OrchestrationThreadShell> = {}): OrchestrationThreadShell {
+function runtime(status: ThreadRuntimeSummary["status"]): ThreadRuntimeSummary {
   return {
-    id: ThreadId.make("thread-1"),
-    projectId: ProjectId.make("project-1"),
-    title: "Thread",
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6" },
-    runtimeMode: "full-access",
+    status,
+    activeRunId: status === "running" ? RunId.make("run-2") : null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: "2026-08-12T15:45:00.000Z",
+  };
+}
+
+function threadShell(overrides: Partial<ThreadRuntimeStateInput> = {}): ThreadRuntimeStateInput {
+  return {
     interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    latestTurn: {
-      turnId: TurnId.make("turn-1"),
-      state: "completed",
+    latestRun: {
+      runId: RunId.make("run-1"),
+      status: "completed",
       requestedAt: "2026-08-12T15:00:00.000Z",
       startedAt: "2026-08-12T15:00:01.000Z",
       completedAt: "2026-08-12T15:01:00.000Z",
       assistantMessageId: null,
     },
-    createdAt: "2026-08-12T14:00:00.000Z",
-    updatedAt: "2026-08-12T15:01:00.000Z",
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    snoozedUntil: null,
-    snoozedAt: null,
-    pinnedAt: null,
-    pinOrderKey: null,
-    session: null,
-    latestUserMessageAt: "2026-08-12T15:00:00.000Z",
+    runtime: null,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
-    pullRequests: [],
     ...overrides,
   };
 }
@@ -60,15 +49,7 @@ function threadShell(overrides: Partial<OrchestrationThreadShell> = {}): Orchest
 describe("resolveBoardThreadState", () => {
   it("excludes lifecycle-hidden threads from board presentation", () => {
     const working = threadShell({
-      session: {
-        threadId: ThreadId.make("thread-1"),
-        status: "running",
-        providerName: "Codex",
-        runtimeMode: "full-access",
-        activeTurnId: TurnId.make("turn-2"),
-        lastError: null,
-        updatedAt: "2026-08-12T15:45:00.000Z",
-      },
+      runtime: runtime("running"),
     });
 
     expect(resolveBoardThreadState(working, "snoozed")).toBeNull();
@@ -80,15 +61,7 @@ describe("resolveBoardThreadState", () => {
     const thread = threadShell({
       hasPendingApprovals: true,
       hasPendingUserInput: true,
-      session: {
-        threadId: ThreadId.make("thread-1"),
-        status: "running",
-        providerName: "Codex",
-        runtimeMode: "full-access",
-        activeTurnId: TurnId.make("turn-2"),
-        lastError: null,
-        updatedAt: "2026-08-12T15:45:00.000Z",
-      },
+      runtime: runtime("running"),
     });
 
     expect(resolveBoardThreadState(thread, "visible")).toBe("approval");
@@ -107,22 +80,14 @@ describe("resolveBoardThreadState", () => {
     expect(
       resolveBoardThreadState(
         threadShell({
-          session: {
-            threadId: ThreadId.make("thread-1"),
-            status: "starting",
-            providerName: "Codex",
-            runtimeMode: "full-access",
-            activeTurnId: null,
-            lastError: null,
-            updatedAt: "2026-08-12T15:45:00.000Z",
-          },
+          runtime: runtime("starting"),
         }),
         "visible",
       ),
     ).toBe("working");
-    expect(
-      resolveBoardThreadState(threadShell({ backgroundLiveness: "monitoring" }), "visible"),
-    ).toBe("working");
+    expect(resolveBoardThreadState(threadShell({ runtime: runtime("idle") }), "visible")).toBe(
+      "working",
+    );
   });
 
   it("keeps completed resting threads in Idle without read-state input", () => {

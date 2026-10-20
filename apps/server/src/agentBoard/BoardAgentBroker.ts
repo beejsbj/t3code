@@ -1,7 +1,6 @@
 import {
   AgentBoardError,
   type AgentBoardClient,
-  type CommandId,
   type AgentBoardCommand,
   type AgentBoardHostResponse,
   type AgentBoardResult,
@@ -30,24 +29,33 @@ interface Pending {
 }
 
 const REQUEST_EXECUTION_WINDOW_MS = 12_000;
+const MAX_REMEMBERED_ORIGINS = 2_048;
 
 interface State {
   readonly hosts: ReadonlyMap<number, Host>;
   readonly rpcClientIdByStableId: ReadonlyMap<string, number>;
-  readonly bindings: ReadonlyMap<
-    ThreadId,
-    | { readonly type: "stable"; readonly clientId: string }
-    | { readonly type: "connection"; readonly rpcClientId: number }
-  >;
+  /** Board client id (one per page load, kept across socket reconnects) that last messaged each thread. */
+  readonly origins: ReadonlyMap<ThreadId, string>;
   readonly pending: ReadonlyMap<string, Pending>;
-  readonly turnOrigins: ReadonlyMap<
-    CommandId,
-    {
-      readonly rpcClientId: number;
-      readonly stableClientId: string | undefined;
-      readonly accepted: boolean;
-    }
-  >;
+}
+
+/**
+ * `origin`: the board client that last sent a message to the thread.
+ * `only-client`: that client is unknown or gone, and exactly one board client
+ * is connected, so it was used instead.
+ */
+export type AgentBoardRouting = "origin" | "only-client";
+
+export interface AgentBoardRoutedResult {
+  readonly result: AgentBoardResult;
+  readonly client: AgentBoardClient;
+  readonly routing: AgentBoardRouting;
+}
+
+interface Selected {
+  readonly rpcClientId: number;
+  readonly connection: Host;
+  readonly routing: AgentBoardRouting;
 }
 
 export interface BoardAgentBrokerShape {
@@ -57,16 +65,17 @@ export interface BoardAgentBrokerShape {
   ) => Effect.Effect<Stream.Stream<AgentBoardStreamEvent>>;
   readonly respond: (clientId: number, response: AgentBoardHostResponse) => Effect.Effect<void>;
   readonly listClients: () => Effect.Effect<ReadonlyArray<AgentBoardClient>>;
-  readonly reserveTurnOrigin: (commandId: CommandId, clientId: number) => Effect.Effect<void>;
-  readonly cancelTurnOrigin: (commandId: CommandId, clientId: number) => Effect.Effect<void>;
-  readonly acceptTurnOrigin: (
-    commandId: CommandId | null,
-    threadId: ThreadId,
-  ) => Effect.Effect<void>;
+  /**
+   * Records that the websocket client `rpcClientId` sent a message to
+   * `threadId`. A connection that is not hosting a board (mobile, a client that
+   * has not subscribed yet) leaves the thread's previous origin in place.
+   */
+  readonly recordOrigin: (rpcClientId: number, threadId: ThreadId) => Effect.Effect<void>;
+  /** Runs a board command for `threadId` on the board that thread's user is looking at. */
   readonly invoke: (
     threadId: ThreadId,
     command: AgentBoardCommand,
-  ) => Effect.Effect<AgentBoardResult, AgentBoardError>;
+  ) => Effect.Effect<AgentBoardRoutedResult, AgentBoardError>;
   readonly invokeClient: (
     clientId: string,
     threadId: ThreadId | undefined,
@@ -83,9 +92,8 @@ export const make = Effect.gen(function* () {
   const state = yield* SynchronizedRef.make<State>({
     hosts: new Map(),
     rpcClientIdByStableId: new Map(),
-    bindings: new Map(),
+    origins: new Map(),
     pending: new Map(),
-    turnOrigins: new Map(),
   });
 
   const disconnect = Effect.fn("BoardAgentBroker.disconnect")(function* (
@@ -225,97 +233,51 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const reserveTurnOrigin: BoardAgentBrokerShape["reserveTurnOrigin"] = Effect.fn(
-    "BoardAgentBroker.reserveTurnOrigin",
-  )((commandId, clientId) =>
+  const recordOrigin: BoardAgentBrokerShape["recordOrigin"] = Effect.fn(
+    "BoardAgentBroker.recordOrigin",
+  )((rpcClientId, threadId) =>
     SynchronizedRef.update(state, (current) => {
-      if (current.turnOrigins.has(commandId)) return current;
-      const turnOrigins = new Map(current.turnOrigins);
-      turnOrigins.set(commandId, {
-        rpcClientId: clientId,
-        stableClientId: current.hosts.get(clientId)?.client.clientId,
-        accepted: false,
-      });
-      while (turnOrigins.size > 2_048) {
-        const oldest = turnOrigins.keys().next().value;
+      const host = current.hosts.get(rpcClientId);
+      if (!host) return current;
+      const origins = new Map(current.origins);
+      // Re-inserting keeps the map in recency order, so trimming drops the stalest thread.
+      origins.delete(threadId);
+      origins.set(threadId, host.client.clientId);
+      while (origins.size > MAX_REMEMBERED_ORIGINS) {
+        const oldest = origins.keys().next().value;
         if (oldest === undefined) break;
-        turnOrigins.delete(oldest);
+        origins.delete(oldest);
       }
-      return { ...current, turnOrigins };
-    }),
-  );
-
-  const cancelTurnOrigin: BoardAgentBrokerShape["cancelTurnOrigin"] = Effect.fn(
-    "BoardAgentBroker.cancelTurnOrigin",
-  )((commandId, clientId) =>
-    SynchronizedRef.update(state, (current) => {
-      const origin = current.turnOrigins.get(commandId);
-      if (!origin || origin.accepted || origin.rpcClientId !== clientId) return current;
-      const turnOrigins = new Map(current.turnOrigins);
-      turnOrigins.delete(commandId);
-      return { ...current, turnOrigins };
-    }),
-  );
-
-  const acceptTurnOrigin: BoardAgentBrokerShape["acceptTurnOrigin"] = Effect.fn(
-    "BoardAgentBroker.acceptTurnOrigin",
-  )((commandId, threadId) =>
-    SynchronizedRef.update(state, (current) => {
-      if (commandId === null) return current;
-      const origin = current.turnOrigins.get(commandId);
-      if (!origin || origin.accepted) return current;
-      const bindings = new Map(current.bindings);
-      const stableClientId =
-        origin.stableClientId ?? current.hosts.get(origin.rpcClientId)?.client.clientId;
-      bindings.delete(threadId);
-      bindings.set(
-        threadId,
-        stableClientId === undefined
-          ? { type: "connection", rpcClientId: origin.rpcClientId }
-          : { type: "stable", clientId: stableClientId },
-      );
-      while (bindings.size > 2_048) {
-        const oldest = bindings.keys().next().value;
-        if (oldest === undefined) break;
-        bindings.delete(oldest);
-      }
-      const turnOrigins = new Map(current.turnOrigins);
-      turnOrigins.set(commandId, { ...origin, accepted: true });
-      while (turnOrigins.size > 2_048) {
-        const oldest = turnOrigins.keys().next().value;
-        if (oldest === undefined) break;
-        turnOrigins.delete(oldest);
-      }
-      return { ...current, bindings, turnOrigins };
+      return { ...current, origins };
     }),
   );
 
   const invokeResolved = Effect.fn("BoardAgentBroker.invokeResolved")(function* (
     threadId: ThreadId | undefined,
     command: AgentBoardCommand,
-    select: (
-      current: State,
-    ) => { readonly rpcClientId: number; readonly connection: Host } | undefined,
-    unavailableMessage: string,
+    select: (current: State) => Selected | string,
   ) {
     const deferred = yield* Deferred.make<AgentBoardResult, AgentBoardError>();
-    const requestId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+    const requestId = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
     // Leave time for the receipt to cross the socket before the broker's
     // 15-second response timeout.
     const expiresAtMs = (yield* Clock.currentTimeMillis) + REQUEST_EXECUTION_WINDOW_MS;
-    const host = yield* SynchronizedRef.modify(state, (current) => {
-      const selected = select(current);
-      if (!selected) return [undefined, current] as const;
-      const pending = new Map(current.pending);
-      pending.set(requestId, {
-        rpcClientId: selected.rpcClientId,
-        queue: selected.connection.queue,
-        deferred,
-      });
-      return [selected, { ...current, pending }] as const;
-    });
-    if (!host) {
-      return yield* new AgentBoardError({ message: unavailableMessage });
+    const host = yield* SynchronizedRef.modify(
+      state,
+      (current): readonly [Selected | string, State] => {
+        const selected = select(current);
+        if (typeof selected === "string") return [selected, current] as const;
+        const pending = new Map(current.pending);
+        pending.set(requestId, {
+          rpcClientId: selected.rpcClientId,
+          queue: selected.connection.queue,
+          deferred,
+        });
+        return [selected, { ...current, pending }] as const;
+      },
+    );
+    if (typeof host === "string") {
+      return yield* new AgentBoardError({ message: host });
     }
     const offered = yield* Queue.offer(host.connection.queue, {
       type: "request",
@@ -334,7 +296,7 @@ export const make = Effect.gen(function* () {
         message: "The selected board client disconnected before the command could be sent.",
       });
     }
-    return yield* Deferred.await(deferred).pipe(
+    const result = yield* Deferred.await(deferred).pipe(
       Effect.timeoutOrElse({
         duration: "15 seconds",
         orElse: () =>
@@ -352,48 +314,71 @@ export const make = Effect.gen(function* () {
         }),
       ),
     );
+    return {
+      result,
+      client: host.connection.client,
+      routing: host.routing,
+    } satisfies AgentBoardRoutedResult;
   });
 
+  /**
+   * Board lanes live in each browser or desktop window, so a command has to
+   * reach the board the user is looking at. That is the window that last sent
+   * a message to the thread. When that window is unknown (the thread was
+   * started by an agent, a schedule, or mobile, or the server restarted) or has
+   * disconnected, a lone connected board is unambiguous and is used instead;
+   * with several connected boards the command fails rather than guess, because
+   * each window keeps its own lanes and the agent would report the wrong move.
+   */
+  const selectForThread =
+    (threadId: ThreadId) =>
+    (current: State): Selected | string => {
+      const originClientId = current.origins.get(threadId);
+      const originRpcClientId =
+        originClientId === undefined
+          ? undefined
+          : current.rpcClientIdByStableId.get(originClientId);
+      const origin =
+        originRpcClientId === undefined ? undefined : current.hosts.get(originRpcClientId);
+      if (originRpcClientId !== undefined && origin) {
+        return { rpcClientId: originRpcClientId, connection: origin, routing: "origin" };
+      }
+      const lone = current.hosts.size === 1 ? [...current.hosts][0] : undefined;
+      if (lone !== undefined) {
+        const [rpcClientId, connection] = lone;
+        return { rpcClientId, connection, routing: "only-client" };
+      }
+      if (current.hosts.size === 0) {
+        return "No T3 Code web or desktop window is connected to this server, so there is no board to update. Nothing was changed.";
+      }
+      const why =
+        originClientId === undefined
+          ? "No T3 Code window with a board has sent a message to this thread"
+          : "The T3 Code window that last sent a message to this thread is no longer connected";
+      return `${why}, and ${current.hosts.size} windows with boards are open, so the board to use is ambiguous. Nothing was changed. Ask the user to send a message to this thread from the window whose board should change.`;
+    };
+
   const invoke: BoardAgentBrokerShape["invoke"] = Effect.fn("BoardAgentBroker.invoke")(
-    (threadId, command) =>
-      invokeResolved(
-        threadId,
-        command,
-        (current) => {
-          const binding = current.bindings.get(threadId);
-          const rpcClientId =
-            binding?.type === "stable"
-              ? current.rpcClientIdByStableId.get(binding.clientId)
-              : binding?.rpcClientId;
-          const connection = rpcClientId === undefined ? undefined : current.hosts.get(rpcClientId);
-          return rpcClientId === undefined || !connection ? undefined : { rpcClientId, connection };
-        },
-        "Board commands are unavailable because the client that started this turn is not connected with board support.",
-      ),
+    (threadId, command) => invokeResolved(threadId, command, selectForThread(threadId)),
   );
 
   const invokeClient: BoardAgentBrokerShape["invokeClient"] = Effect.fn(
     "BoardAgentBroker.invokeClient",
   )((clientId, threadId, command) =>
-    invokeResolved(
-      threadId,
-      command,
-      (current) => {
-        const rpcClientId = current.rpcClientIdByStableId.get(clientId);
-        const connection = rpcClientId === undefined ? undefined : current.hosts.get(rpcClientId);
-        return rpcClientId === undefined || !connection ? undefined : { rpcClientId, connection };
-      },
-      `Board client ${clientId} is not connected to this server.`,
-    ),
+    invokeResolved(threadId, command, (current) => {
+      const rpcClientId = current.rpcClientIdByStableId.get(clientId);
+      const connection = rpcClientId === undefined ? undefined : current.hosts.get(rpcClientId);
+      return rpcClientId === undefined || !connection
+        ? `Board client ${clientId} is not connected to this server.`
+        : { rpcClientId, connection, routing: "origin" };
+    }).pipe(Effect.map(({ result }) => result)),
   );
 
   return {
     connect,
     respond,
     listClients,
-    reserveTurnOrigin,
-    cancelTurnOrigin,
-    acceptTurnOrigin,
+    recordOrigin,
     invoke,
     invokeClient,
   } satisfies BoardAgentBrokerShape;

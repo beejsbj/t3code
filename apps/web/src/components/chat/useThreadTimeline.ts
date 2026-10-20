@@ -1,211 +1,118 @@
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThread } from "@t3tools/client-runtime/state/models";
+import {
+  deriveLatestThreadRun,
+  deriveRunlessWorkStartedAt,
+  deriveThreadActivityRun,
+  deriveThreadRuntime,
+} from "@t3tools/client-runtime/state/thread-execution";
+import { derivePendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
 import type {
   MessageId,
+  OrchestrationV2ProjectedTurnItem,
   ScopedThreadRef,
   ServerProvider,
   ServerProviderSkill,
 } from "@t3tools/contracts";
-import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
-import { useCallback, useMemo, useRef } from "react";
 
-import { useTheme } from "../../hooks/useTheme.ts";
+import { useIncrementalTimelineEntries } from "../../hooks/useIncrementalTimelineEntries.ts";
 import { useClientSettings } from "../../hooks/useSettings.ts";
-import { useTurnDiffSummaries } from "../../hooks/useTurnDiffSummaries.ts";
-import {
-  deriveActiveWorkStartedAt,
-  deriveTimelineEntries,
-  deriveWorkLogEntries,
-  isLatestTurnSettled,
-} from "../../session-logic.ts";
-import { useProject, useServerConfigs } from "../../state/entities.ts";
-import type { ChatMessage, Thread, TurnDiffSummary } from "../../types.ts";
-import type { TimelineLatestTurn } from "./MessagesTimeline.logic.ts";
+import { deriveActiveWorkStartedAt, isLatestRunSettled } from "../../session-logic.ts";
+import { useProject, useThreadCheckpointSummaries } from "../../state/entities.ts";
+import type { ChatMessage, SidebarThreadSummary } from "../../types.ts";
+import { deriveCommittedServerUserMessageIds } from "../ChatView.logic.ts";
+
+/**
+ * User messages the server already has. Optimistic sends retire against this,
+ * including queued messages that have no turn item yet.
+ */
+export function deriveServerAcknowledgedUserMessageIds(
+  visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  detail: EnvironmentThread | null,
+): ReadonlySet<MessageId> {
+  const ids = new Set(deriveCommittedServerUserMessageIds(visibleTurnItems));
+  for (const message of detail?.projection.messages ?? []) {
+    if (message.role === "user") ids.add(message.id);
+  }
+  return ids;
+}
 
 const EMPTY_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
-const EMPTY_PROVIDERS: ServerProvider[] = [];
-
-export function deriveRevertTurnCountByUserMessageId(
-  timelineEntries: ReturnType<typeof deriveTimelineEntries>,
-  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>,
-  inferredCheckpointTurnCountByTurnId: Readonly<Record<string, number>>,
-): Map<MessageId, number> {
-  const byUserMessageId = new Map<MessageId, number>();
-  let userMessageId: MessageId | null = null;
-
-  for (const entry of timelineEntries) {
-    if (entry.kind !== "message") {
-      continue;
-    }
-
-    if (entry.message.role === "user") {
-      userMessageId = entry.message.id;
-      continue;
-    }
-    if (userMessageId === null) {
-      continue;
-    }
-
-    const summary = turnDiffSummaryByAssistantMessageId.get(entry.message.id);
-    if (!summary) {
-      continue;
-    }
-
-    const turnCount =
-      summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
-    if (typeof turnCount === "number") {
-      byUserMessageId.set(userMessageId, Math.max(0, turnCount - 1));
-    }
-    userMessageId = null;
-  }
-
-  return byUserMessageId;
-}
+const EMPTY_PENDING_REQUESTS = { approvals: [], userInputs: [] } as const;
 
 export type UseThreadTimelineInput = {
   readonly threadRef: ScopedThreadRef;
-  readonly thread: Thread | null | undefined;
-  readonly timelineMessages: ReadonlyArray<ChatMessage>;
-  readonly isRevertingCheckpoint: boolean;
-  readonly onRevertToTurnCount: (turnCount: number) => void | Promise<void>;
-  readonly resolvedTheme?: "light" | "dark";
-  readonly timestampFormat?: TimestampFormat;
-  readonly skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
-  readonly workspaceRoot?: string | undefined;
-  readonly markdownCwd?: string | undefined;
-  readonly isWorking?: boolean;
-  readonly activeTurnInProgress?: boolean;
-  readonly activeTurnStartedAt?: string | null;
-  readonly sendStartedAt?: string | null;
+  readonly shell: SidebarThreadSummary;
+  readonly detail: EnvironmentThread | null;
+  readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
+  readonly optimisticMessages: ReadonlyArray<ChatMessage>;
+  readonly providerStatuses: ReadonlyArray<ServerProvider>;
+  readonly isSendBusy: boolean;
 };
 
+/**
+ * The embedded-card subset of ChatView's timeline derivation: the server
+ * projection's visible turn items plus this card's optimistic sends.
+ */
 export function useThreadTimeline(input: UseThreadTimelineInput) {
-  const timestampFormatFromSettings = useClientSettings((settings) => settings.timestampFormat);
-  const { resolvedTheme: themeFromHook } = useTheme();
-  const resolvedTheme = input.resolvedTheme ?? themeFromHook;
-  const timestampFormat = input.timestampFormat ?? timestampFormatFromSettings;
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const { threadRef, shell } = input;
+  const routeThreadKey = scopedThreadKey(threadRef);
+  const projection = input.detail?.projection ?? null;
 
-  const thread = input.thread;
-  const threadRef = input.threadRef;
-  const routeThreadKey = useMemo(() => scopedThreadKey(threadRef), [threadRef]);
+  const project = useProject(scopeProjectRef(shell.environmentId, shell.projectId));
+  const markdownCwd = project
+    ? projectScriptCwd({
+        project: { cwd: project.workspaceRoot },
+        worktreePath: shell.worktreePath ?? null,
+      })
+    : undefined;
+  const workspaceRoot = shell.worktreePath ?? project?.workspaceRoot ?? undefined;
+  const skills =
+    input.providerStatuses.find(
+      (provider) => provider.instanceId === shell.modelSelection.instanceId,
+    )?.skills ?? EMPTY_SKILLS;
 
-  const project = useProject(
-    thread ? scopeProjectRef(thread.environmentId, thread.projectId) : null,
-  );
-  const serverConfigs = useServerConfigs();
-  const providerStatuses = useMemo(
-    () => serverConfigs.get(threadRef.environmentId)?.providers ?? EMPTY_PROVIDERS,
-    [serverConfigs, threadRef.environmentId],
-  );
+  const timelineEntries = useIncrementalTimelineEntries(routeThreadKey, {
+    visibleTurnItems: input.visibleTurnItems,
+    optimisticMessages: input.optimisticMessages,
+    ...(projection === null
+      ? {}
+      : { attempts: projection.attempts, nodes: projection.nodes, plans: projection.plans }),
+  });
 
-  const derivedMarkdownCwd = useMemo(() => {
-    if (!thread || !project) {
-      return undefined;
-    }
-    return projectScriptCwd({
-      project: { cwd: project.workspaceRoot },
-      worktreePath: thread.worktreePath ?? null,
-    });
-  }, [project, thread]);
-
-  const derivedWorkspaceRoot = thread?.worktreePath ?? project?.workspaceRoot ?? undefined;
-
-  const markdownCwd = input.markdownCwd ?? derivedMarkdownCwd ?? undefined;
-  const workspaceRoot = input.workspaceRoot ?? derivedWorkspaceRoot;
-
-  const derivedSkills = useMemo(() => {
-    if (!thread) {
-      return EMPTY_SKILLS;
-    }
-    const instanceId = thread.modelSelection.instanceId;
-    return (
-      providerStatuses.find((provider) => provider.instanceId === instanceId)?.skills ??
-      EMPTY_SKILLS
-    );
-  }, [providerStatuses, thread]);
-
-  const skills = input.skills ?? derivedSkills;
-
-  const workLogEntries = useMemo(
-    () => deriveWorkLogEntries(thread?.activities ?? []),
-    [thread?.activities],
-  );
-
-  const timelineEntries = useMemo(
-    () =>
-      deriveTimelineEntries(input.timelineMessages, thread?.proposedPlans ?? [], workLogEntries),
-    [input.timelineMessages, thread?.proposedPlans, workLogEntries],
-  );
-
-  const latestTurn: TimelineLatestTurn | null = thread?.latestTurn ?? null;
-  const session = thread?.session ?? null;
-  const latestTurnSettled = isLatestTurnSettled(latestTurn, session);
-
-  const sessionIsWorking =
-    session?.status === "running" || session?.status === "starting" || input.isRevertingCheckpoint;
-
-  const isWorking = input.isWorking ?? sessionIsWorking;
-  const activeTurnInProgress = input.activeTurnInProgress ?? (isWorking || !latestTurnSettled);
+  const latestRun = projection === null ? shell.latestRun : deriveLatestThreadRun(projection);
+  const activityRun = projection === null ? shell.latestRun : deriveThreadActivityRun(projection);
+  const runtime = projection === null ? shell.runtime : deriveThreadRuntime(projection);
+  const runlessWorkStartedAt = projection === null ? null : deriveRunlessWorkStartedAt(projection);
+  const latestRunSettled = isLatestRunSettled(latestRun, runtime);
+  const isRunning = runtime?.status === "running" || runtime?.status === "waiting";
+  const isWorking = isRunning || input.isSendBusy || runlessWorkStartedAt !== null;
   const activeTurnStartedAt =
-    input.activeTurnStartedAt ??
-    deriveActiveWorkStartedAt(latestTurn, session, input.sendStartedAt ?? null);
+    deriveActiveWorkStartedAt(activityRun, runtime, null) ?? runlessWorkStartedAt;
 
-  const runningTurnId = session?.status === "running" ? (session.activeTurnId ?? null) : null;
-
-  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } = useTurnDiffSummaries(thread);
-
-  const turnDiffSummaryByAssistantMessageId = useMemo(() => {
-    const byMessageId = new Map<MessageId, TurnDiffSummary>();
-    for (const summary of turnDiffSummaries) {
-      if (!summary.assistantMessageId) continue;
-      byMessageId.set(summary.assistantMessageId, summary);
-    }
-    return byMessageId;
-  }, [turnDiffSummaries]);
-
-  const revertTurnCountByUserMessageId = useMemo(
-    () =>
-      deriveRevertTurnCountByUserMessageId(
-        timelineEntries,
-        turnDiffSummaryByAssistantMessageId,
-        inferredCheckpointTurnCountByTurnId,
-      ),
-    [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId],
-  );
-
-  const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
-  revertTurnCountRef.current = revertTurnCountByUserMessageId;
-  const onRevertToTurnCountRef = useRef(input.onRevertToTurnCount);
-  onRevertToTurnCountRef.current = input.onRevertToTurnCount;
-
-  const onRevertUserMessage = useCallback((messageId: MessageId) => {
-    const targetTurnCount = revertTurnCountRef.current.get(messageId);
-    if (typeof targetTurnCount !== "number") {
-      return;
-    }
-    void onRevertToTurnCountRef.current(targetTurnCount);
-  }, []);
-
-  const activeThreadEnvironmentId = threadRef.environmentId;
+  const turnDiffSummaries = useThreadCheckpointSummaries(threadRef);
+  const pendingRequests =
+    projection === null ? EMPTY_PENDING_REQUESTS : derivePendingThreadRequests(projection);
 
   return {
     timelineEntries,
-    latestTurn,
-    runningTurnId,
+    runs: projection?.runs ?? [],
+    latestRun: activityRun,
+    runningRunId: runtime?.activeRunId ?? null,
+    runtime,
     isWorking,
-    activeTurnInProgress,
+    runlessWorkActive: runlessWorkStartedAt !== null,
+    activeTurnInProgress: isWorking || !latestRunSettled,
     activeTurnStartedAt,
     turnDiffSummaries,
-    turnDiffSummaryByAssistantMessageId,
-    revertTurnCountByUserMessageId,
-    onRevertUserMessage,
+    pendingApprovals: pendingRequests.approvals,
+    pendingUserInputs: pendingRequests.userInputs,
     markdownCwd,
     workspaceRoot,
-    resolvedTheme,
     timestampFormat,
     skills,
     routeThreadKey,
-    activeThreadEnvironmentId,
-    isRevertingCheckpoint: input.isRevertingCheckpoint,
   };
 }

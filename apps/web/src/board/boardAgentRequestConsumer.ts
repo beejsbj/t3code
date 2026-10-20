@@ -1,5 +1,5 @@
 import type { AgentBoardStreamEvent } from "@t3tools/contracts";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 type StreamResult<E> = AsyncResult.AsyncResult<AgentBoardStreamEvent, E>;
 
