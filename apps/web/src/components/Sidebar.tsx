@@ -177,7 +177,7 @@ import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
-import { formatRelativeTimeLabel, parseTimestampDate } from "../timestampFormat";
+import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -195,7 +195,9 @@ import {
   applySidebarThreadDrop,
   bucketSidebarActiveThreads,
   filterSidebarV2VisibleThreads,
-  isSidebarAttentionStatus,
+  isSidebarThreadWoke,
+  resolveSidebarCardDetails,
+  sidebarThreadNeedsAttention,
   sidebarProjectGroupKey,
   sidebarProjectGroupMarker,
   buildBulkTitleRegenerationContextMenuItem,
@@ -1335,7 +1337,9 @@ function SidebarAttentionHeader(props: { count: number }) {
 
 // A project group inside Active. Collapsing hides its rows but never a row
 // that needs the user: those already sit in the attention band above. A
-// collapsed group with a finished, unvisited thread shows an unread dot.
+// collapsed group with a finished or woke thread not yet seen shows an unread
+// dot. The count lines up with the rows' time column; the hover "+" takes its
+// place rather than reserving room beside it.
 function SidebarProjectGroupHeader(props: {
   groupKey: string;
   label: string;
@@ -1343,6 +1347,7 @@ function SidebarProjectGroupHeader(props: {
   count: number;
   expanded: boolean;
   hasUnread: boolean;
+  spaced: boolean;
   onToggle: (groupKey: string) => void;
   onNewThread: ((groupKey: string) => void) | null;
 }) {
@@ -1350,13 +1355,16 @@ function SidebarProjectGroupHeader(props: {
     <SortableSidebarMarker
       marker={sidebarProjectGroupMarker(props.groupKey)}
       data-testid="sidebar-project-group"
-      className="group/project-header mx-0.5 flex h-7 items-center rounded-md hover:bg-sidebar-row-hover"
+      className={cn(
+        "group/project-header relative mx-0.5 h-7 rounded-md hover:bg-sidebar-row-hover",
+        props.spaced && "mt-2",
+      )}
     >
       <button
         type="button"
         aria-expanded={props.expanded}
         onClick={() => props.onToggle(props.groupKey)}
-        className="flex h-7 min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-md px-1.5 text-left text-xs font-medium text-sidebar-muted-foreground outline-none group-hover/project-header:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+        className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-md ps-1.5 pe-2 text-left text-xs font-medium text-sidebar-muted-foreground outline-none group-hover/project-header:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         <ChevronRightIcon
           aria-hidden
@@ -1376,16 +1384,23 @@ function SidebarProjectGroupHeader(props: {
             className="size-1.5 shrink-0 rounded-full bg-info"
           />
         ) : null}
-        <span className="shrink-0 tabular-nums text-sidebar-muted-foreground/60">
+        <span
+          className={cn(
+            "shrink-0 tabular-nums text-sidebar-muted-foreground/60",
+            props.onNewThread &&
+              "group-hover/project-header:invisible group-has-[[data-slot=project-new-thread]:focus-visible]/project-header:invisible",
+          )}
+        >
           {props.count}
         </span>
       </button>
       {props.onNewThread ? (
         <button
           type="button"
+          data-slot="project-new-thread"
           aria-label={`New thread in ${props.label}`}
           onClick={() => props.onNewThread?.(props.groupKey)}
-          className="me-0.5 inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground opacity-0 outline-none hover:text-sidebar-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 group-hover/project-header:opacity-100"
+          className="pointer-events-none absolute inset-y-0.5 end-0.5 inline-flex w-6 cursor-pointer items-center justify-center rounded-md text-sidebar-muted-foreground opacity-0 outline-none hover:text-sidebar-foreground focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100"
         >
           <PlusIcon aria-hidden className="size-3.5" />
         </button>
@@ -1756,12 +1771,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
-  const lastVisitedDate = lastVisitedAt === undefined ? null : parseTimestampDate(lastVisitedAt);
-  const wokeAtDate = props.wokeAt === null ? null : parseTimestampDate(props.wokeAt);
-  const isWoke =
-    wokeAtDate !== null &&
-    (lastVisitedDate === null || lastVisitedDate < wokeAtDate) &&
-    thread.settledOverride !== "settled";
+  const isWoke = isSidebarThreadWoke({
+    wokeAt: props.wokeAt,
+    lastVisitedAt,
+    settledOverride: thread.settledOverride,
+  });
   const shouldRecede = shouldRecedeSidebarThread({
     status,
     isUnread,
@@ -2375,6 +2389,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   }
 
   const diff = latestRunDiff(thread);
+  const cardDetails = resolveSidebarCardDetails({
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    showsProject: !props.hideProject && Boolean(props.projectDisplayName),
+    showsScratchMachine,
+    hasTerminal: runningTerminalIds.length > 0,
+    hasPullRequest: prBadge !== null,
+    hasDiff: diff !== null,
+    isRemote: isRemote && !showsScratchMachine,
+  });
+  const providerStack = (
+    <SidebarProviderStack
+      thread={thread}
+      providerEntryByInstanceId={props.providerEntryByInstanceId}
+    />
+  );
 
   return (
     <li
@@ -2382,7 +2412,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
-        "list-none py-px [content-visibility:auto] [contain-intrinsic-size:auto_48px]",
+        "list-none py-px [content-visibility:auto]",
+        cardDetails.hasDetailRow
+          ? "[contain-intrinsic-size:auto_48px]"
+          : "[contain-intrinsic-size:auto_34px]",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -2406,7 +2439,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           }
         >
           {accessibleTitle}
-          <div className="relative z-10 h-[2.875rem] px-(--sidebar-row-content-inset) py-1">
+          <div
+            className={cn(
+              "relative z-10 px-(--sidebar-row-content-inset)",
+              cardDetails.hasDetailRow ? "h-[2.875rem] py-1" : "h-8 py-1.5",
+            )}
+          >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {title}
@@ -2416,6 +2454,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 </span>
               ) : null}
               {pinIndicator}
+              {cardDetails.hasDetailRow ? null : (
+                <span aria-hidden className="pointer-events-none inline-flex shrink-0 items-center">
+                  {providerStack}
+                </span>
+              )}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -2556,71 +2599,73 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
-            <div className="mt-0.5 flex h-4 min-w-0 items-center gap-1.5 text-secondary-label text-2xs">
-              {!props.hideProject && props.projectDisplayName ? (
-                <span className="flex max-w-[55%] shrink-0 items-center gap-1">
-                  {props.project ? (
-                    <ProjectFavicon project={props.project} className="size-3 shrink-0" />
-                  ) : null}
-                  <span
-                    className={cn("min-w-0 truncate", shouldRecede ? "font-normal" : "font-medium")}
-                  >
-                    {props.projectDisplayName}
+            {cardDetails.hasDetailRow ? (
+              <div className="mt-0.5 flex h-4 min-w-0 items-center gap-1.5 text-secondary-label text-2xs">
+                {!props.hideProject && props.projectDisplayName ? (
+                  <span className="flex max-w-[55%] shrink-0 items-center gap-1">
+                    {props.project ? (
+                      <ProjectFavicon project={props.project} className="size-3 shrink-0" />
+                    ) : null}
+                    <span
+                      className={cn(
+                        "min-w-0 truncate",
+                        shouldRecede ? "font-normal" : "font-medium",
+                      )}
+                    >
+                      {props.projectDisplayName}
+                    </span>
                   </span>
-                </span>
-              ) : null}
-              {thread.branch ? (
-                <>
-                  <ThreadWorktreeIndicator thread={thread} />
-                  <span className="flex min-w-0 flex-1 text-muted-foreground/40">
-                    <MiddleTruncate value={thread.branch} showTitle={false} />
-                  </span>
-                </>
-              ) : showsScratchMachine ? (
-                <>
-                  <EnvironmentMachineIcon
-                    aria-hidden
-                    kind={props.environmentMachine}
-                    className="size-3 shrink-0 text-muted-foreground/40"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground/40">
-                    {props.scratchMachineLabel}
-                  </span>
-                </>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {terminalStatusIcon}
-              {prBadge}
-              {diff ? (
-                <span className="shrink-0 font-mono">
-                  <span className="text-diff-addition-foreground">
-                    +{formatDiffCount(diff.insertions)}
-                  </span>{" "}
-                  <span className="text-diff-deletion-foreground">
-                    −{formatDiffCount(diff.deletions)}
-                  </span>
-                </span>
-              ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
-                {isRemote && !showsScratchMachine ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                ) : null}
+                {cardDetails.branch !== null ? (
+                  <>
+                    <ThreadWorktreeIndicator thread={thread} />
+                    <span className="flex min-w-0 flex-1 text-muted-foreground/40">
+                      <MiddleTruncate value={cardDetails.branch} showTitle={false} />
+                    </span>
+                  </>
+                ) : showsScratchMachine ? (
+                  <>
                     <EnvironmentMachineIcon
                       aria-hidden
                       kind={props.environmentMachine}
-                      className="size-3.5"
+                      className="size-3 shrink-0 text-muted-foreground/40"
                     />
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground/40">
+                      {props.scratchMachineLabel}
+                    </span>
+                  </>
+                ) : (
+                  <span className="flex-1" />
+                )}
+                {terminalStatusIcon}
+                {prBadge}
+                {diff ? (
+                  <span className="shrink-0 font-mono">
+                    <span className="text-diff-addition-foreground">
+                      +{formatDiffCount(diff.insertions)}
+                    </span>{" "}
+                    <span className="text-diff-deletion-foreground">
+                      −{formatDiffCount(diff.deletions)}
+                    </span>
                   </span>
                 ) : null}
-                <SidebarProviderStack
-                  thread={thread}
-                  providerEntryByInstanceId={props.providerEntryByInstanceId}
-                />
-              </span>
-            </div>
+                <span
+                  aria-hidden
+                  className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+                >
+                  {isRemote && !showsScratchMachine ? (
+                    <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                      <EnvironmentMachineIcon
+                        aria-hidden
+                        kind={props.environmentMachine}
+                        className="size-3.5"
+                      />
+                    </span>
+                  ) : null}
+                  {providerStack}
+                </span>
+              </div>
+            ) : null}
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
         </TooltipTrigger>
@@ -3744,6 +3789,17 @@ export default function Sidebar() {
         event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
     });
   };
+  const threadLastVisitedAt = (thread: EnvironmentThreadShell) =>
+    resolveThreadLastVisitedAt(
+      thread.lastVisitedAt,
+      threadLastVisitedAtById[threadShellKey(thread)],
+    );
+  const isThreadWoke = (thread: EnvironmentThreadShell) =>
+    isSidebarThreadWoke({
+      wokeAt: threadWokeAt(thread, { now: snoozeNow }),
+      lastVisitedAt: threadLastVisitedAt(thread),
+      settledOverride: thread.settledOverride,
+    });
   // With the inbox time-ordered, Active groups by project: most recent project
   // first, and rows that need the user lifted above every group. A scoped
   // sidebar already shows one project, so it stays flat.
@@ -3755,7 +3811,11 @@ export default function Sidebar() {
             const memberKey = `${thread.environmentId}:${thread.projectId}`;
             return projectGroupKeyByMemberKey.get(memberKey) ?? memberKey;
           },
-          needsAttention: (thread) => isSidebarAttentionStatus(resolveSidebarThreadStatus(thread)),
+          needsAttention: (thread) =>
+            sidebarThreadNeedsAttention({
+              status: resolveSidebarThreadStatus(thread),
+              isWoke: isThreadWoke(thread),
+            }),
         })
       : null;
   const groupedThreadKeys = new Set(
@@ -3766,14 +3826,10 @@ export default function Sidebar() {
       .filter(
         (bucket) =>
           collapsedProjectGroups.includes(bucket.groupKey) &&
-          bucket.threads.some((thread) =>
-            hasUnseenCompletion({
-              ...thread,
-              lastVisitedAt: resolveThreadLastVisitedAt(
-                thread.lastVisitedAt,
-                threadLastVisitedAtById[threadShellKey(thread)],
-              ),
-            }),
+          bucket.threads.some(
+            (thread) =>
+              hasUnseenCompletion({ ...thread, lastVisitedAt: threadLastVisitedAt(thread) }) ||
+              isThreadWoke(thread),
           ),
       )
       .map((bucket) => bucket.groupKey) ?? [],
@@ -5353,6 +5409,10 @@ export default function Sidebar() {
                                 count={projectGroupSizes.get(groupKey) ?? 0}
                                 expanded={!collapsedProjectGroups.includes(groupKey)}
                                 hasUnread={unreadProjectGroups.has(groupKey)}
+                                spaced={
+                                  (projectGrouping?.attention.length ?? 0) > 0 ||
+                                  projectGrouping?.buckets[0]?.groupKey !== groupKey
+                                }
                                 onToggle={toggleProjectGroup}
                                 onNewThread={group ? startThreadInProjectGroup : null}
                               />,

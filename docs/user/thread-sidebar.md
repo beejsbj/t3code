@@ -123,8 +123,8 @@ section**.
 
 While this is on, the active list is ordered by recent activity and grouped by project, with the
 most recently used project first. Click a project header to collapse it; the open thread stays
-visible. Threads waiting on an answer, an approval, or a failure collect under **Needs you** at
-the top, so a collapsed project never hides them. Filtering the sidebar to one project shows a
+visible. Threads waiting on an answer, an approval, or a failure, and snoozed threads that just
+woke, collect under **Needs you** at the top, so a collapsed project never hides them. Filtering the sidebar to one project shows a
 flat list. You cannot drag threads within the active list; turn the setting off to return to your
 saved order.
 

@@ -1008,6 +1008,74 @@ export function isSidebarAttentionStatus(status: SidebarThreadStatus): boolean {
   return SIDEBAR_ATTENTION_STATUSES.has(status);
 }
 
+/** A snooze that ended since the user last looked: the row shows "Woke" until
+    the thread is visited or the notice dismissed. */
+export function isSidebarThreadWoke(input: {
+  readonly wokeAt: string | null;
+  readonly lastVisitedAt: string | undefined;
+  readonly settledOverride: "settled" | "active" | null | undefined;
+}): boolean {
+  if (input.wokeAt === null || input.settledOverride === "settled") return false;
+  const wokeAtMs = Date.parse(input.wokeAt);
+  if (Number.isNaN(wokeAtMs)) return false;
+  const visitedAtMs =
+    input.lastVisitedAt === undefined ? Number.NaN : Date.parse(input.lastVisitedAt);
+  return Number.isNaN(visitedAtMs) || visitedAtMs < wokeAtMs;
+}
+
+/** Whether a row belongs in the "Needs you" band: an attention status, or a
+    woke thread whose row shows "Woke" (a working or waiting row shows that
+    status instead, so it stays with its project). */
+export function sidebarThreadNeedsAttention(input: {
+  readonly status: SidebarThreadStatus;
+  readonly isWoke: boolean;
+}): boolean {
+  return (
+    isSidebarAttentionStatus(input.status) ||
+    resolveSidebarV2TopStatus({ status: input.status, isUnread: false, isWoke: input.isWoke }) ===
+      "woke"
+  );
+}
+
+const SIDEBAR_DEFAULT_BRANCH_NAMES: ReadonlySet<string> = new Set(["main", "master"]);
+
+/**
+ * Decides what a thread card's second line carries. A thread on the
+ * repository's default branch in the project checkout says nothing the
+ * project doesn't, so that branch name is left out; a worktree's branch always
+ * shows. The projects contract carries no default branch, so "default" means
+ * main or master. When nothing meaningful is left (the provider icon alone
+ * doesn't count) the card collapses to one line and the provider icon moves
+ * up beside the time.
+ */
+export function resolveSidebarCardDetails(input: {
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly showsProject: boolean;
+  readonly showsScratchMachine: boolean;
+  readonly hasTerminal: boolean;
+  readonly hasPullRequest: boolean;
+  readonly hasDiff: boolean;
+  readonly isRemote: boolean;
+}): { readonly branch: string | null; readonly hasDetailRow: boolean } {
+  const isDefaultCheckout =
+    input.branch !== null &&
+    input.worktreePath === null &&
+    SIDEBAR_DEFAULT_BRANCH_NAMES.has(input.branch);
+  const branch = input.branch && !isDefaultCheckout ? input.branch : null;
+  return {
+    branch,
+    hasDetailRow:
+      branch !== null ||
+      input.showsProject ||
+      input.showsScratchMachine ||
+      input.hasTerminal ||
+      input.hasPullRequest ||
+      input.hasDiff ||
+      input.isRemote,
+  };
+}
+
 export interface SidebarProjectBucket<T> {
   readonly groupKey: string;
   readonly threads: readonly T[];

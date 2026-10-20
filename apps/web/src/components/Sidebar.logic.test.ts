@@ -62,6 +62,9 @@ import {
   resolveSidebarDropVerb,
   bucketSidebarActiveThreads,
   isSidebarAttentionStatus,
+  isSidebarThreadWoke,
+  resolveSidebarCardDetails,
+  sidebarThreadNeedsAttention,
   sidebarProjectGroupKey,
   sidebarProjectGroupMarker,
   type SidebarThreadStatus,
@@ -2488,5 +2491,108 @@ describe("sidebar project group markers", () => {
       section: "active",
       activeOrder: ["b1", "a1"],
     });
+  });
+});
+
+describe("woke threads in the attention band", () => {
+  const wokeAt = "2026-10-20T10:00:00.000Z";
+
+  it("is woke until the thread is visited after waking or settled", () => {
+    expect(isSidebarThreadWoke({ wokeAt, lastVisitedAt: undefined, settledOverride: null })).toBe(
+      true,
+    );
+    expect(
+      isSidebarThreadWoke({
+        wokeAt,
+        lastVisitedAt: "2026-10-20T09:00:00.000Z",
+        settledOverride: null,
+      }),
+    ).toBe(true);
+    expect(
+      isSidebarThreadWoke({
+        wokeAt,
+        lastVisitedAt: "2026-10-20T10:05:00.000Z",
+        settledOverride: null,
+      }),
+    ).toBe(false);
+    expect(
+      isSidebarThreadWoke({ wokeAt, lastVisitedAt: undefined, settledOverride: "settled" }),
+    ).toBe(false);
+    expect(
+      isSidebarThreadWoke({ wokeAt: null, lastVisitedAt: undefined, settledOverride: null }),
+    ).toBe(false);
+  });
+
+  it("lifts a woke thread out of its project only while its row shows Woke", () => {
+    expect(sidebarThreadNeedsAttention({ status: "ready", isWoke: true })).toBe(true);
+    expect(sidebarThreadNeedsAttention({ status: "ready", isWoke: false })).toBe(false);
+    expect(sidebarThreadNeedsAttention({ status: "working", isWoke: true })).toBe(false);
+    expect(sidebarThreadNeedsAttention({ status: "waiting", isWoke: true })).toBe(false);
+    expect(sidebarThreadNeedsAttention({ status: "input", isWoke: false })).toBe(true);
+
+    type Row = { id: string; project: string; status: SidebarThreadStatus; woke: boolean };
+    const threads: Row[] = [
+      { id: "a1", project: "a", status: "ready", woke: false },
+      { id: "a2", project: "a", status: "ready", woke: true },
+      { id: "b1", project: "b", status: "approval", woke: false },
+    ];
+    const result = bucketSidebarActiveThreads({
+      threads,
+      groupKeyOf: (thread) => thread.project,
+      needsAttention: (thread) =>
+        sidebarThreadNeedsAttention({ status: thread.status, isWoke: thread.woke }),
+    });
+    expect(result.attention.map((thread) => thread.id)).toEqual(["a2", "b1"]);
+    expect(result.buckets.map((group) => [group.groupKey, group.threads.map((t) => t.id)])).toEqual(
+      [["a", ["a1"]]],
+    );
+  });
+});
+
+describe("resolveSidebarCardDetails", () => {
+  const plain = {
+    branch: null,
+    worktreePath: null,
+    showsProject: false,
+    showsScratchMachine: false,
+    hasTerminal: false,
+    hasPullRequest: false,
+    hasDiff: false,
+    isRemote: false,
+  } as const;
+
+  it("collapses a grouped card on the default branch to one line", () => {
+    expect(resolveSidebarCardDetails({ ...plain, branch: "main" })).toEqual({
+      branch: null,
+      hasDetailRow: false,
+    });
+    expect(resolveSidebarCardDetails({ ...plain, branch: "master" }).hasDetailRow).toBe(false);
+    expect(resolveSidebarCardDetails(plain).hasDetailRow).toBe(false);
+  });
+
+  it("keeps feature branches and any worktree branch", () => {
+    expect(resolveSidebarCardDetails({ ...plain, branch: "t3/fix-sidebar" })).toEqual({
+      branch: "t3/fix-sidebar",
+      hasDetailRow: true,
+    });
+    expect(
+      resolveSidebarCardDetails({ ...plain, branch: "main", worktreePath: "/tmp/wt" }),
+    ).toEqual({ branch: "main", hasDetailRow: true });
+  });
+
+  it("keeps the second line for indicators even on the default branch", () => {
+    for (const indicator of [
+      "showsProject",
+      "showsScratchMachine",
+      "hasTerminal",
+      "hasPullRequest",
+      "hasDiff",
+      "isRemote",
+    ] as const) {
+      expect(resolveSidebarCardDetails({ ...plain, branch: "main", [indicator]: true })).toEqual({
+        branch: null,
+        hasDetailRow: true,
+      });
+    }
   });
 });
