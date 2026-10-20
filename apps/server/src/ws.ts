@@ -1791,7 +1791,7 @@ const layerWsRpc = (
       });
 
       const handlers = ServerWsRpcGroup.of({
-        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
+        [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command, metadata) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
             "orchestration_v2.command_type": command.type,
@@ -1825,6 +1825,18 @@ const layerWsRpc = (
                 )
                 .pipe(
                   Effect.tap(() => recordClientCommandAnalytics(command)),
+                  Effect.tap(() => {
+                    // Agent board tools act on the board of the window that last messaged the thread.
+                    const boardThreadId =
+                      command.type === "message.dispatch"
+                        ? command.threadId
+                        : command.type === "thread.fork"
+                          ? command.targetThreadId
+                          : undefined;
+                    return boardThreadId === undefined
+                      ? Effect.void
+                      : boardAgentBroker.recordOrigin(metadata.client.id, boardThreadId);
+                  }),
                   Effect.map((result) => ({ sequence: result.sequence })),
                   Effect.mapError((cause) => {
                     const detail = userFacingDispatchErrorMessage(cause);
