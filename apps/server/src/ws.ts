@@ -181,6 +181,7 @@ import * as TerminalManager from "./terminal/Manager.ts";
 import { withTerminalOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as BoardAgentBroker from "./agentBoard/BoardAgentBroker.ts";
+import { boardOriginThreadId } from "./agentBoard/boardOrigin.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
@@ -1790,6 +1791,9 @@ const layerWsRpc = (
         return result;
       });
 
+      const recordBoardOrigin = (rpcClientId: number, threadId: ThreadId | undefined) =>
+        threadId === undefined ? Effect.void : boardAgentBroker.recordOrigin(rpcClientId, threadId);
+
       const handlers = ServerWsRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command, metadata) =>
           Effect.annotateCurrentSpan({
@@ -1809,6 +1813,8 @@ const layerWsRpc = (
               ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
               : {}),
           }).pipe(
+            // Before the dispatch, so the run it starts can already reach this window's board.
+            Effect.andThen(recordBoardOrigin(metadata.client.id, boardOriginThreadId(command))),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -1825,18 +1831,6 @@ const layerWsRpc = (
                 )
                 .pipe(
                   Effect.tap(() => recordClientCommandAnalytics(command)),
-                  Effect.tap(() => {
-                    // Agent board tools act on the board of the window that last messaged the thread.
-                    const boardThreadId =
-                      command.type === "message.dispatch"
-                        ? command.threadId
-                        : command.type === "thread.fork"
-                          ? command.targetThreadId
-                          : undefined;
-                    return boardThreadId === undefined
-                      ? Effect.void
-                      : boardAgentBroker.recordOrigin(metadata.client.id, boardThreadId);
-                  }),
                   Effect.map((result) => ({ sequence: result.sequence })),
                   Effect.mapError((cause) => {
                     const detail = userFacingDispatchErrorMessage(cause);
@@ -1934,11 +1928,13 @@ const layerWsRpc = (
                 ),
             ),
           ),
-        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input) =>
+        [ORCHESTRATION_V2_WS_METHODS.launchThread]: (input, metadata) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": input.commandId,
             "orchestration_v2.project_id": input.projectId,
           }).pipe(
+            // A draft's first message starts its run here, not through message.dispatch.
+            Effect.andThen(recordBoardOrigin(metadata.client.id, input.threadId)),
             Effect.andThen(
               startup
                 .enqueueCommand(
@@ -1988,6 +1984,8 @@ const layerWsRpc = (
                         Effect.ignore,
                       ),
                   ),
+                  // A launch without a client-chosen id learns its thread id only now.
+                  Effect.tap((result) => recordBoardOrigin(metadata.client.id, result.threadId)),
                   Effect.map((result) => ({
                     ...result,
                     projection: projectThreadProjectionForWire(result.projection),
