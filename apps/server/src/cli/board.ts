@@ -31,7 +31,9 @@ class BoardCliError extends CliError.UserError {
 const fail = (message: string) => Effect.fail(new BoardCliError({ cause: message }));
 
 const clientFlag = Flag.String("client").pipe(
-  Flag.withDescription("Stable client ID shown by `t3 board clients`."),
+  Flag.withDescription(
+    "Client ID shown by `t3 board clients`. It changes whenever that window reloads.",
+  ),
 );
 
 const threadFlag = Flag.String("thread").pipe(
@@ -141,7 +143,9 @@ const runManualBoardCommand = (
   );
 
 const clientsCommand = Command.make("clients", projectLocationFlags).pipe(
-  Command.withDescription("List board-capable clients connected to this T3 server."),
+  Command.withDescription(
+    "List board-capable windows connected to this T3 server. A window gets a new ID when it reloads.",
+  ),
   Command.withHandler((flags) =>
     withManualBoardSession(flags, [AuthOrchestrationReadScope], ({ origin, token }) =>
       executeJsonRequest(

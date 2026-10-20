@@ -286,10 +286,7 @@ import {
 import { SidebarContent, SidebarGroup, SidebarMenuButton, useSidebar } from "./ui/sidebar";
 import { requestBoardFocus, useBoardFocusStore } from "../board/boardFocusStore";
 import { boardLaneController } from "../board/boardLaneController";
-import {
-  buildBoardLaneMoveContextMenuItems,
-  boardLaneForMoveAction,
-} from "../board/boardPlacementMenu";
+import { boardLaneForMoveAction, withBoardLaneMoveItems } from "../board/boardPlacementMenu";
 import { useBoardLaneStore } from "../board/boardLaneStore";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
@@ -4493,8 +4490,8 @@ export default function Sidebar() {
           ) ?? null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            [
-              ...buildThreadActionMenuItems({
+            withBoardLaneMoveItems(
+              buildThreadActionMenuItems({
                 canOperate: readEnvironmentScope(
                   threadRef.environmentId,
                   AuthOrchestrationOperateScope,
@@ -4522,8 +4519,8 @@ export default function Sidebar() {
                 },
                 snoozePresets,
               }),
-              ...buildBoardLaneMoveContextMenuItems(boardLanes),
-            ],
+              boardLanes,
+            ),
             position,
           ),
         );

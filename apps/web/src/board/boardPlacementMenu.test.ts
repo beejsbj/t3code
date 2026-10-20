@@ -4,6 +4,7 @@ import type { BoardLane } from "./boardLaneStore.ts";
 import {
   boardLaneForMoveAction,
   buildBoardLaneMoveContextMenuItems,
+  withBoardLaneMoveItems,
 } from "./boardPlacementMenu.ts";
 
 const LANES: ReadonlyArray<BoardLane> = [
@@ -22,12 +23,27 @@ describe("board lane move context menu", () => {
       {
         id: "move-to-lane",
         label: "Move to lane…",
+        icon: "square-kanban",
         children: WORKFLOW_LANES.map((lane) => ({
           id: `move-to-lane:${lane.id}`,
           label: lane.name,
         })),
       },
     ]);
+  });
+
+  it("places the lane move with the organize actions, above rename and Delete", () => {
+    const ids = withBoardLaneMoveItems(
+      [
+        { id: "pin", label: "Pin thread" },
+        { id: "snooze", label: "Snooze" },
+        { id: "rename", label: "Rename thread", separatorBefore: true },
+        { id: "archive", label: "Archive thread", separatorBefore: true },
+        { id: "delete", label: "Delete", destructive: true },
+      ],
+      LANES,
+    ).map((item) => item.id);
+    expect(ids).toEqual(["pin", "snooze", "move-to-lane", "rename", "archive", "delete"]);
   });
 
   it.each(WORKFLOW_LANES)("maps the $id move action to its local lane", (lane) => {
