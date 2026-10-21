@@ -1251,7 +1251,19 @@ function SidebarDragBoundary(props: {
   label: string;
   visible: boolean;
   isDropTarget: boolean;
+  restingDivider?: boolean;
 }) {
+  if (!props.visible && props.restingDivider) {
+    return (
+      <SortableSidebarMarker
+        marker={props.marker}
+        data-testid={`sidebar-${props.marker}`}
+        className="mx-2.5 flex h-6 items-center"
+      >
+        <div role="separator" className="h-px w-full bg-sidebar-border" />
+      </SortableSidebarMarker>
+    );
+  }
   return (
     <SortableSidebarMarker
       marker={props.marker}
@@ -2394,7 +2406,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     hasTerminal: runningTerminalIds.length > 0,
     hasPullRequest: prBadge !== null,
     hasDiff: diff !== null,
-    isRemote: isRemote && !showsScratchMachine,
   });
   const providerStack = (
     <SidebarProviderStack
@@ -2443,6 +2454,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             )}
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
+              <span aria-hidden className="pointer-events-none inline-flex shrink-0 items-center">
+                {providerStack}
+              </span>
+              {isRemote && !showsScratchMachine ? (
+                <span
+                  aria-hidden
+                  className="pointer-events-none inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
+                >
+                  <EnvironmentMachineIcon
+                    aria-hidden
+                    kind={props.environmentMachine}
+                    className="size-3.5"
+                  />
+                </span>
+              ) : null}
               {draftIndicator}
               {title}
               {isRegeneratingTitle ? (
@@ -2451,11 +2477,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 </span>
               ) : null}
               {pinIndicator}
-              {cardDetails.hasDetailRow ? null : (
-                <span aria-hidden className="pointer-events-none inline-flex shrink-0 items-center">
-                  {providerStack}
-                </span>
-              )}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -2646,21 +2667,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     </span>
                   </span>
                 ) : null}
-                <span
-                  aria-hidden
-                  className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-                >
-                  {isRemote && !showsScratchMachine ? (
-                    <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                      <EnvironmentMachineIcon
-                        aria-hidden
-                        kind={props.environmentMachine}
-                        className="size-3.5"
-                      />
-                    </span>
-                  ) : null}
-                  {providerStack}
-                </span>
               </div>
             ) : null}
           </div>
@@ -3865,6 +3871,7 @@ export default function Sidebar() {
       if (projectGrouping.attention.length > 0) {
         items.push({ kind: "marker", marker: "attention-header" });
         items.push(...rowsOf(projectGrouping.attention, "active"));
+        items.push({ kind: "marker", marker: "attention-divider" });
       }
       for (const bucket of projectGrouping.buckets) {
         items.push({ kind: "marker", marker: sidebarProjectGroupMarker(bucket.groupKey) });
@@ -5288,6 +5295,7 @@ export default function Sidebar() {
                                 label="Active"
                                 visible={from !== null}
                                 isDropTarget={dragTargetSection === "active"}
+                                restingDivider={pinnedThreads.length > 0}
                               />,
                             );
                             break;
@@ -5375,6 +5383,18 @@ export default function Sidebar() {
                               />,
                             );
                             break;
+                          case "attention-divider":
+                            items.push(
+                              <SortableSidebarMarker
+                                key="attention-divider"
+                                marker="attention-divider"
+                                data-testid="sidebar-attention-divider"
+                                className="mx-2.5 flex h-6 items-center"
+                              >
+                                <div role="separator" className="h-px w-full bg-sidebar-border" />
+                              </SortableSidebarMarker>,
+                            );
+                            break;
                           case "settled-placeholder":
                             items.push(
                               <SidebarSectionPlaceholder
@@ -5406,10 +5426,7 @@ export default function Sidebar() {
                                 count={projectGroupSizes.get(groupKey) ?? 0}
                                 expanded={!collapsedProjectGroups.includes(groupKey)}
                                 hasUnread={unreadProjectGroups.has(groupKey)}
-                                spaced={
-                                  (projectGrouping?.attention.length ?? 0) > 0 ||
-                                  projectGrouping?.buckets[0]?.groupKey !== groupKey
-                                }
+                                spaced={projectGrouping?.buckets[0]?.groupKey !== groupKey}
                                 onToggle={toggleProjectGroup}
                                 onNewThread={group ? startThreadInProjectGroup : null}
                               />,
