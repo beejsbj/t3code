@@ -2579,12 +2579,32 @@ describe("resolveSidebarCardDetails", () => {
     ).toEqual({ branch: "main", hasDetailRow: true });
   });
 
+  it.each(["main", "master"])(
+    "shows %s alongside a PR and hides it when the PR is removed",
+    (branch) => {
+      expect(resolveSidebarCardDetails({ ...plain, branch, hasPullRequest: true })).toEqual({
+        branch,
+        hasDetailRow: true,
+      });
+      expect(resolveSidebarCardDetails({ ...plain, branch, hasPullRequest: false })).toEqual({
+        branch: null,
+        hasDetailRow: false,
+      });
+    },
+  );
+
+  it("does not invent a branch for a PR when the branch is unknown", () => {
+    expect(resolveSidebarCardDetails({ ...plain, hasPullRequest: true })).toEqual({
+      branch: null,
+      hasDetailRow: true,
+    });
+  });
+
   it("keeps the second line for indicators even on the default branch", () => {
     for (const indicator of [
       "showsProject",
       "showsScratchMachine",
       "hasTerminal",
-      "hasPullRequest",
       "hasDiff",
     ] as const) {
       expect(resolveSidebarCardDetails({ ...plain, branch: "main", [indicator]: true })).toEqual({

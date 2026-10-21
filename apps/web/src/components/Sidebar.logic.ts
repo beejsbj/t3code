@@ -1042,9 +1042,10 @@ const SIDEBAR_DEFAULT_BRANCH_NAMES: ReadonlySet<string> = new Set(["main", "mast
 /**
  * Decides what a thread card's second line carries. A thread on the
  * repository's default branch in the project checkout says nothing the
- * project doesn't, so that branch name is left out; a worktree's branch always
- * shows. The projects contract carries no default branch, so "default" means
- * main or master. Provider and machine icons live beside the title, so they
+ * project doesn't, so that branch name is left out unless a PR needs its
+ * branch context; a worktree's branch always shows. The projects contract
+ * carries no default branch, so "default" means main or master.
+ * Provider and machine icons live beside the title, so they
  * don't require a second line.
  */
 export function resolveSidebarCardDetails(input: {
@@ -1060,7 +1061,7 @@ export function resolveSidebarCardDetails(input: {
     input.branch !== null &&
     input.worktreePath === null &&
     SIDEBAR_DEFAULT_BRANCH_NAMES.has(input.branch);
-  const branch = input.branch && !isDefaultCheckout ? input.branch : null;
+  const branch = input.branch && (!isDefaultCheckout || input.hasPullRequest) ? input.branch : null;
   return {
     branch,
     hasDetailRow:
