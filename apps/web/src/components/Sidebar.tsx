@@ -1251,7 +1251,19 @@ function SidebarDragBoundary(props: {
   label: string;
   visible: boolean;
   isDropTarget: boolean;
+  restingDivider?: boolean;
 }) {
+  if (!props.visible && props.restingDivider) {
+    return (
+      <SortableSidebarMarker
+        marker={props.marker}
+        data-testid={`sidebar-${props.marker}`}
+        className="mx-2.5 flex h-6 items-center"
+      >
+        <div role="separator" className="h-px w-full bg-sidebar-border" />
+      </SortableSidebarMarker>
+    );
+  }
   return (
     <SortableSidebarMarker
       marker={props.marker}
@@ -5283,6 +5295,7 @@ export default function Sidebar() {
                                 label="Active"
                                 visible={from !== null}
                                 isDropTarget={dragTargetSection === "active"}
+                                restingDivider={pinnedThreads.length > 0}
                               />,
                             );
                             break;
