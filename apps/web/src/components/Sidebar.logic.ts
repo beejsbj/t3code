@@ -142,6 +142,7 @@ export type SidebarListMarker =
   | "snoozed-header"
   | "settled-header"
   | "attention-header"
+  | "attention-divider"
   | SidebarProjectGroupMarker;
 
 /** Header of one project group inside Active. Group headers never change the
