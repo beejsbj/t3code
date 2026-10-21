@@ -1108,6 +1108,19 @@ export function bucketSidebarActiveThreads<T>(input: {
   };
 }
 
+/**
+ * Selects threads to render under a collapsed project group. Collapsing hides
+ * idle/read threads, but preserves the currently viewed route thread and any
+ * thread that completed and hasn't been seen yet ("Done").
+ */
+export function filterCollapsedProjectGroupThreads<T>(input: {
+  readonly threads: readonly T[];
+  readonly isRouteThread: (thread: T) => boolean;
+  readonly isDone: (thread: T) => boolean;
+}): readonly T[] {
+  return input.threads.filter((thread) => input.isRouteThread(thread) || input.isDone(thread));
+}
+
 export function firstValidTimestampMs(
   ...candidates: ReadonlyArray<string | null | undefined>
 ): number {
