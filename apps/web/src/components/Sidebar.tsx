@@ -194,6 +194,7 @@ import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
   bucketSidebarActiveThreads,
+  filterCollapsedProjectGroupThreads,
   filterSidebarV2VisibleThreads,
   isSidebarThreadWoke,
   resolveSidebarCardDetails,
@@ -3878,7 +3879,12 @@ export default function Sidebar() {
         items.push(
           ...rowsOf(
             collapsedProjectGroups.includes(bucket.groupKey)
-              ? routeThreadOnly(bucket.threads, routeThreadKey)
+              ? filterCollapsedProjectGroupThreads({
+                  threads: bucket.threads,
+                  isRouteThread: (thread) => threadShellKey(thread) === routeThreadKey,
+                  isDone: (thread) =>
+                    hasUnseenCompletion({ ...thread, lastVisitedAt: threadLastVisitedAt(thread) }),
+                })
               : bucket.threads,
             "active",
           ),

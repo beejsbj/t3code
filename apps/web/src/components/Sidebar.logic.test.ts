@@ -13,6 +13,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
+  filterCollapsedProjectGroupThreads,
   filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
   formatWorkingDurationLabel,
@@ -2465,6 +2466,45 @@ describe("bucketSidebarActiveThreads", () => {
     expect(isSidebarAttentionStatus("limited")).toBe(true);
     expect(isSidebarAttentionStatus("waiting")).toBe(false);
     expect(isSidebarAttentionStatus("working")).toBe(false);
+  });
+});
+
+describe("filterCollapsedProjectGroupThreads", () => {
+  type Item = { id: string; done?: boolean };
+  const filter = (threads: Item[], routeThreadId: string | null) =>
+    filterCollapsedProjectGroupThreads({
+      threads,
+      isRouteThread: (t) => t.id === routeThreadId,
+      isDone: (t) => Boolean(t.done),
+    });
+
+  it("keeps Done threads visible even when the project group is collapsed", () => {
+    const threads: Item[] = [
+      { id: "t1", done: true },
+      { id: "t2", done: false },
+      { id: "t3", done: true },
+      { id: "t4", done: false },
+    ];
+    const visible = filter(threads, null);
+    expect(visible.map((t) => t.id)).toEqual(["t1", "t3"]);
+  });
+
+  it("keeps the active route thread visible alongside Done threads", () => {
+    const threads: Item[] = [
+      { id: "t1", done: true },
+      { id: "t2", done: false },
+      { id: "t3", done: false },
+    ];
+    const visible = filter(threads, "t2");
+    expect(visible.map((t) => t.id)).toEqual(["t1", "t2"]);
+  });
+
+  it("hides all threads if none are Done and the route thread is elsewhere", () => {
+    const threads: Item[] = [
+      { id: "t1", done: false },
+      { id: "t2", done: false },
+    ];
+    expect(filter(threads, "other")).toEqual([]);
   });
 });
 
