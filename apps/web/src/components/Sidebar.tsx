@@ -893,9 +893,13 @@ function terminalProcessLabel(count: number): string {
   return `${count} terminal ${count === 1 ? "process" : "processes"} running`;
 }
 
+// One leading cluster: machine, earlier providers, then the current provider,
+// each tucked under the next. Siblings share ProviderInstanceIcon's z-index, so
+// DOM order alone puts the current provider on top.
 function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
+  environmentMachine: EnvironmentMachineKind | null;
 }) {
   const stack = resolveThreadProviderStack(props.thread);
   const currentInstanceId = stack[stack.length - 1]!;
@@ -917,11 +921,18 @@ function SidebarProviderStack(props: {
       badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs"
     />
   );
-  if (stack.length === 1) {
+  if (stack.length === 1 && props.environmentMachine === null) {
     return <span className="inline-flex shrink-0 items-center">{current}</span>;
   }
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
+    <span className="inline-flex shrink-0 items-center -space-x-1">
+      {props.environmentMachine === null ? null : (
+        <EnvironmentMachineIcon
+          aria-hidden
+          kind={props.environmentMachine}
+          className="size-3.5 shrink-0 text-sidebar-muted-foreground/70"
+        />
+      )}
       {stack.slice(0, -1).map((instanceId) => {
         const entry = props.providerEntryByInstanceId.get(instanceId);
         if (entry === undefined) return null;
@@ -2412,6 +2423,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <SidebarProviderStack
       thread={thread}
       providerEntryByInstanceId={props.providerEntryByInstanceId}
+      environmentMachine={isRemote && !showsScratchMachine ? props.environmentMachine : null}
     />
   );
 
@@ -2458,18 +2470,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <span aria-hidden className="pointer-events-none inline-flex shrink-0 items-center">
                 {providerStack}
               </span>
-              {isRemote && !showsScratchMachine ? (
-                <span
-                  aria-hidden
-                  className="pointer-events-none inline-flex shrink-0 items-center text-sidebar-muted-foreground/70"
-                >
-                  <EnvironmentMachineIcon
-                    aria-hidden
-                    kind={props.environmentMachine}
-                    className="size-3.5"
-                  />
-                </span>
-              ) : null}
               {draftIndicator}
               {title}
               {isRegeneratingTitle ? (
