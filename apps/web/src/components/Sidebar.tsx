@@ -904,7 +904,20 @@ function SidebarProviderStack(props: {
   const stack = resolveThreadProviderStack(props.thread);
   const currentInstanceId = stack[stack.length - 1]!;
   const currentEntry = props.providerEntryByInstanceId.get(currentInstanceId) ?? null;
-  if (currentEntry === null) return null;
+  const machineIcon =
+    props.environmentMachine === null ? null : (
+      <EnvironmentMachineIcon
+        aria-hidden
+        kind={props.environmentMachine}
+        className="size-3.5 shrink-0 text-sidebar-muted-foreground/70"
+      />
+    );
+  // The provider list can lag a thread's current instance; the machine still identifies the row.
+  if (currentEntry === null) {
+    return machineIcon === null ? null : (
+      <span className="inline-flex shrink-0 items-center">{machineIcon}</span>
+    );
+  }
   const showInstanceBadge = shouldShowInstanceBadge(
     currentEntry,
     props.providerEntryByInstanceId.values(),
@@ -926,13 +939,7 @@ function SidebarProviderStack(props: {
   }
   return (
     <span className="inline-flex shrink-0 items-center -space-x-1">
-      {props.environmentMachine === null ? null : (
-        <EnvironmentMachineIcon
-          aria-hidden
-          kind={props.environmentMachine}
-          className="size-3.5 shrink-0 text-sidebar-muted-foreground/70"
-        />
-      )}
+      {machineIcon}
       {stack.slice(0, -1).map((instanceId) => {
         const entry = props.providerEntryByInstanceId.get(instanceId);
         if (entry === undefined) return null;
