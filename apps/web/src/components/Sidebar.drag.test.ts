@@ -456,6 +456,28 @@ describe("sidebar drag projection", () => {
       expect(result.get(sidebarMarkerId("project:beta"))?.y).toBe(-1);
     });
 
+    it("hides the Needs you band when its only row leaves", () => {
+      const band = [
+        pinnedHeader,
+        divider,
+        marker("active-placeholder"),
+        marker("attention-header"),
+        thread("n1", "active"),
+        marker("attention-divider"),
+        alpha,
+        thread("a1", "active"),
+        settledHeader,
+      ];
+      const result = preview(
+        { items: band, settledOrder: [], settledExpanded: true },
+        "n1",
+        sidebarMarkerId("pinned-header"),
+      );
+      expect(result.get(sidebarMarkerId("attention-header"))?.scaleY).toBe(0);
+      expect(result.get(sidebarMarkerId("attention-divider"))?.scaleY).toBe(0);
+      expect(result.get(sidebarMarkerId("project:alpha"))?.scaleY).toBe(1);
+    });
+
     it("drops an unpinned row under its own project's header", () => {
       const result = preview(
         {

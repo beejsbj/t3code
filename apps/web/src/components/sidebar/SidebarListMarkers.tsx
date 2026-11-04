@@ -107,6 +107,33 @@ export function SidebarDragBoundary(props: {
   );
 }
 
+export function SidebarAttentionHeader(props: { count: number }) {
+  return (
+    <SortableSidebarMarker
+      marker="attention-header"
+      data-testid="sidebar-attention-header"
+      className="h-7"
+    >
+      <div className="flex h-7 items-center gap-2 px-(--sidebar-row-content-inset) text-xs font-medium text-warning-foreground">
+        <span className="shrink-0">Needs you</span>
+        <span className="shrink-0 tabular-nums opacity-70">{props.count}</span>
+      </div>
+    </SortableSidebarMarker>
+  );
+}
+
+export function SidebarAttentionDivider() {
+  return (
+    <SortableSidebarMarker
+      marker="attention-divider"
+      data-testid="sidebar-attention-divider"
+      className="mx-2.5 flex h-4 items-center"
+    >
+      <div role="separator" className="h-px w-full bg-sidebar-border" />
+    </SortableSidebarMarker>
+  );
+}
+
 export function SidebarSectionHeader(props: {
   marker: "working-header" | "snoozed-header" | "settled-header";
   label: string;

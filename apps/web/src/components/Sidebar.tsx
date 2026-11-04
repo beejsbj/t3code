@@ -179,6 +179,10 @@ import {
   filterSidebarV2VisibleThreads,
   groupSidebarActiveThreads,
   groupSidebarThreadsByProject,
+  isSidebarThreadWoke,
+  resolveSidebarThreadStatus,
+  resolveThreadLastVisitedAt,
+  sidebarThreadNeedsAttention,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -267,6 +271,8 @@ import {
   sidebarFolderRowId,
 } from "./sidebar/SidebarProjectFolderHeader";
 import {
+  SidebarAttentionDivider,
+  SidebarAttentionHeader,
   SidebarDragBoundary,
   SidebarSectionHeader,
   SidebarSectionPlaceholder,
@@ -539,10 +545,27 @@ function useSidebarThreads(input: {
               : EMPTY_THREADS,
           };
         });
+  const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const needsAttention = (thread: EnvironmentThreadShell) =>
+    sidebarThreadNeedsAttention({
+      status: resolveSidebarThreadStatus(thread),
+      isWoke: isSidebarThreadWoke({
+        wokeAt: threadWokeAt(thread, { now: partition.snoozeNow }),
+        lastVisitedAt: resolveThreadLastVisitedAt(
+          thread.lastVisitedAt,
+          threadLastVisitedAtById[threadShellKey(thread)],
+        ),
+        settledOverride: thread.settledOverride,
+      }),
+    });
   const inbox = (() => {
     if (inboxProjectGroups === null || !workingShelfEnabled) return null;
-    const { ungrouped, folders } = groupSidebarActiveThreads(inboxProjectGroups, activeThreads);
+    const { ungrouped, folders } = groupSidebarActiveThreads(
+      inboxProjectGroups,
+      activeThreads.filter((thread) => !needsAttention(thread)),
+    );
     return {
+      attention: activeThreads.filter(needsAttention),
       ungrouped,
       folders: folders.map((folder) => {
         const collapsed = !resolveProjectExpanded(
@@ -563,7 +586,11 @@ function useSidebarThreads(input: {
   const orderedThreads = [
     ...pinnedThreads,
     ...(inbox !== null
-      ? [...inbox.ungrouped, ...inbox.folders.flatMap((folder) => folder.threads)]
+      ? [
+          ...inbox.attention,
+          ...inbox.ungrouped,
+          ...inbox.folders.flatMap((folder) => folder.threads),
+        ]
       : projectFolders === null
         ? activeThreads
         : projectFolders.flatMap((folder) => folder.threads)),
@@ -609,6 +636,7 @@ function useSidebarThreads(input: {
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
     projectFolders,
     inbox,
+    needsAttention,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
       setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
@@ -1331,6 +1359,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     toggleWorkingShelf,
     projectFolders,
     inbox,
+    needsAttention,
     toggleProjectFolder,
     renderedSettledThreads,
     visibleSnoozedThreads,
@@ -1364,6 +1393,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     // A scope is already its own grouping, and boring mode has folders of its own.
     inboxProjectGroups: !boringSidebarEnabled && scopedProjectKeys === null ? projectGroups : null,
   });
+  const inboxAttentionKeys = new Set(inbox?.attention.map(threadShellKey) ?? []);
   const inboxFolderByKey = new Map(
     inbox?.folders.map((folder) => [folder.group.projectKey, folder] as const) ?? [],
   );
@@ -1963,6 +1993,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (inbox === null) {
       items.push(...rowsOf(activeThreads, "active"));
     } else {
+      if (inbox.attention.length > 0) {
+        items.push({ kind: "marker", marker: "attention-header" });
+        items.push(...rowsOf(inbox.attention, "active"));
+        items.push({ kind: "marker", marker: "attention-divider" });
+      }
       items.push(...rowsOf(inbox.ungrouped, "active"));
       for (const folder of inbox.folders) {
         items.push({ kind: "marker", marker: sidebarProjectGroupMarker(folder.group.projectKey) });
@@ -2062,9 +2097,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     settledOrder: draggedSettledOrder,
     ...(draggedActiveOrder === undefined ? {} : { activeOrder: draggedActiveOrder }),
     activeHomeMarker:
-      draggedHomeGroup === undefined
-        ? null
-        : sidebarProjectGroupMarker(draggedHomeGroup.projectKey),
+      draggedThread !== undefined && needsAttention(draggedThread)
+        ? "attention-header"
+        : draggedHomeGroup === undefined
+          ? null
+          : sidebarProjectGroupMarker(draggedHomeGroup.projectKey),
     settledExpanded: settledShelfExpanded,
     settledVisibleCount,
     routeThreadKey: routeRowThreadKey,
@@ -3360,6 +3397,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             thread={thread}
                             variant={rowVariant}
                             hideProject={inboxFolderRow !== undefined}
+                            inAttentionBand={
+                              section === "active" && inboxAttentionKeys.has(threadKey)
+                            }
                             navigationParent={
                               folderRow ??
                               inboxFolderRow ??
@@ -3601,6 +3641,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 isDropTarget={dragTargetSection === "settled"}
                               />,
                             );
+                            break;
+                          case "attention-header":
+                            items.push(
+                              <SidebarAttentionHeader
+                                key="attention-header"
+                                count={inbox?.attention.length ?? 0}
+                              />,
+                            );
+                            break;
+                          case "attention-divider":
+                            items.push(<SidebarAttentionDivider key="attention-divider" />);
                             break;
                           default: {
                             const projectKey = sidebarProjectGroupKey(item.marker);

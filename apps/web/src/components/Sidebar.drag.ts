@@ -212,7 +212,9 @@ export function createSidebarSortingStrategy(input: {
       section("active");
     } else {
       projected.push(...activeRegions.get(null)!);
+      const bandEmpty = activeRegions.get("attention-header")?.length === 0;
       for (const owner of activeMarkers) {
+        if (bandEmpty && (owner === "attention-header" || owner === "attention-divider")) continue;
         marker(owner);
         projected.push(...activeRegions.get(owner)!);
       }

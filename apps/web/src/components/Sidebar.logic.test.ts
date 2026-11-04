@@ -36,6 +36,8 @@ import {
   resolveSidebarDropVerb,
   groupSidebarActiveThreads,
   groupSidebarThreadsByProject,
+  isSidebarThreadWoke,
+  sidebarThreadNeedsAttention,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -1697,6 +1699,41 @@ describe("groupSidebarActiveThreads", () => {
     const { folders, ungrouped } = groupSidebarActiveThreads(groups, [thread("lost", "deleted")]);
     expect(folders).toEqual([]);
     expect(ungrouped.map(({ id }) => id)).toEqual(["lost"]);
+  });
+});
+
+describe("sidebarThreadNeedsAttention", () => {
+  it.each([
+    ["approval", false, true],
+    ["input", false, true],
+    ["request", false, true],
+    ["failed", false, true],
+    ["limited", false, true],
+    ["ready", true, true],
+    ["ready", false, false],
+    // A woke thread already showing Working or Waiting stays with its project.
+    ["working", true, false],
+    ["waiting", true, false],
+  ] as const)("%s, woke %s: %s", (status, isWoke, expected) => {
+    expect(sidebarThreadNeedsAttention({ status, isWoke })).toBe(expected);
+  });
+});
+
+describe("isSidebarThreadWoke", () => {
+  const wokeAt = "2026-10-20T12:00:00.000Z";
+  it.each([
+    ["never visited", undefined, null, true],
+    ["visited before the wake", "2026-10-20T11:00:00.000Z", null, true],
+    ["visited after the wake", "2026-10-20T13:00:00.000Z", null, false],
+    ["settled", "2026-10-20T11:00:00.000Z", "settled", false],
+  ] as const)("%s", (_name, lastVisitedAt, settledOverride, expected) => {
+    expect(isSidebarThreadWoke({ wokeAt, lastVisitedAt, settledOverride })).toBe(expected);
+  });
+
+  it("is false without a wake", () => {
+    expect(
+      isSidebarThreadWoke({ wokeAt: null, lastVisitedAt: undefined, settledOverride: null }),
+    ).toBe(false);
   });
 });
 

@@ -148,6 +148,10 @@ header to collapse it; the open thread stays visible. Each device keeps its own 
 header and press **+** to start a thread in that project, or right-click it for more. Filtering the
 sidebar by project shows a flat list.
 
+Threads waiting on an approval, an answer, or a guest's message, ones that failed or hit a usage
+limit, and snoozed threads that just woke collect under **Needs you** above the groups, so a
+collapsed project never hides them.
+
 You cannot drag or move threads within the active list while it is grouped, because activity sets
 its order. You can still drag a thread between sections to pin, unpin, settle, un-settle, or wake
 it, and reorder your pinned threads. Your saved order and a flat list return when you turn the

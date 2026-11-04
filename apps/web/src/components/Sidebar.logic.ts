@@ -194,6 +194,8 @@ export type SidebarListMarker =
   | "working-header"
   | "snoozed-header"
   | "settled-header"
+  | "attention-header"
+  | "attention-divider"
   | SidebarProjectGroupMarker;
 
 /** A project group's header inside Active. It never changes the drop section. */
@@ -1014,6 +1016,39 @@ export function groupSidebarThreadsByProject<
     folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
   }
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
+}
+
+const SIDEBAR_ATTENTION_STATUSES: ReadonlySet<SidebarThreadStatus> = new Set([
+  "approval",
+  "input",
+  "request",
+  "failed",
+  "limited",
+]);
+
+/** A snooze that ended since the user last looked: the row shows "Woke" until it is visited. */
+export function isSidebarThreadWoke(input: {
+  readonly wokeAt: string | null;
+  readonly lastVisitedAt: string | undefined;
+  readonly settledOverride: "settled" | "active" | null | undefined;
+}): boolean {
+  if (input.wokeAt === null || input.settledOverride === "settled") return false;
+  const wokeAtMs = Date.parse(input.wokeAt);
+  if (Number.isNaN(wokeAtMs)) return false;
+  const visitedAtMs =
+    input.lastVisitedAt === undefined ? Number.NaN : Date.parse(input.lastVisitedAt);
+  return Number.isNaN(visitedAtMs) || visitedAtMs < wokeAtMs;
+}
+
+/**
+ * Whether a row lifts out of its project group into the "Needs you" band. Only a
+ * ready row shows "Woke"; a working or waiting one shows that status and stays put.
+ */
+export function sidebarThreadNeedsAttention(input: {
+  readonly status: SidebarThreadStatus;
+  readonly isWoke: boolean;
+}): boolean {
+  return SIDEBAR_ATTENTION_STATUSES.has(input.status) || (input.status === "ready" && input.isWoke);
 }
 
 /**
