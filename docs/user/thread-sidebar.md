@@ -144,8 +144,9 @@ choice.
 
 While this is on, the active list is grouped by project, with the project that most recently came
 back to you first, and each group is ordered by when its threads last came back. Click a project
-header to collapse it; the open thread stays visible. Each device keeps its own choice. Filtering
-the sidebar by project shows a flat list.
+header to collapse it; the open thread stays visible. Each device keeps its own choice. Hover a
+header and press **+** to start a thread in that project, or right-click it for more. Filtering the
+sidebar by project shows a flat list.
 
 You cannot drag or move threads within the active list while it is grouped, because activity sets
 its order. You can still drag a thread between sections to pin, unpin, settle, un-settle, or wake
