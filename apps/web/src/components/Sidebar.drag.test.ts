@@ -432,6 +432,50 @@ describe("sidebar drag projection", () => {
     },
   );
 
+  describe("with project groups in Active", () => {
+    const alpha = marker("project:alpha");
+    const beta = marker("project:beta");
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      marker("active-placeholder"),
+      alpha,
+      thread("a1", "active"),
+      beta,
+      thread("b1", "active"),
+      settledHeader,
+    ];
+
+    it("keeps group headers visible while a row leaves Active", () => {
+      const result = preview({ items, settledOrder: [], settledExpanded: true }, "a1", "p");
+      expect(result.get(sidebarMarkerId("project:alpha"))?.scaleY).toBe(1);
+      expect(result.get(sidebarMarkerId("project:beta"))?.scaleY).toBe(1);
+      // The row above alpha left a gap; a1 fills Pinned above it, so beta barely moves.
+      expect(result.get(sidebarMarkerId("project:alpha"))?.y).toBe(82);
+      expect(result.get(sidebarMarkerId("project:beta"))?.y).toBe(-1);
+    });
+
+    it("drops an unpinned row under its own project's header", () => {
+      const result = preview(
+        {
+          items,
+          settledOrder: [],
+          settledExpanded: true,
+          activeOrder: ["a1", "p", "b1"],
+          activeHomeMarker: "project:beta",
+        },
+        "p",
+        "a1",
+      );
+      expect(result.get(sidebarMarkerId("project:alpha"))?.y).toBe(-84);
+      expect(result.get("a1")?.y).toBe(-84);
+      expect(result.get(sidebarMarkerId("project:beta"))?.y).toBe(-84);
+      // p lands above b1 in beta, so b1 gives back the height p left behind.
+      expect(result.get("b1")?.y).toBe(-1);
+    });
+  });
+
   it("uses the canonical settled rank and the destination's slim height", () => {
     const items = [
       pinnedHeader,
@@ -583,7 +627,7 @@ describe("sidebar drag projection", () => {
       settledExpanded: false,
     });
     const args = layout(items, "a", sidebarMarkerId("settled-placeholder"), 1, 78);
-    expect(strategy({ ...args, index: 4 })?.y).toBe(-42);
+    expect(strategy({ ...args, index: 4 })?.y).toBe(-46);
   });
 
   it("keeps the route row visible after a settled drop pushes it beyond the page", () => {
@@ -653,7 +697,7 @@ describe("sidebar drag projection", () => {
       sidebarMarkerId("settled-placeholder"),
     );
     expect(result.get(sidebarMarkerId("settled-placeholder"))?.scaleY).toBe(0);
-    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(-46);
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(-50);
   });
 
   it("preserves hidden snoozed membership when the only rendered route row leaves", () => {

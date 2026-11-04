@@ -177,6 +177,7 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
+  groupSidebarActiveThreads,
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
@@ -199,6 +200,8 @@ import {
   shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   sidebarListItemId,
+  sidebarProjectGroupKey,
+  sidebarProjectGroupMarker,
   sidebarThreadKeyAtY,
   sortInboxThreadsByReturn,
   sortPinnedThreadsForSidebar,
@@ -416,6 +419,8 @@ function useSidebarThreads(input: {
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
   readonly keepEmptyFolders: (group: SidebarProjectSnapshot) => boolean;
+  // The groups an unscoped time-ordered inbox sorts Active into. Null keeps Active flat.
+  readonly inboxProjectGroups: readonly SidebarProjectSnapshot[] | null;
 }) {
   const {
     projectScopeKey,
@@ -428,6 +433,7 @@ function useSidebarThreads(input: {
     routeRowThreadKey,
     folderGroups,
     keepEmptyFolders: keepEmpty,
+    inboxProjectGroups,
   } = input;
   // Folders already separate the work, so boring mode has no Working shelf.
   const workingShelfEnabled =
@@ -533,11 +539,34 @@ function useSidebarThreads(input: {
               : EMPTY_THREADS,
           };
         });
+  const inbox = (() => {
+    if (inboxProjectGroups === null || !workingShelfEnabled) return null;
+    const { ungrouped, folders } = groupSidebarActiveThreads(inboxProjectGroups, activeThreads);
+    return {
+      ungrouped,
+      folders: folders.map((folder) => {
+        const collapsed = !resolveProjectExpanded(
+          projectExpandedById,
+          sidebarFolderExpansionKeys(folder.group),
+        );
+        return {
+          group: folder.group,
+          collapsed,
+          threads: collapsed ? routeThreadOnly(folder.threads, routeRowThreadKey) : folder.threads,
+          hiddenThreads: collapsed
+            ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
+            : EMPTY_THREADS,
+        };
+      }),
+    };
+  })();
   const orderedThreads = [
     ...pinnedThreads,
-    ...(projectFolders === null
-      ? activeThreads
-      : projectFolders.flatMap((folder) => folder.threads)),
+    ...(inbox !== null
+      ? [...inbox.ungrouped, ...inbox.folders.flatMap((folder) => folder.threads)]
+      : projectFolders === null
+        ? activeThreads
+        : projectFolders.flatMap((folder) => folder.threads)),
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
@@ -579,6 +608,7 @@ function useSidebarThreads(input: {
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
     projectFolders,
+    inbox,
     toggleProjectFolder: (group: SidebarProjectSnapshot) => {
       const keys = sidebarFolderExpansionKeys(group);
       setProjectExpanded(keys, !resolveProjectExpanded(projectExpandedById, keys));
@@ -1300,6 +1330,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     workingShelfExpanded,
     toggleWorkingShelf,
     projectFolders,
+    inbox,
     toggleProjectFolder,
     renderedSettledThreads,
     visibleSnoozedThreads,
@@ -1330,7 +1361,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : null,
     keepEmptyFolders: (group) =>
       scopedProjectGroups.length > 0 || (group.pinned && !group.archived),
+    // A scope is already its own grouping, and boring mode has folders of its own.
+    inboxProjectGroups: !boringSidebarEnabled && scopedProjectKeys === null ? projectGroups : null,
   });
+  const inboxFolderByKey = new Map(
+    inbox?.folders.map((folder) => [folder.group.projectKey, folder] as const) ?? [],
+  );
+  const inboxFolderRowByThreadKey = new Map(
+    inbox?.folders.flatMap((folder) =>
+      folder.threads.map(
+        (thread) => [threadShellKey(thread), sidebarFolderRowId(folder.group.projectKey)] as const,
+      ),
+    ) ?? [],
+  );
 
   // Ranked across environments as the palette ranks them, so one
   // environment's list does not sit above another's better matches; rows
@@ -1916,9 +1959,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(activeThreads, "active");
     items.push({ kind: "marker", marker: "active-placeholder" });
-    items.push(...activeRows);
+    if (inbox === null) {
+      items.push(...rowsOf(activeThreads, "active"));
+    } else {
+      items.push(...rowsOf(inbox.ungrouped, "active"));
+      for (const folder of inbox.folders) {
+        items.push({ kind: "marker", marker: sidebarProjectGroupMarker(folder.group.projectKey) });
+        items.push(...rowsOf(folder.threads, "active"));
+      }
+    }
     if (workingThreads.length > 0) {
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
@@ -1994,12 +2044,27 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           activeThreads,
           workingShelfEnabled,
         });
+  const draggedThread = dragState === null ? undefined : threadByKey.get(dragState.activeKey);
+  const draggedHomeGroup =
+    draggedThread === undefined
+      ? undefined
+      : projectGroups.find((group) =>
+          group.memberProjectRefs.some(
+            (ref) =>
+              ref.environmentId === draggedThread.environmentId &&
+              ref.projectId === draggedThread.projectId,
+          ),
+        );
   const sidebarSortingStrategy = createSidebarSortingStrategy({
     items: sidebarListItems,
     enabled: !isContextDrag,
     boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
     settledOrder: draggedSettledOrder,
     ...(draggedActiveOrder === undefined ? {} : { activeOrder: draggedActiveOrder }),
+    activeHomeMarker:
+      draggedHomeGroup === undefined
+        ? null
+        : sidebarProjectGroupMarker(draggedHomeGroup.projectKey),
     settledExpanded: settledShelfExpanded,
     settledVisibleCount,
     routeThreadKey: routeRowThreadKey,
@@ -3271,15 +3336,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
-                        const isCard =
-                          section === "active" || section === "pinned" || section === "working";
                         const rowVariant = folderRow
                           ? folderRowsMultiline
                             ? "folder-multiline"
                             : "folder"
-                          : isCard
-                            ? "card"
-                            : "slim";
+                          : section === "working"
+                            ? "strip"
+                            : section === "active" || section === "pinned"
+                              ? "card"
+                              : "slim";
+                        const inboxFolderRow = inboxFolderRowByThreadKey.get(threadKey);
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -3293,8 +3359,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             thread={thread}
                             variant={rowVariant}
+                            hideProject={inboxFolderRow !== undefined}
                             navigationParent={
                               folderRow ??
+                              inboxFolderRow ??
                               (section === "working" ||
                               section === "snoozed" ||
                               section === "settled"
@@ -3534,6 +3602,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             break;
+                          default: {
+                            const projectKey = sidebarProjectGroupKey(item.marker);
+                            const folder =
+                              projectKey === null ? undefined : inboxFolderByKey.get(projectKey);
+                            if (folder === undefined) break;
+                            items.push(
+                              <SidebarProjectFolderHeader
+                                key={item.marker}
+                                group={folder.group}
+                                collapsed={folder.collapsed}
+                                hiddenThreads={folder.hiddenThreads}
+                                onToggle={toggleProjectFolder}
+                                onNewThread={startThreadInProjectFolder}
+                                onContextMenu={handleProjectFolderContextMenu}
+                                inInbox={{ spaced: inbox?.folders[0] !== folder }}
+                              />,
+                            );
+                          }
                         }
                       }
                       return items;

@@ -34,6 +34,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  groupSidebarActiveThreads,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
@@ -1661,6 +1662,41 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+  });
+});
+
+describe("groupSidebarActiveThreads", () => {
+  const project = (id: string) => ProjectId.make(id);
+  const thread = (id: string, projectId: string) => ({
+    id,
+    environmentId: localEnvironmentId,
+    projectId: project(projectId),
+  });
+  const groups = ["alpha", "beta", "gamma"].map((projectKey) => ({
+    projectKey,
+    memberProjectRefs: [{ environmentId: localEnvironmentId, projectId: project(projectKey) }],
+  }));
+
+  it("leads with the most recent project and keeps each group's order", () => {
+    const { folders, ungrouped } = groupSidebarActiveThreads(groups, [
+      thread("newest", "gamma"),
+      thread("next", "alpha"),
+      thread("older", "gamma"),
+      thread("oldest", "alpha"),
+    ]);
+    expect(ungrouped).toEqual([]);
+    expect(
+      folders.map((folder) => [folder.group.projectKey, folder.threads.map(({ id }) => id)]),
+    ).toEqual([
+      ["gamma", ["newest", "older"]],
+      ["alpha", ["next", "oldest"]],
+    ]);
+  });
+
+  it("keeps a thread listed when its project is in no group", () => {
+    const { folders, ungrouped } = groupSidebarActiveThreads(groups, [thread("lost", "deleted")]);
+    expect(folders).toEqual([]);
+    expect(ungrouped.map(({ id }) => id)).toEqual(["lost"]);
   });
 });
 

@@ -142,8 +142,15 @@ This is on by default. Turn it off with **Settings → General → Working secti
 or **Settings → General → Working section** on iOS and Android. Each device keeps its own
 choice.
 
-While this is on, the active list is ordered by when each thread last came back to you, so you
-cannot drag or move threads within it. Your saved order returns when you turn it off.
+While this is on, the active list is grouped by project, with the project that most recently came
+back to you first, and each group is ordered by when its threads last came back. Click a project
+header to collapse it; the open thread stays visible. Each device keeps its own choice. Filtering
+the sidebar by project shows a flat list.
+
+You cannot drag or move threads within the active list while it is grouped, because activity sets
+its order. You can still drag a thread between sections to pin, unpin, settle, un-settle, or wake
+it, and reorder your pinned threads. Your saved order and a flat list return when you turn the
+Working section off.
 
 ### Group threads by project (beta)
 

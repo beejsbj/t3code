@@ -193,7 +193,19 @@ export type SidebarListMarker =
   | "pinned-divider"
   | "working-header"
   | "snoozed-header"
-  | "settled-header";
+  | "settled-header"
+  | SidebarProjectGroupMarker;
+
+/** A project group's header inside Active. It never changes the drop section. */
+export type SidebarProjectGroupMarker = `project:${string}`;
+
+export function sidebarProjectGroupMarker(projectKey: string): SidebarProjectGroupMarker {
+  return `project:${projectKey}`;
+}
+
+export function sidebarProjectGroupKey(marker: SidebarListMarker): string | null {
+  return marker.startsWith("project:") ? marker.slice("project:".length) : null;
+}
 
 export function sidebarMarkerId(marker: SidebarListMarker): string {
   return `${SIDEBAR_MARKER_PREFIX}${marker}`;
@@ -1002,6 +1014,42 @@ export function groupSidebarThreadsByProject<
     folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
   }
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
+}
+
+/**
+ * Project groups for the time-ordered inbox: input order is kept, so recency-ordered
+ * threads lead with the most recent project. A thread whose project is in no group,
+ * such as one from an environment still loading, stays listed as ungrouped.
+ */
+export function groupSidebarActiveThreads<
+  TGroup extends {
+    readonly memberProjectRefs: ReadonlyArray<{
+      readonly environmentId: EnvironmentId;
+      readonly projectId: string;
+    }>;
+  },
+  TThread extends Pick<SidebarThreadSummary, "environmentId" | "projectId">,
+>(
+  groups: readonly TGroup[],
+  threads: readonly TThread[],
+): { ungrouped: TThread[]; folders: Array<{ group: TGroup; threads: TThread[] }> } {
+  const groupByProject = new Map<string, TGroup>();
+  for (const group of groups) {
+    for (const ref of group.memberProjectRefs) {
+      groupByProject.set(`${ref.environmentId}:${ref.projectId}`, group);
+    }
+  }
+  const recentGroups = new Set<TGroup>();
+  const ungrouped: TThread[] = [];
+  for (const thread of threads) {
+    const group = groupByProject.get(`${thread.environmentId}:${thread.projectId}`);
+    if (group === undefined) ungrouped.push(thread);
+    else recentGroups.add(group);
+  }
+  return {
+    ungrouped,
+    folders: groupSidebarThreadsByProject([...recentGroups], threads, () => false),
+  };
 }
 
 export type SidebarV2TopStatusKind =
