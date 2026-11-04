@@ -179,6 +179,7 @@ import {
   filterSidebarV2VisibleThreads,
   groupSidebarActiveThreads,
   groupSidebarThreadsByProject,
+  isSidebarThreadDone,
   isSidebarThreadWoke,
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
@@ -558,6 +559,16 @@ function useSidebarThreads(input: {
         settledOverride: thread.settledOverride,
       }),
     });
+  // The dot reads only hiddenThreads, so a Done row that shows here gets no dot as well.
+  const staysVisibleWhenCollapsed = (thread: EnvironmentThreadShell) =>
+    threadShellKey(thread) === routeRowThreadKey ||
+    isSidebarThreadDone({
+      ...thread,
+      lastVisitedAt: resolveThreadLastVisitedAt(
+        thread.lastVisitedAt,
+        threadLastVisitedAtById[threadShellKey(thread)],
+      ),
+    });
   const inbox = (() => {
     if (inboxProjectGroups === null || !workingShelfEnabled) return null;
     const { ungrouped, folders } = groupSidebarActiveThreads(
@@ -575,9 +586,9 @@ function useSidebarThreads(input: {
         return {
           group: folder.group,
           collapsed,
-          threads: collapsed ? routeThreadOnly(folder.threads, routeRowThreadKey) : folder.threads,
+          threads: collapsed ? folder.threads.filter(staysVisibleWhenCollapsed) : folder.threads,
           hiddenThreads: collapsed
-            ? folder.threads.filter((thread) => threadShellKey(thread) !== routeRowThreadKey)
+            ? folder.threads.filter((thread) => !staysVisibleWhenCollapsed(thread))
             : EMPTY_THREADS,
         };
       }),

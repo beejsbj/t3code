@@ -36,6 +36,7 @@ import {
   resolveSidebarDropVerb,
   groupSidebarActiveThreads,
   groupSidebarThreadsByProject,
+  isSidebarThreadDone,
   isSidebarThreadWoke,
   sidebarThreadNeedsAttention,
   resolveSidebarFolderDot,
@@ -1734,6 +1735,27 @@ describe("isSidebarThreadWoke", () => {
     expect(
       isSidebarThreadWoke({ wokeAt: null, lastVisitedAt: undefined, settledOverride: null }),
     ).toBe(false);
+  });
+});
+
+describe("isSidebarThreadDone", () => {
+  const finished = {
+    latestRun: { completedAt: "2026-10-20T12:00:00.000Z" },
+    lastVisitedAt: "2026-10-20T11:00:00.000Z",
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    runtime: null,
+  } as unknown as Parameters<typeof isSidebarThreadDone>[0];
+
+  it("is true only for a finished thread not yet visited", () => {
+    expect(isSidebarThreadDone(finished)).toBe(true);
+    expect(isSidebarThreadDone({ ...finished, lastVisitedAt: "2026-10-20T13:00:00.000Z" })).toBe(
+      false,
+    );
+  });
+
+  it("is false when the row shows another status instead", () => {
+    expect(isSidebarThreadDone({ ...finished, hasPendingApprovals: true })).toBe(false);
   });
 });
 

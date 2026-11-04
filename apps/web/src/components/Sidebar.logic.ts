@@ -1018,6 +1018,11 @@ export function groupSidebarThreadsByProject<
   return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
 }
 
+/** A row showing Done: finished and unseen. Other statuses take that row's status slot. */
+export function isSidebarThreadDone(thread: ThreadStatusInput & SidebarThreadStatusInput): boolean {
+  return resolveSidebarThreadStatus(thread) === "ready" && hasUnseenCompletion(thread);
+}
+
 const SIDEBAR_ATTENTION_STATUSES: ReadonlySet<SidebarThreadStatus> = new Set([
   "approval",
   "input",
