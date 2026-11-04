@@ -182,11 +182,27 @@ function terminalProcessLabel(count: number): string {
 function SidebarProviderStack(props: {
   thread: SidebarThreadSummary;
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
+  // Set on a card: one overlapping cluster, led by the machine when the thread is remote.
+  cluster?: { readonly machine: EnvironmentMachineKind | null };
 }) {
   const stack = resolveThreadProviderStack(props.thread);
   const currentInstanceId = stack[stack.length - 1]!;
   const currentEntry = props.providerEntryByInstanceId.get(currentInstanceId) ?? null;
-  if (currentEntry === null) return null;
+  const machine = props.cluster?.machine ?? null;
+  const machineIcon =
+    machine === null ? null : (
+      <EnvironmentMachineIcon
+        aria-hidden
+        kind={machine}
+        className="size-3.5 shrink-0 text-sidebar-muted-foreground/70"
+      />
+    );
+  // The provider list can lag a thread's current instance; the machine still identifies the row.
+  if (currentEntry === null) {
+    return machineIcon === null ? null : (
+      <span className="inline-flex shrink-0 items-center">{machineIcon}</span>
+    );
+  }
   const showInstanceBadge = shouldShowInstanceBadge(
     currentEntry,
     props.providerEntryByInstanceId.values(),
@@ -203,11 +219,14 @@ function SidebarProviderStack(props: {
       iconClassName="opacity-60"
     />
   );
-  if (stack.length === 1) {
+  if (stack.length === 1 && machineIcon === null) {
     return <span className="inline-flex shrink-0 items-center">{current}</span>;
   }
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
+    <span
+      className={cn("inline-flex shrink-0 items-center", props.cluster ? "-space-x-1" : "gap-1.5")}
+    >
+      {machineIcon}
       {stack.slice(0, -1).map((instanceId) => {
         const entry = props.providerEntryByInstanceId.get(instanceId);
         if (entry === undefined) return null;
@@ -1238,16 +1257,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </span>
           </span>
         ) : null}
-        <span
-          aria-hidden
-          className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-        >
-          {remoteMachineIcon}
-          <SidebarProviderStack
-            thread={thread}
-            providerEntryByInstanceId={props.providerEntryByInstanceId}
-          />
-        </span>
       </div>
     );
 
@@ -1523,6 +1532,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             )}
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
+              <span aria-hidden className="pointer-events-none inline-flex shrink-0 items-center">
+                <SidebarProviderStack
+                  thread={thread}
+                  providerEntryByInstanceId={props.providerEntryByInstanceId}
+                  cluster={{
+                    machine: isRemote && !showsScratchMachine ? props.environmentMachine : null,
+                  }}
+                />
+              </span>
               {draftIndicator}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
@@ -1533,7 +1551,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   Regenerating title
                 </span>
               ) : null}
-              {cardDetailLine === null ? titleLineIcons : null}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
