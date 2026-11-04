@@ -153,6 +153,9 @@ Threads waiting on an approval, an answer, or a guest's message, ones that faile
 limit, and snoozed threads that just woke collect under **Needs you** above the groups, so a
 collapsed project never hides them.
 
+A thread in the project's main checkout hides `main` or `master` unless it has a pull request; a
+worktree's branch always shows.
+
 You cannot drag or move threads within the active list while it is grouped, because activity sets
 its order. You can still drag a thread between sections to pin, unpin, settle, un-settle, or wake
 it, and reorder your pinned threads. Your saved order and a flat list return when you turn the

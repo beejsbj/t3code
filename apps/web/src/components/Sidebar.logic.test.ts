@@ -39,6 +39,7 @@ import {
   isSidebarThreadDone,
   isSidebarThreadWoke,
   sidebarThreadNeedsAttention,
+  resolveSidebarCardBranch,
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
 } from "./Sidebar.logic";
@@ -1735,6 +1736,20 @@ describe("isSidebarThreadWoke", () => {
     expect(
       isSidebarThreadWoke({ wokeAt: null, lastVisitedAt: undefined, settledOverride: null }),
     ).toBe(false);
+  });
+});
+
+describe("resolveSidebarCardBranch", () => {
+  it.each([
+    ["main in the checkout", "main", null, false, null],
+    ["master in the checkout", "master", null, false, null],
+    ["main in the checkout with a PR", "main", null, true, "main"],
+    ["main in a worktree", "main", "/wt/x", false, "main"],
+    ["a feature branch in the checkout", "feat/x", null, false, "feat/x"],
+    ["a feature branch in a worktree", "feat/x", "/wt/x", false, "feat/x"],
+    ["no branch", null, null, false, null],
+  ] as const)("%s", (_name, branch, worktreePath, hasPullRequest, expected) => {
+    expect(resolveSidebarCardBranch({ branch, worktreePath, hasPullRequest })).toBe(expected);
   });
 });
 

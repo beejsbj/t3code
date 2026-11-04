@@ -83,6 +83,7 @@ import {
   resolveThreadLastVisitedAt,
   shouldRecedeSidebarThread,
   isSidebarThreadWoke,
+  resolveSidebarCardBranch,
   resolveWorkingStartedAt,
   useRetainedValue,
   useSidebarRowSubscriptionLease,
@@ -1215,8 +1216,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   ) : null;
 
   const showsProjectOnCard = !props.hideProject && props.projectDisplayName !== null;
+  const cardBranch = resolveSidebarCardBranch({
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    hasPullRequest: prBadge !== null,
+  });
   const cardDetailLine =
-    metaLineEmpty && !showsProjectOnCard ? null : (
+    !showsProjectOnCard &&
+    cardBranch === null &&
+    !showsScratchMachine &&
+    prBadge === null &&
+    diff === null &&
+    runningTerminalIds.length === 0 ? null : (
       <div className="mt-0.5 flex h-4 min-w-0 items-center gap-1.5 text-secondary-label text-2xs">
         {showsProjectOnCard ? (
           <span className="flex max-w-[55%] shrink-0 items-center gap-1">
@@ -1226,11 +1237,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             <span className="min-w-0 truncate font-normal">{props.projectDisplayName}</span>
           </span>
         ) : null}
-        {thread.branch ? (
+        {cardBranch !== null ? (
           <>
             <ThreadWorktreeIndicator thread={thread} />
             <span className="flex min-w-0 flex-1">
-              <MiddleTruncate value={thread.branch} showTitle={false} />
+              <MiddleTruncate value={cardBranch} showTitle={false} />
             </span>
           </>
         ) : showsScratchMachine ? (

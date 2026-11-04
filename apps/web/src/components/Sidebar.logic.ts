@@ -1023,6 +1023,25 @@ export function isSidebarThreadDone(thread: ThreadStatusInput & SidebarThreadSta
   return resolveSidebarThreadStatus(thread) === "ready" && hasUnseenCompletion(thread);
 }
 
+const SIDEBAR_DEFAULT_BRANCH_NAMES: ReadonlySet<string> = new Set(["main", "master"]);
+
+/**
+ * The branch a card names. The project checkout on its default branch says nothing the
+ * project doesn't, unless a PR needs the context; a worktree's branch always shows. The
+ * projects contract carries no default branch, so "default" means main or master.
+ */
+export function resolveSidebarCardBranch(input: {
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly hasPullRequest: boolean;
+}): string | null {
+  const isDefaultCheckout =
+    input.branch !== null &&
+    input.worktreePath === null &&
+    SIDEBAR_DEFAULT_BRANCH_NAMES.has(input.branch);
+  return isDefaultCheckout && !input.hasPullRequest ? null : input.branch;
+}
+
 const SIDEBAR_ATTENTION_STATUSES: ReadonlySet<SidebarThreadStatus> = new Set([
   "approval",
   "input",
