@@ -147,6 +147,7 @@ For mobile verification, a missing or outdated native client is an install step,
 
 ## Pull requests
 
+- This checkout belongs to the `beejsbj/t3code` fork. Create and review pull requests only in `beejsbj/t3code`, using the fork's `main` as the base, unless the developer explicitly names another repository. Never open or comment on pull requests in `pingdotgg/t3code` by default.
 - Never make a PR unless the developer explicitly asks you to do so.
 - If `origin` is git.cafe, follow [GitCafe mirror](docs/operations/development.md#gitcafe-mirror-optional): push to `origin`, open and track PRs with `cafe` and their git.cafe URLs, and keep `gh` for merging.
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
