@@ -77,13 +77,21 @@ export function SidebarDragBoundary(props: {
   label: string;
   visible: boolean;
   isDropTarget: boolean;
+  /** Holds a permanent line. It keeps its height during a drag, so rows do not jump at pickup. */
+  restingDivider?: boolean;
 }) {
   return (
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className="pointer-events-none relative mx-0.5 -mb-px h-0"
+      className={cn(
+        "pointer-events-none relative mx-0.5",
+        props.restingDivider ? "flex h-6 items-center" : "-mb-px h-0",
+      )}
     >
+      {!props.visible && props.restingDivider ? (
+        <div role="separator" className="mx-2 h-px w-full bg-sidebar-border" />
+      ) : null}
       {props.visible ? (
         <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
           <span
