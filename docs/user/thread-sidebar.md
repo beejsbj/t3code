@@ -142,12 +142,11 @@ This is on by default. Turn it off with **Settings → General → Working secti
 or **Settings → General → Working section** on iOS and Android. Each device keeps its own
 choice.
 
-While this is on, the active list is grouped by project, with the project that most recently came
-back to you first, and each group is ordered by when its threads last came back. Click a project
-header to collapse it; the open thread and finished threads you have not opened stay visible. Each
-device keeps its own choice. Hover a
-header and press **+** to start a thread in that project, or right-click it for more. Filtering the
-sidebar by project shows a flat list.
+On web and desktop, while this is on, the active list is grouped by project, with the project that
+most recently came back to you first, and each group is ordered by when its threads last came back.
+Click a project header to collapse it; the open thread and finished threads you have not opened
+stay visible. Each device keeps its own choice. Hover a header and press **+** to start a thread in
+that project, or right-click it for more. Filtering the sidebar by project shows a flat list.
 
 Threads waiting on an approval, an answer, or a guest's message, ones that failed or hit a usage
 limit, and snoozed threads that just woke collect under **Needs you** above the groups, so a
